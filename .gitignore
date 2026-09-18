@@ -4,4 +4,5 @@ dist-ssr
 *.local
 .DS_Store
 *.tsbuildinfo
-server/data/*.json
+server/data/*.db
+server/data/*.db-*

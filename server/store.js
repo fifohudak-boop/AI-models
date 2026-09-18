@@ -1,9 +1,16 @@
-import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { createClient } from '@libsql/client';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const DATA_FILE = path.join(__dirname, 'data', 'events.json');
+
+// With TURSO_DATABASE_URL set, this talks to a real Turso database (production).
+// Without it, it falls back to a local SQLite file — same client, same SQL, so
+// local dev/testing exercises the exact same code path as production.
+const url = process.env.TURSO_DATABASE_URL ?? `file:${path.join(__dirname, 'data', 'local.db')}`;
+const authToken = process.env.TURSO_AUTH_TOKEN;
+
+const client = createClient({ url, authToken });
 
 function pad(n) {
   return String(n).padStart(2, '0');
@@ -32,25 +39,64 @@ function seedEvents() {
   ];
 }
 
-function ensureDataFile() {
-  fs.mkdirSync(path.dirname(DATA_FILE), { recursive: true });
-  if (!fs.existsSync(DATA_FILE)) {
-    fs.writeFileSync(DATA_FILE, JSON.stringify(seedEvents(), null, 2));
+function rowToEvent(row) {
+  return {
+    id: row.id,
+    title: row.title,
+    date: row.date,
+    time: row.time,
+    location: row.location ?? undefined,
+    categoryId: row.categoryId,
+  };
+}
+
+async function insertRow(event) {
+  await client.execute({
+    sql: 'INSERT INTO events (id, title, date, time, location, categoryId) VALUES (?, ?, ?, ?, ?, ?)',
+    args: [event.id, event.title, event.date, event.time ?? '', event.location ?? null, event.categoryId],
+  });
+}
+
+/** Creates the table if needed and seeds it once, on an empty table. Call before serving traffic. */
+export async function init() {
+  await client.execute(`
+    CREATE TABLE IF NOT EXISTS events (
+      id TEXT PRIMARY KEY,
+      title TEXT NOT NULL,
+      date TEXT NOT NULL,
+      time TEXT NOT NULL DEFAULT '',
+      location TEXT,
+      categoryId TEXT NOT NULL
+    )
+  `);
+
+  const { rows } = await client.execute('SELECT COUNT(*) as count FROM events');
+  if (Number(rows[0].count) === 0) {
+    for (const event of seedEvents()) {
+      await insertRow(event);
+    }
   }
 }
 
-export function readEvents() {
-  ensureDataFile();
-  try {
-    const raw = fs.readFileSync(DATA_FILE, 'utf-8');
-    const parsed = JSON.parse(raw);
-    return Array.isArray(parsed) ? parsed : [];
-  } catch {
-    return [];
-  }
+export async function listEvents() {
+  const { rows } = await client.execute('SELECT * FROM events ORDER BY date, time');
+  return rows.map(rowToEvent);
 }
 
-export function writeEvents(events) {
-  ensureDataFile();
-  fs.writeFileSync(DATA_FILE, JSON.stringify(events, null, 2));
+export async function createEventRow(event) {
+  await insertRow(event);
+  return event;
+}
+
+export async function updateEventRow(id, patch) {
+  const result = await client.execute({
+    sql: 'UPDATE events SET title = ?, date = ?, time = ?, location = ?, categoryId = ? WHERE id = ?',
+    args: [patch.title, patch.date, patch.time ?? '', patch.location ?? null, patch.categoryId, id],
+  });
+  return Number(result.rowsAffected) > 0;
+}
+
+export async function deleteEventRow(id) {
+  const result = await client.execute({ sql: 'DELETE FROM events WHERE id = ?', args: [id] });
+  return Number(result.rowsAffected) > 0;
 }

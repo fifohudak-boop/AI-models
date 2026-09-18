@@ -1,76 +1,83 @@
 # Calendar
 
-A month-view calendar with an agenda panel, event categories, conflict
-detection, and a small shared backend so your Mac and your phone see the
-same events.
+A month-view calendar with an agenda panel, event categories, and conflict
+detection, backed by a small shared server so every device sees the same
+events.
 
-## Run it on your Mac
+## Deploy it (Render + Turso) — the "always on" setup
+
+This is the recommended setup: one public HTTPS URL, reachable from any
+device on any network (WiFi or cellular), that updates itself every time a
+fix or feature is pushed to `main`.
+
+### 1. Create a free database (Turso)
+
+1. Go to [turso.tech](https://turso.tech) and sign up (GitHub login is
+   fastest).
+2. Create a database (any name, e.g. `calendar`).
+3. On the database's page, get:
+   - The **database URL** (starts with `libsql://…`)
+   - An **auth token** (there's a "Create token" button)
+
+Keep both handy for step 3.
+
+### 2. Create a Render account and connect this repo
+
+1. Go to [render.com](https://render.com) and sign up (GitHub login again is
+   easiest — it can then see your repos).
+2. **New +** → **Blueprint**, pick this GitHub repo. Render reads
+   `render.yaml` in this repo and sets up the web service automatically
+   (build command, start command, health check).
+3. It'll ask for the env vars marked `sync: false` in `render.yaml` — enter:
+   - `TURSO_DATABASE_URL` — the URL from step 1
+   - `TURSO_AUTH_TOKEN` — the token from step 1
+   - `APP_PASSWORD` — **make one up.** Without this, anyone who finds your
+     URL can read and edit your calendar. With it, the browser just asks
+     for a username (anything) and this password once.
+4. Deploy. Render gives you a URL like `https://calendar-app-xxxx.onrender.com`.
+
+That URL works from anywhere — phone on cellular, laptop, anything. Open it
+on your phone and **Add to Home Screen** (Safari share button, or Chrome's
+menu) to get a real app icon.
+
+### It updates itself from here on
+
+Render is now watching `main`. Every time a fix or new feature gets pushed
+to `main` — including from this chat — Render automatically rebuilds and
+redeploys within a minute or two. Nothing to run by hand. You can watch it
+happen in the Render dashboard's "Events" tab.
+
+Your events live in the Turso database, not on Render, so they survive every
+redeploy indefinitely.
+
+## Run it locally instead (e.g. on your Mac)
 
 ```sh
 npm install
 npm start
 ```
 
-`npm start` builds the app and starts one server (Express) that serves the
-frontend **and** the API on a single port. Open **http://localhost:3001**.
+Without `TURSO_DATABASE_URL` set, the server automatically falls back to a
+local SQLite file (`server/data/local.db`) — no account needed. Open
+**http://localhost:3001**.
 
-Events are stored in `server/data/events.json` on the Mac — that file is the
-one shared calendar both devices read and write.
+(For frontend development with hot reload, run `npm run server` in one
+terminal and `npm run dev` in another — Vite proxies `/api` to the server.)
 
-(For day-to-day frontend development with hot reload instead, run
-`npm run server` in one terminal and `npm run dev` in another — Vite proxies
-`/api` to the server, both on the same data file.)
-
-## Use it from your phone
-
-The app is a normal web page — your phone just needs to reach the address
-above instead of `localhost`. Two ways to do that:
-
-### Option A — same WiFi as your Mac
-
-1. Find your Mac's local IP: **System Settings → Wi-Fi → Details** (or run
-   `ipconfig getifaddr en0` in Terminal). It looks like `192.168.1.23`.
-2. On your phone (same WiFi), open `http://192.168.1.23:3001`.
-
-This only works while both devices are on the same network.
-
-### Option B — from anywhere (cellular data too)
-
-For that you need your Mac reachable from outside your home network. The
-simplest, free way is **[Tailscale](https://tailscale.com/)** — a private
-network between your own devices, so nothing is exposed to the public
-internet:
-
-1. Install Tailscale on your Mac and sign in (free for personal use).
-2. Install the Tailscale app on your phone and sign in with the **same
-   account**.
-3. On the Mac, run `tailscale ip -4` to get its Tailscale address (something
-   like `100.x.y.z`), or just use the MagicDNS name Tailscale shows you
-   (e.g. `your-mac-name.your-tailnet.ts.net`).
-4. On your phone — on WiFi or cellular, doesn't matter — open
-   `http://<that address>:3001`. It'll work exactly like being on the same
-   WiFi, from anywhere.
-
-Keep `npm start` running on the Mac (it needs to stay on and awake — in
-System Settings, disable sleep, or use `caffeinate npm start` in Terminal so
-the Mac won't nap while it's your calendar's server).
-
-## Install it on your phone's home screen
-
-Open the app's URL in Safari (iOS) or Chrome (Android), then:
-
-- **iOS**: Share button → **Add to Home Screen**
-- **Android**: menu (⋮) → **Add to Home screen** / **Install app**
-
-It'll get its own icon and open full-screen, like a real app — full control
-(add, edit, delete, color-code events), same shared data as the Mac.
+To reach a locally-running copy from your phone, either use your Mac's LAN
+IP while on the same WiFi, or install [Tailscale](https://tailscale.com/) on
+both devices for access from anywhere without deploying. The deployed
+version above makes this unnecessary, but it's there if you'd rather not
+deploy.
 
 ## What's in here
 
 - `src/` — the React + TypeScript frontend (Vite)
-- `server/` — the Express backend: a handful of REST endpoints
-  (`/api/events`, `/api/categories`) backed by `server/data/events.json`
+- `server/` — the Express backend: `/api/events` and `/api/categories`,
+  backed by `server/store.js` (libSQL — a local file in dev, Turso in
+  production, same code either way)
 - `public/` — PWA manifest and home-screen icons
+- `render.yaml` — the Render blueprint used in step 2 above
 
 `npm run lint` and `npm run build` (which type-checks via `tsc -b`) should
 both stay clean.
