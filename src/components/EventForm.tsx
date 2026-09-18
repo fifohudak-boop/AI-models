@@ -1,4 +1,4 @@
-import { CATEGORIES } from '../lib/categories';
+import type { Category } from '../types';
 import { Button } from './Button';
 
 interface EventFormProps {
@@ -12,9 +12,12 @@ interface EventFormProps {
   onLocationChange: (value: string) => void;
   categoryId: string;
   onCategoryChange: (id: string) => void;
+  categories: Category[];
   onSave: () => void;
   onCancel: () => void;
   onDelete?: () => void;
+  error?: string | null;
+  busy?: boolean;
 }
 
 export function EventForm({
@@ -28,9 +31,12 @@ export function EventForm({
   onLocationChange,
   categoryId,
   onCategoryChange,
+  categories,
   onSave,
   onCancel,
   onDelete,
+  error,
+  busy,
 }: EventFormProps) {
   return (
     <form
@@ -78,7 +84,7 @@ export function EventForm({
       <div className="ca-field">
         <span className="caption ca-field-label">Category</span>
         <div className="ca-category-picker">
-          {CATEGORIES.map((c) => (
+          {categories.map((c) => (
             <button
               key={c.id}
               type="button"
@@ -92,20 +98,22 @@ export function EventForm({
         </div>
       </div>
 
+      {error && <p className="caption ca-form-error">{error}</p>}
+
       <div className="ca-event-form-actions">
         {onDelete ? (
-          <Button variant="danger" type="button" onClick={onDelete}>
+          <Button variant="danger" type="button" onClick={onDelete} disabled={busy}>
             Delete
           </Button>
         ) : (
           <span />
         )}
         <div className="ca-event-form-actions-right">
-          <Button variant="secondary" type="button" onClick={onCancel}>
+          <Button variant="secondary" type="button" onClick={onCancel} disabled={busy}>
             Cancel
           </Button>
-          <Button variant="primary" type="submit">
-            Save event
+          <Button variant="primary" type="submit" disabled={busy}>
+            {busy ? 'Saving…' : 'Save event'}
           </Button>
         </div>
       </div>

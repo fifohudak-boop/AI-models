@@ -52,3 +52,12 @@
 .ca-agenda-date {
   color: var(--ink-muted);
 }
+
+.ca-load-status {
+  margin-top: var(--space-4);
+  max-width: 320px;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  align-items: flex-start;
+}

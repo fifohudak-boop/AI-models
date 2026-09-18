@@ -297,6 +297,8 @@
   background: var(--surface);
   color: var(--ink);
   width: 100%;
+  /* 16px+ stops iOS Safari from auto-zooming the page when a field is focused. */
+  font-size: 16px;
 }
 .ca-input:focus {
   outline: 2px solid var(--brand);
@@ -313,8 +315,8 @@
   flex-wrap: wrap;
 }
 .ca-category-swatch {
-  width: 26px;
-  height: 26px;
+  width: 36px;
+  height: 36px;
   border-radius: var(--radius-full);
   border: none;
   padding: 0;
@@ -322,6 +324,9 @@
 }
 .ca-category-swatch-selected {
   box-shadow: 0 0 0 2px var(--surface-raised), 0 0 0 4px var(--ink);
+}
+.ca-form-error {
+  color: var(--danger);
 }
 .ca-event-form-actions {
   display: flex;

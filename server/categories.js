@@ -1,6 +1,6 @@
-import type { Category } from '../types';
-
-export const CATEGORIES: Category[] = [
+// Source of truth for categories — the frontend fetches this list from the API
+// instead of keeping its own copy, so a phone and a Mac always agree on it.
+export const CATEGORIES = [
   { id: 'work', label: 'Work', tone: 'category-blue' },
   { id: 'team', label: 'Team', tone: 'category-indigo' },
   { id: 'health', label: 'Health', tone: 'category-plum' },
@@ -9,6 +9,4 @@ export const CATEGORIES: Category[] = [
   { id: 'personal', label: 'Personal', tone: 'accent' },
 ];
 
-export function getCategory(id: string): Category {
-  return CATEGORIES.find((c) => c.id === id) ?? CATEGORIES[0];
-}
+export const CATEGORY_IDS = new Set(CATEGORIES.map((c) => c.id));
