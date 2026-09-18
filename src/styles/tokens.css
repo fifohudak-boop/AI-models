@@ -1,0 +1,75 @@
+:root {
+  /* color */
+  --surface: #f7f5f2;
+  --surface-raised: #ffffff;
+  --border: #e3ddd3;
+  --ink: #21261f;
+  --ink-muted: #4b4f47;
+  --brand: #3a6b53;
+  --on-brand: #ffffff;
+  --accent: #a8622c;
+  --category-blue: #2f5fa8;
+  --category-indigo: #4a4a9e;
+  --category-plum: #7a3f78;
+  --category-amber: #96690b;
+  --category-rose: #a13e64;
+  --danger: #a3312a;
+
+  /* type */
+  --font-sans: 'Space Grotesk', -apple-system, 'Segoe UI', sans-serif;
+  --font-mono: 'Space Mono', 'SF Mono', Consolas, monospace;
+
+  /* spacing */
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 16px;
+  --space-4: 24px;
+
+  /* radius */
+  --radius-sm: 4px;
+  --radius-md: 10px;
+  --radius-full: 9999px;
+}
+
+.display {
+  font-family: var(--font-sans);
+  font-size: 32px;
+  line-height: 38px;
+  font-weight: 600;
+}
+.heading {
+  font-family: var(--font-sans);
+  font-size: 20px;
+  line-height: 26px;
+  font-weight: 600;
+}
+.subheading {
+  font-family: var(--font-sans);
+  font-size: 15px;
+  line-height: 20px;
+  font-weight: 600;
+}
+.body {
+  font-family: var(--font-sans);
+  font-size: 15px;
+  line-height: 22px;
+  font-weight: 400;
+}
+.body-strong {
+  font-family: var(--font-sans);
+  font-size: 15px;
+  line-height: 22px;
+  font-weight: 600;
+}
+.caption {
+  font-family: var(--font-sans);
+  font-size: 13px;
+  line-height: 18px;
+  font-weight: 400;
+}
+.label {
+  font-family: var(--font-mono);
+  font-size: 13px;
+  line-height: 16px;
+  font-weight: 500;
+}
