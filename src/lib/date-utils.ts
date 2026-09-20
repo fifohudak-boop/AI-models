@@ -28,27 +28,33 @@ export function addMonths(date: Date, delta: number): Date {
   return new Date(date.getFullYear(), date.getMonth() + delta, 1);
 }
 
-export interface GridDay {
-  date: Date;
-  iso: string;
-  inCurrentMonth: boolean;
+export function addDays(date: Date, delta: number): Date {
+  return new Date(date.getFullYear(), date.getMonth(), date.getDate() + delta);
 }
 
-/** Six full weeks (42 days), starting on Sunday, covering the given month. */
-export function getMonthGrid(monthAnchor: Date): GridDay[] {
+export interface MonthDay {
+  date: Date;
+  iso: string;
+}
+
+/**
+ * The real days of one month only (no leading/trailing days borrowed from
+ * neighboring months) — `null` placeholders pad the front so day 1 lands in
+ * its correct weekday column.
+ */
+export function getCurrentMonthDays(monthAnchor: Date): Array<MonthDay | null> {
   const year = monthAnchor.getFullYear();
   const month = monthAnchor.getMonth();
   const firstOfMonth = new Date(year, month, 1);
-  const gridStart = new Date(year, month, 1 - firstOfMonth.getDay());
+  const leadingBlanks = firstOfMonth.getDay();
+  const daysInMonth = new Date(year, month + 1, 0).getDate();
 
-  return Array.from({ length: 42 }, (_, i) => {
-    const date = new Date(gridStart.getFullYear(), gridStart.getMonth(), gridStart.getDate() + i);
-    return {
-      date,
-      iso: toISODate(date),
-      inCurrentMonth: date.getMonth() === month,
-    };
-  });
+  const cells: Array<MonthDay | null> = Array.from({ length: leadingBlanks }, () => null);
+  for (let day = 1; day <= daysInMonth; day++) {
+    const date = new Date(year, month, day);
+    cells.push({ date, iso: toISODate(date) });
+  }
+  return cells;
 }
 
 /** Parses "9:00-10:00" / "09:00–10:00" / "9am-10am" style ranges into minutes since midnight. Returns null if unparseable. */
