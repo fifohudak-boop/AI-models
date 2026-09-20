@@ -1,15 +1,28 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { MonthHeader } from './components/MonthHeader';
-import { WeekdayRow } from './components/WeekdayRow';
-import { DayCell } from './components/DayCell';
-import { EventListItem } from './components/EventListItem';
+import { TopNav } from './components/TopNav';
+import { AuthScreen } from './components/AuthScreen';
+import { MonthPage } from './components/MonthPage';
+import { DayAgendaPage } from './components/DayAgendaPage';
+import { NotesPage } from './components/NotesPage';
 import { Dialog } from './components/Dialog';
 import { EventForm } from './components/EventForm';
 import { Button } from './components/Button';
-import { addMonths, formatDayHeading, formatMonthYear, getMonthGrid, isSameDay, toISODate } from './lib/date-utils';
+import { addDays, addMonths, isSameDay, toISODate } from './lib/date-utils';
 import { detectConflicts } from './lib/conflicts';
-import { createEvent, deleteEvent, fetchCategories, fetchEvents, updateEvent } from './lib/api';
-import type { CalendarEvent, Category } from './types';
+import {
+  createEvent,
+  createNote,
+  deleteEvent,
+  deleteNote,
+  fetchCategories,
+  fetchEvents,
+  fetchMe,
+  fetchNotes,
+  logout,
+  updateEvent,
+  updateNote,
+} from './lib/api';
+import type { CalendarEvent, Category, Note, User } from './types';
 
 interface Draft {
   id?: string;
@@ -25,32 +38,49 @@ function emptyDraft(dateIso: string, defaultCategoryId: string): Draft {
 }
 
 type LoadState = { status: 'loading' } | { status: 'error'; message: string } | { status: 'ready' };
+type CalendarView = { mode: 'month' } | { mode: 'day'; date: Date };
 
 export default function App() {
   const today = useMemo(() => new Date(), []);
+
+  const [authChecked, setAuthChecked] = useState(false);
+  const [user, setUser] = useState<User | null>(null);
+
+  const [page, setPage] = useState<'calendar' | 'notes'>('calendar');
   const [monthAnchor, setMonthAnchor] = useState(() => addMonths(today, 0));
-  const [selectedIso, setSelectedIso] = useState(() => toISODate(today));
+  const [calendarView, setCalendarView] = useState<CalendarView>({ mode: 'day', date: today });
+
   const [events, setEvents] = useState<CalendarEvent[]>([]);
   const [categories, setCategories] = useState<Category[]>([]);
+  const [notes, setNotes] = useState<Note[]>([]);
   const [loadState, setLoadState] = useState<LoadState>({ status: 'loading' });
+
   const [draft, setDraft] = useState<Draft | null>(null);
   const [formError, setFormError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
 
-  const load = useCallback(() => {
+  useEffect(() => {
+    fetchMe()
+      .then((u) => setUser(u))
+      .catch(() => setUser(null))
+      .finally(() => setAuthChecked(true));
+  }, []);
+
+  const loadData = useCallback(() => {
     setLoadState({ status: 'loading' });
-    Promise.all([fetchEvents(), fetchCategories()])
-      .then(([loadedEvents, loadedCategories]) => {
+    Promise.all([fetchEvents(), fetchCategories(), fetchNotes()])
+      .then(([loadedEvents, loadedCategories, loadedNotes]) => {
         setEvents(loadedEvents);
         setCategories(loadedCategories);
+        setNotes(loadedNotes);
         setLoadState({ status: 'ready' });
       })
       .catch((err: Error) => setLoadState({ status: 'error', message: err.message }));
   }, []);
 
   useEffect(() => {
-    load();
-  }, [load]);
+    if (user) loadData();
+  }, [user, loadData]);
 
   const getCategory = useCallback(
     (id: string): Category => categories.find((c) => c.id === id) ?? { id, label: id, tone: 'accent' },
@@ -58,7 +88,6 @@ export default function App() {
   );
 
   const conflictIds = useMemo(() => detectConflicts(events), [events]);
-  const grid = useMemo(() => getMonthGrid(monthAnchor), [monthAnchor]);
 
   const eventsByDate = useMemo(() => {
     const map = new Map<string, CalendarEvent[]>();
@@ -71,11 +100,7 @@ export default function App() {
     return map;
   }, [events]);
 
-  const selectedDayEvents = eventsByDate.get(selectedIso) ?? [];
-  const selectedDate = useMemo(() => {
-    const [y, m, d] = selectedIso.split('-').map(Number);
-    return new Date(y, m - 1, d);
-  }, [selectedIso]);
+  const datesWithEvents = useMemo(() => new Set(eventsByDate.keys()), [eventsByDate]);
 
   function openCreate(dateIso: string) {
     setFormError(null);
@@ -92,11 +117,6 @@ export default function App() {
       location: event.location ?? '',
       categoryId: event.categoryId,
     });
-  }
-
-  function openEditById(id: string) {
-    const event = events.find((e) => e.id === id);
-    if (event) openEdit(event);
   }
 
   function closeDialog() {
@@ -147,9 +167,30 @@ export default function App() {
     }
   }
 
-  function handleSelectDay(iso: string, inCurrentMonth: boolean, date: Date) {
-    setSelectedIso(iso);
-    if (!inCurrentMonth) setMonthAnchor(addMonths(date, 0));
+  async function handleLogout() {
+    try {
+      await logout();
+    } catch {
+      // Even if the request fails, drop the client-side session so the auth screen shows.
+    }
+    setUser(null);
+    setEvents([]);
+    setCategories([]);
+    setNotes([]);
+    setPage('calendar');
+    setCalendarView({ mode: 'day', date: today });
+  }
+
+  if (!authChecked) {
+    return (
+      <div className="ca-app">
+        <p className="body ca-load-status">Loading…</p>
+      </div>
+    );
+  }
+
+  if (!user) {
+    return <AuthScreen onAuthenticated={setUser} />;
   }
 
   if (loadState.status === 'loading') {
@@ -166,7 +207,7 @@ export default function App() {
         <div className="ca-panel ca-load-status">
           <p className="body-strong">Couldn't reach the calendar server.</p>
           <p className="caption ca-agenda-date">{loadState.message}</p>
-          <Button variant="primary" onClick={load}>
+          <Button variant="primary" onClick={loadData}>
             Retry
           </Button>
         </div>
@@ -176,74 +217,55 @@ export default function App() {
 
   return (
     <div className="ca-app">
-      <header className="ca-app-header">
-        <div className="ca-app-title">
-          <span className="display">Calendar</span>
-        </div>
-        <Button variant="primary" onClick={() => openCreate(selectedIso)}>
-          New event
-        </Button>
-      </header>
+      <TopNav page={page} onPageChange={setPage} username={user.username} onLogout={handleLogout} />
 
-      <MonthHeader
-        label={formatMonthYear(monthAnchor)}
-        onPrev={() => setMonthAnchor((m) => addMonths(m, -1))}
-        onNext={() => setMonthAnchor((m) => addMonths(m, 1))}
-        onToday={() => {
-          setMonthAnchor(addMonths(today, 0));
-          setSelectedIso(toISODate(today));
-        }}
-      />
+      {page === 'calendar' &&
+        (calendarView.mode === 'month' ? (
+          <MonthPage
+            monthAnchor={monthAnchor}
+            today={today}
+            datesWithEvents={datesWithEvents}
+            onPrevMonth={() => setMonthAnchor((m) => addMonths(m, -1))}
+            onNextMonth={() => setMonthAnchor((m) => addMonths(m, 1))}
+            onToday={() => {
+              setMonthAnchor(addMonths(today, 0));
+              setCalendarView({ mode: 'day', date: today });
+            }}
+            onSelectDay={(date) => setCalendarView({ mode: 'day', date })}
+          />
+        ) : (
+          <DayAgendaPage
+            date={calendarView.date}
+            isToday={isSameDay(calendarView.date, today)}
+            events={(eventsByDate.get(toISODate(calendarView.date)) ?? []).map((e) => ({
+              ...e,
+              tone: conflictIds.has(e.id) ? 'danger' : getCategory(e.categoryId).tone,
+            }))}
+            onBackToMonth={() => setCalendarView({ mode: 'month' })}
+            onPrevDay={() => setCalendarView({ mode: 'day', date: addDays(calendarView.date, -1) })}
+            onNextDay={() => setCalendarView({ mode: 'day', date: addDays(calendarView.date, 1) })}
+            onAddEvent={() => openCreate(toISODate(calendarView.date))}
+            onEditEvent={openEdit}
+          />
+        ))}
 
-      <div className="ca-layout">
-        <div>
-          <WeekdayRow />
-          <div className="ca-month-grid">
-            {grid.map(({ date, iso, inCurrentMonth }) => {
-              const dayEvents = eventsByDate.get(iso) ?? [];
-              return (
-                <DayCell
-                  key={iso}
-                  dayNumber={date.getDate()}
-                  isToday={isSameDay(date, today)}
-                  isOtherMonth={!inCurrentMonth}
-                  isSelected={iso === selectedIso}
-                  onSelect={() => handleSelectDay(iso, inCurrentMonth, date)}
-                  onEventClick={openEditById}
-                  events={dayEvents.map((e) => ({
-                    id: e.id,
-                    label: e.title,
-                    tone: conflictIds.has(e.id) ? 'danger' : getCategory(e.categoryId).tone,
-                  }))}
-                />
-              );
-            })}
-          </div>
-        </div>
-
-        <div className="ca-panel">
-          <div className="ca-agenda-header">
-            <span className="heading">Agenda</span>
-            <Button variant="secondary" onClick={() => openCreate(selectedIso)}>
-              Add
-            </Button>
-          </div>
-          <p className="caption ca-agenda-date">{formatDayHeading(selectedDate)}</p>
-          <div className="ca-event-list">
-            {selectedDayEvents.length === 0 && <p className="body ca-event-empty">No events scheduled.</p>}
-            {selectedDayEvents.map((e) => (
-              <EventListItem
-                key={e.id}
-                time={e.time}
-                title={e.title}
-                location={e.location}
-                tone={conflictIds.has(e.id) ? 'danger' : getCategory(e.categoryId).tone}
-                onClick={() => openEdit(e)}
-              />
-            ))}
-          </div>
-        </div>
-      </div>
+      {page === 'notes' && (
+        <NotesPage
+          notes={notes}
+          onCreate={async (input) => {
+            const created = await createNote(input);
+            setNotes((prev) => [created, ...prev]);
+          }}
+          onUpdate={async (id, input) => {
+            const updated = await updateNote(id, input);
+            setNotes((prev) => prev.map((n) => (n.id === id ? updated : n)));
+          }}
+          onDelete={async (id) => {
+            await deleteNote(id);
+            setNotes((prev) => prev.filter((n) => n.id !== id));
+          }}
+        />
+      )}
 
       {draft && (
         <Dialog title={draft.id ? 'Edit event' : 'New event'} onClose={closeDialog}>

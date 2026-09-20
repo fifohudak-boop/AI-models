@@ -25,3 +25,16 @@ export interface CalendarEvent {
   location?: string;
   categoryId: string;
 }
+
+export interface User {
+  id: string;
+  username: string;
+}
+
+export interface Note {
+  id: string;
+  title: string;
+  body: string;
+  /** ISO timestamp */
+  updatedAt: string;
+}
