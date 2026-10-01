@@ -52,7 +52,7 @@ main() {
   [ -n "$src" ] && [ -f "$src/start.command" ] || die "The download didn't contain Reel Finder."
 
   # 3. Swap the new version in, carrying over your data (settings, logins, logs) and Python setup.
-  bold "Installing into $home_dir…"
+  bold "Installing into ${home_dir}…"
   mkdir -p "$(dirname "$home_dir")" || die "Couldn't create $(dirname "$home_dir")"
   local staged="$home_dir.new.$$"
   rm -rf "$staged"

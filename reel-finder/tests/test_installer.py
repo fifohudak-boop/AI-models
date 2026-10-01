@@ -13,6 +13,8 @@ import pytest
 
 ROOT = Path(__file__).resolve().parent.parent
 SHA_A, SHA_B = "a" * 40, "b" * 40
+# REELFINDER_TEST_BASH=/path/to/bash-3.2 runs these with the bash macOS ships.
+BASH = os.environ.get("REELFINDER_TEST_BASH", "bash")
 SKIP = {".venv", "data", "__pycache__", ".pytest_cache"}
 
 
@@ -28,16 +30,34 @@ def make_tarball(tmp: Path, name: str, extra: str) -> Path:
 
 
 def run(script: Path, env: dict, **kw) -> subprocess.CompletedProcess:
-    return subprocess.run(["bash", str(script)], env={**os.environ, **env}, capture_output=True, text=True,
+    return subprocess.run([BASH, str(script)], env={**os.environ, **env}, capture_output=True, text=True, errors="replace",
                           timeout=120, **kw)
 
 
-@pytest.fixture()
-def setup(tmp_path):
+def _mac_like_locale(tmp: Path) -> dict | None:
+    """A Latin-1 locale: like macOS's bash 3.2, it treats the bytes of “…” as letters in names."""
+    if not shutil.which("localedef") or not Path("/usr/share/i18n/locales/en_US").exists():
+        return None
+    out = tmp / "locale"
+    out.mkdir(exist_ok=True)
+    made = subprocess.run(["localedef", "-i", "en_US", "-f", "ISO-8859-1", str(out / "en_US.ISO-8859-1")],
+                          capture_output=True)
+    if not (out / "en_US.ISO-8859-1").exists() and made.returncode != 0:
+        return None
+    return {"LOCPATH": str(out), "LC_ALL": "en_US.ISO-8859-1"}
+
+
+@pytest.fixture(params=["default", "mac-like"])
+def setup(tmp_path, request):
     home = tmp_path / "home"
     (home / "Desktop").mkdir(parents=True)
     install_dir = home / "Applications" / "Reel Finder"  # a space in the path, like the real one
     env = {"HOME": str(home), "REELFINDER_HOME": str(install_dir), "REELFINDER_NO_LAUNCH": "1"}
+    if request.param == "mac-like":
+        locale_env = _mac_like_locale(tmp_path)
+        if locale_env is None:
+            pytest.skip("can't build a Latin-1 locale here")
+        env.update(locale_env)
     return tmp_path, home, install_dir, env
 
 
@@ -137,3 +157,16 @@ def test_developer_checkout_never_self_updates():
     assert not (ROOT / ".installed_commit").exists()
     result = run(ROOT / "update.sh", {"REELFINDER_API": "http://127.0.0.1:9/nothing"})
     assert result.returncode == 0 and result.stdout == ""
+
+
+def test_no_variable_runs_into_non_ascii_text():
+    # "$name…" breaks macOS's bash 3.2 ("name…: unbound variable"); write "${name}…" instead.
+    import re
+
+    pattern = re.compile(rb"\$[A-Za-z_][A-Za-z0-9_]*[\x80-\xff]")
+    offenders = []
+    for script in ("install.sh", "update.sh", "start.command"):
+        for n, line in enumerate((ROOT / script).read_bytes().splitlines(), 1):
+            if pattern.search(line):
+                offenders.append(f"{script}:{n}")
+    assert offenders == []
