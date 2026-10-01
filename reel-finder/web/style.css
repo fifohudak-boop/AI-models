@@ -164,6 +164,7 @@ input[type=checkbox] { accent-color: var(--accent); width: 16px; height: 16px; m
 }
 .pname { font-weight: 600; }
 .platform .connect.connected { color: var(--ok); border-color: transparent; background: var(--ok-soft); }
+.platform-actions { display: flex; gap: 6px; flex: none; }
 
 /* ---------------- buttons ---------------- */
 
@@ -277,6 +278,28 @@ body.running #start { background: var(--ink); color: var(--bg); }
 .empty b { color: var(--ink); }
 
 .log-panel { padding: 10px 14px; }
+.log-actions { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-top: 10px; }
+.log-actions .hint { margin: 0; }
+
+.selftest-panel { padding: 14px 18px; }
+.selftest-head { display: flex; justify-content: space-between; align-items: center; gap: 10px; flex-wrap: wrap; }
+.selftest-head h2 { font-size: 15px; }
+.selftest-buttons { display: flex; gap: 6px; }
+.steps { list-style: none; margin: 12px 0 0; padding: 0; display: grid; gap: 8px; }
+.step { display: grid; grid-template-columns: 22px 1fr; gap: 2px 8px; align-items: start; }
+.step-icon {
+  width: 20px; height: 20px; border-radius: 50%; display: grid; place-items: center;
+  font-size: 12px; font-weight: 700; background: var(--panel-2); color: var(--muted); border: 1px solid var(--line);
+}
+.step-name { font-weight: 600; font-size: 13px; }
+.step-detail { grid-column: 2; font-size: 12.5px; color: var(--muted); overflow-wrap: anywhere; }
+.step[data-status=ok] .step-icon { background: var(--ok-soft); color: var(--ok); border-color: transparent; }
+.step[data-status=warn] .step-icon { background: var(--warn-soft); color: var(--warn); border-color: transparent; }
+.step[data-status=fail] .step-icon { background: var(--bad-soft); color: var(--bad); border-color: transparent; }
+.step[data-status=fail] .step-detail { color: var(--bad); }
+.step[data-status=running] .step-icon { border-color: var(--info); color: var(--info); animation: pulse 1.2s infinite; }
+.step[data-status=skip] { opacity: .55; }
+#selftest_hint:empty { display: none; }
 .log-panel summary { cursor: pointer; font-weight: 600; font-size: 13px; }
 .log { margin-top: 8px; display: grid; gap: 3px; font-size: 12px; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; max-height: 240px; overflow-y: auto; }
 .log .warn { color: var(--warn); }

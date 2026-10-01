@@ -142,6 +142,7 @@ class BrowserManager:
         self._pw = None
         self._lock = asyncio.Lock()
         self._claimed: list = []  # pages already handed to an agent or a login
+        self.browser_name: str | None = None
 
     @property
     def running(self) -> bool:
@@ -187,6 +188,10 @@ class BrowserManager:
                     if not await clear_profile_orphans(self.profile_dir):
                         break
             if self.context is not None:
+                self.browser_name = (
+                    "Google Chrome" if extra.get("channel") == "chrome"
+                    else extra.get("executable_path") or "Chromium (bundled with Playwright)"
+                )
                 break
         if self.context is None:
             await self._pw.stop()

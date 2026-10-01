@@ -17,6 +17,8 @@ PROFILE_DIR = DATA_DIR / "browser-profile"
 COOKIES_FILE = DATA_DIR / "cookies.txt"
 THUMBS_DIR = DATA_DIR / "thumbs"
 SETTINGS_FILE = DATA_DIR / "settings.json"
+LOG_DIR = DATA_DIR / "logs"
+LOG_FILE = LOG_DIR / "reelfinder.log"
 
 HOST = "127.0.0.1"
 PORT = int(os.environ.get("REELFINDER_PORT", "8765"))

@@ -15,6 +15,7 @@ import httpx
 import yt_dlp
 from yt_dlp.utils import DownloadCancelled
 
+from .logs import ytdlp_logger
 from .models import Candidate
 
 ARCHIVE_NAME = ".reelfinder-archive.txt"
@@ -105,6 +106,7 @@ class Downloader:
             "retries": 3,
             "fragment_retries": 3,
             "socket_timeout": 30,
+            "logger": ytdlp_logger(),
         }
         if cookie_copy:
             opts["cookiefile"] = cookie_copy

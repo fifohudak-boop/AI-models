@@ -25,6 +25,7 @@ const form = $("#options");
 let settings = null;
 let status = null;
 let running = false;
+let testing = false;
 const cards = new Map();
 const agents = new Map();
 
@@ -195,6 +196,7 @@ function renderStatus() {
   }
   renderModels();
   if (status.hunting !== running) setRunning(status.hunting);
+  if (status.testing !== testing) { testing = status.testing; updateBusy(); }
 }
 
 let modelsSignature = "";
@@ -249,11 +251,86 @@ async function refreshStatus() {
   } catch { /* server restarting */ }
 }
 
+// ------------------------------------------------------------------ self-test & report
+
+const STEP_ICON = { ok: "✓", warn: "!", fail: "✕", skip: "–", pending: "", running: "…" };
+
+function renderSelfTest(t) {
+  const panel = $("#selftest");
+  panel.hidden = false;
+  $("#selftest_title").textContent =
+    `${PLATFORM_NAMES[t.platform]} self-test · searching “${t.query}”${t.running ? "" : " · done"}`;
+  $("#selftest_steps").replaceChildren(...t.steps.map((step) => {
+    const li = document.createElement("li");
+    li.className = "step";
+    li.dataset.status = step.status;
+    li.innerHTML = '<span class="step-icon" aria-hidden="true"></span><span class="step-name"></span><span class="step-detail"></span>';
+    $(".step-icon", li).textContent = STEP_ICON[step.status] ?? "";
+    $(".step-name", li).textContent = step.name;
+    $(".step-detail", li).textContent = step.status === "pending" ? "Waiting…" : step.detail;
+    return li;
+  }));
+  const fails = t.steps.filter((s) => s.status === "fail").length;
+  const warns = t.steps.filter((s) => s.status === "warn").length;
+  $("#selftest_hint").textContent = t.running ? ""
+    : fails ? "Something isn't working. Click Copy report and paste it into a chat with Claude."
+    : warns ? "It works — see the notes marked “!”."
+    : `Everything works for ${PLATFORM_NAMES[t.platform]} on this computer.`;
+  testing = t.running;
+  updateBusy();
+}
+
+$$(".selftest-btn").forEach((btn) => btn.addEventListener("click", async () => {
+  const platform = btn.dataset.platform;
+  try {
+    testing = true;
+    updateBusy();
+    const { query } = await api(`/api/selftest/${platform}`, { method: "POST", body: { settings: readForm() } });
+    renderSelfTest({ platform, query, running: true, steps: [] });
+    $("#selftest").scrollIntoView({ behavior: "smooth", block: "nearest" });
+  } catch (err) {
+    testing = false;
+    updateBusy();
+    toast(err.message);
+  }
+}));
+
+$("#close_selftest").addEventListener("click", () => { $("#selftest").hidden = true; });
+
+async function copyReport() {
+  let text;
+  try {
+    const res = await fetch("/api/report");
+    text = await res.text();
+  } catch (err) {
+    toast(`Couldn't build the report: ${err.message}`);
+    return;
+  }
+  try {
+    await navigator.clipboard.writeText(text);
+    toast("Report copied — paste it into a chat with Claude.", 6000);
+  } catch {
+    window.open("/api/report", "_blank");  // the clipboard is blocked: show it to copy by hand
+  }
+}
+$("#copy_report").addEventListener("click", copyReport);
+$("#copy_report_log").addEventListener("click", copyReport);
+$("#open_log").addEventListener("click", () => {
+  api("/api/open-log", { method: "POST" }).catch((err) => toast(err.message));
+});
+
 // ------------------------------------------------------------------ live view
 
 function setRunning(on) {
   running = on;
   document.body.classList.toggle("running", on);
+  updateBusy();
+}
+
+// The hunt and the self-test share the agents' browser, so only one runs at a time.
+function updateBusy() {
+  $$(".selftest-btn").forEach((b) => { b.disabled = running || testing; });
+  $("#start").disabled = testing && !running;
 }
 
 function resetLive() {
@@ -404,6 +481,7 @@ function connect() {
         toast(`${data.finished_reason}: ${data.downloaded} video${data.downloaded === 1 ? "" : "s"} saved.`, 6000);
         refreshStatus();
         break;
+      case "selftest": renderSelfTest(data); break;
       case "model_pull":
         if (data.error) { toast(data.error, 7000); refreshStatus(); }
         else if (data.done) { toast(`${data.model} is ready.`); refreshStatus(); }

@@ -87,3 +87,36 @@ def test_login_state_from_chrome_profile(tmp_path):
     con.close()
     assert logins_from_profile(tmp_path) == {"tiktok": True, "instagram": False}
     assert logins_from_profile(tmp_path / "missing") == {"tiktok": False, "instagram": False}
+
+
+def test_report_has_diagnostics_and_no_secrets(tmp_path):
+    import logging
+
+    from reelfinder.config import LOG_FILE
+    from reelfinder.logs import setup_logging
+
+    setup_logging(LOG_FILE, console=False)
+    logging.getLogger("reelfinder").warning("marker line for the report test")
+    with client() as c:
+        text = c.get("/api/report").text
+    assert "Reel Finder report" in text and "yt-dlp:" in text and "Playwright:" in text
+    assert "TikTok self-test: not run yet" in text
+    assert "marker line for the report test" in text
+    assert "sessionid" not in text
+
+
+def test_selftest_endpoint_guards():
+    from reelfinder import main
+
+    with client() as c:
+        assert c.post("/api/selftest/youtube", headers=H).status_code == 404
+
+        class Busy:
+            running = True
+
+        main.state.hunt = Busy()
+        try:
+            r = c.post("/api/selftest/tiktok", headers=H)
+            assert r.status_code == 409 and "hunt" in r.json()["detail"]
+        finally:
+            main.state.hunt = None

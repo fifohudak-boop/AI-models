@@ -31,12 +31,22 @@ Later starts take a few seconds.
    A browser window opens: log in, then close the window. Instagram search doesn't work
    without logging in. A spare account is safest, because heavy scrolling can get an
    account rate-limited.
-2. **Describe what you want** in plain words. For example:
+2. **Run a self-test (once).** Click **Test** next to each platform. Each test runs one
+   quick real search on your Mac and checks every step:
+   - **Logged in**
+   - **Search page**
+   - **Videos found**
+   - **Video details**
+   - **Download:** saved to a temporary folder, then deleted
+   - **AI judge**
+
+   Each step shows ✓ (working), **!** (works, with a note) or ✕ (broken, with the reason).
+3. **Describe what you want** in plain words. For example:
    *"Cinematic slow-motion car drifts at night with smoke, no talking, filmed low to the ground."*
    You can also add:
    - must-use keywords or hashtags, such as `#cardrift`
    - words that mean a video should be skipped, such as `tutorial, giveaway`
-3. **Pick a folder** with **Browse…**, set how many videos you want, and press **Start hunt**.
+4. **Pick a folder** with **Browse…**, set how many videos you want, and press **Start hunt**.
 
 What happens next:
 
@@ -103,6 +113,17 @@ captions instead of understanding them, and the top bar shows **AI off — keywo
 
 ## Troubleshooting
 
+**First, click Test** next to the platform that's misbehaving. The step marked ✕ says
+what's wrong. If the fix isn't obvious, click **Copy report** and paste it into a chat with
+Claude. The report contains:
+
+- version info
+- the self-test results
+- the end of the log file
+
+It never includes your cookies or passwords. **Show log file** (under *Activity log*)
+opens the full log in Finder.
+
 - **An agent card says "Needs you: captcha".** Solve the captcha in that agent's window
   and it carries on by itself. This is why visible mode is recommended.
 - **"Needs you: log in" on Instagram.** Click **Connect** next to Instagram and log in.
@@ -143,7 +164,7 @@ Other projects were looked at and left out:
 cd reel-finder
 uv venv --python 3.12 .venv && uv pip install --python .venv/bin/python -r requirements.txt
 .venv/bin/python -m reelfinder          # serves http://127.0.0.1:8765
-.venv/bin/python -m pytest              # 50+ tests, including real-browser end-to-end runs
+.venv/bin/python -m pytest              # includes real-browser end-to-end runs
 ```
 
 `tests/fakesite.py` is a stand-in TikTok/Instagram: search pages that load videos via JSON
@@ -161,6 +182,8 @@ How the code is laid out:
 | `reelfinder/ai.py` | Ollama planner and judge, plus the keyword fallback |
 | `reelfinder/downloader.py` | yt-dlp, the download log, frame grabs |
 | `reelfinder/browser.py` | The saved browser profile, logins, cookies handed to yt-dlp |
+| `reelfinder/selftest.py` | The per-platform self-test (one real search, checked step by step) |
+| `reelfinder/logs.py` | The log file (`data/logs/reelfinder.log`), version info, yt-dlp warnings into the log |
 | `reelfinder/main.py` | The local web server (localhost only) |
 | `web/` | The page |
 

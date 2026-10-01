@@ -9,22 +9,28 @@ import os
 import shutil
 import subprocess
 import sys
+import time
 from contextlib import asynccontextmanager
 from pathlib import Path
 
 import httpx
 from fastapi import FastAPI, HTTPException, Request, WebSocket, WebSocketDisconnect
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, PlainTextResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
 from . import __version__
 from .ai import model_installed, ollama_models, sees_images
 from .browser import LOGIN_URLS, BrowserManager
-from .config import COOKIES_FILE, OLLAMA_HOST, THUMBS_DIR, WEB_DIR, HuntSettings, load_settings, save_settings
+from .config import (
+    COOKIES_FILE, LOG_DIR, LOG_FILE, OLLAMA_HOST, PLATFORM_LABELS, PLATFORMS, THUMBS_DIR, WEB_DIR,
+    HuntSettings, load_settings, save_settings,
+)
 from .downloader import Downloader, find_ffmpeg
 from .events import EventBus
 from .hunt import Hunt, validate
+from .logs import diagnostics, tail
+from .selftest import SelfTest
 
 log = logging.getLogger("reelfinder")
 
@@ -43,10 +49,16 @@ class AppState:
         self.hunt: Hunt | None = None
         self.hunt_task: asyncio.Task | None = None
         self.pull_task: asyncio.Task | None = None
+        self.selftests: dict[str, SelfTest] = {}
+        self.selftest_task: asyncio.Task | None = None
 
     @property
     def hunting(self) -> bool:
         return self.hunt is not None and self.hunt.running
+
+    @property
+    def testing(self) -> bool:
+        return self.selftest_task is not None and not self.selftest_task.done()
 
 
 state = AppState()
@@ -60,6 +72,9 @@ async def lifespan(_app: FastAPI):
         state.hunt.stop("Reel Finder closed")
     if state.hunt_task:
         await asyncio.gather(state.hunt_task, return_exceptions=True)
+    if state.testing:
+        state.selftest_task.cancel()
+        await asyncio.gather(state.selftest_task, return_exceptions=True)
     await state.browser.close()
 
 
@@ -110,6 +125,7 @@ async def status() -> dict:
         "logins": await state.browser.logins(),
         "browser_open": state.browser.running,
         "hunting": state.hunting,
+        "testing": state.testing,
     }
 
 
@@ -167,8 +183,8 @@ async def open_folder(body: FolderBody) -> dict:
 async def login(platform: str) -> dict:
     if platform not in LOGIN_URLS:
         raise HTTPException(404, "Unknown platform")
-    if state.hunting and state.browser.headless:
-        raise HTTPException(409, "Stop the hunt first (the agents are running hidden).")
+    if (state.hunting or state.testing) and state.browser.headless:
+        raise HTTPException(409, "Wait for the hunt or self-test to finish (the agents are running hidden).")
     try:
         await state.browser.open_login(platform)
     except Exception as exc:  # noqa: BLE001
@@ -178,8 +194,8 @@ async def login(platform: str) -> dict:
 
 @app.post("/api/browser/close")
 async def close_browser() -> dict:
-    if state.hunting:
-        raise HTTPException(409, "A hunt is using the browser.")
+    if state.hunting or state.testing:
+        raise HTTPException(409, "A hunt or self-test is using the browser.")
     if state.browser.running:
         await state.browser.export_cookies()
     await state.browser.close()
@@ -234,6 +250,8 @@ class StartBody(BaseModel):
 async def start_hunt(body: StartBody) -> dict:
     if state.hunting:
         raise HTTPException(409, "A hunt is already running.")
+    if state.testing:
+        raise HTTPException(409, "Wait for the self-test to finish.")
     settings = body.settings
     state.settings = settings
     save_settings(settings)
@@ -255,16 +273,20 @@ async def start_hunt(body: StartBody) -> dict:
     return {"ok": True, "folder": str(state.hunt.folder)}
 
 
+async def _release_browser() -> None:
+    """Don't leave agent windows behind; your logins stay saved in the profile."""
+    try:
+        if state.browser.running:
+            await state.browser.export_cookies()
+    finally:
+        await state.browser.close()
+
+
 async def _run_hunt(hunt: Hunt) -> None:
     try:
         await hunt.run()
     finally:
-        # Don't leave agent windows behind; your logins stay saved in the profile.
-        try:
-            if state.browser.running:
-                await state.browser.export_cookies()
-        finally:
-            await state.browser.close()
+        await _release_browser()
 
 
 @app.post("/api/hunt/stop")
@@ -272,6 +294,73 @@ async def stop_hunt() -> dict:
     if state.hunt:
         state.hunt.stop("Stopped by you")
     return {"ok": True}
+
+
+# ---------------------------------------------------------------- self-test & report
+
+class SelfTestBody(BaseModel):
+    settings: HuntSettings | None = None
+
+
+@app.post("/api/selftest/{platform}")
+async def start_selftest(platform: str, body: SelfTestBody | None = None) -> dict:
+    if platform not in PLATFORMS:
+        raise HTTPException(404, "Unknown platform")
+    if state.hunting:
+        raise HTTPException(409, "Stop the hunt first — the self-test needs the agents' browser.")
+    if state.testing:
+        raise HTTPException(409, "A self-test is already running.")
+    settings = body.settings if body and body.settings else state.settings
+    test = SelfTest(platform, settings, state.bus.emit, browser=state.browser,
+                    downloader=Downloader(COOKIES_FILE), site_url=SITE_OVERRIDES.get(platform))
+    state.selftests[platform] = test
+    state.selftest_task = asyncio.create_task(_run_selftest(test))
+    return {"ok": True, "query": test.query}
+
+
+async def _run_selftest(test: SelfTest) -> None:
+    try:
+        await test.run()
+    finally:
+        await _release_browser()
+
+
+async def build_report() -> str:
+    lines = [f"Reel Finder report — {time.strftime('%Y-%m-%d %H:%M:%S')}", ""]
+    for key, value in diagnostics(state.browser.browser_name).items():
+        lines.append(f"{key}: {value}")
+    models = await ollama_models()
+    if models is None:
+        lines.append("Ollama: not running")
+    else:
+        lines.append(f"Ollama: running · models: {', '.join(models) or 'none'}")
+    lines.append(f"Chosen AI model: {state.settings.model}")
+    logins = await state.browser.logins()
+    lines.append("Logged in: " + ", ".join(f"{PLATFORM_LABELS[p]} {'yes' if ok else 'no'}" for p, ok in logins.items()))
+    lines.append("")
+    for platform in PLATFORMS:
+        test = state.selftests.get(platform)
+        lines.append(test.summary() if test else f"{PLATFORM_LABELS[platform]} self-test: not run yet")
+        lines.append("")
+    lines.append("--- Last 300 log lines ---")
+    lines.append(tail(300, LOG_FILE).rstrip())
+    return "\n".join(lines) + "\n"
+
+
+@app.get("/api/report", response_class=PlainTextResponse)
+async def report() -> str:
+    return await build_report()
+
+
+@app.post("/api/open-log")
+async def open_log() -> dict:
+    LOG_DIR.mkdir(parents=True, exist_ok=True)
+    if sys.platform == "darwin":
+        target = LOG_FILE if LOG_FILE.exists() else LOG_DIR
+        subprocess.Popen(["open", "-R", str(target)] if target == LOG_FILE else ["open", str(target)])
+    elif shutil.which("xdg-open"):
+        subprocess.Popen(["xdg-open", str(LOG_DIR)])
+    return {"path": str(LOG_FILE)}
 
 
 @app.websocket("/ws")
@@ -285,6 +374,8 @@ async def events(ws: WebSocket) -> None:
 
     async def forward() -> None:
         await ws.send_json({"type": "snapshot", "data": state.hunt.snapshot() if state.hunt else None})
+        for test in state.selftests.values():  # a refreshed page still shows the last results
+            await ws.send_json({"type": "selftest", "data": test.state()})
         while True:
             await ws.send_json(await queue.get())
 

@@ -47,17 +47,26 @@
                 <input type="checkbox" name="platforms" value="tiktok">
                 <span class="pname">TikTok</span>
               </label>
-              <button type="button" class="btn ghost sm connect" data-platform="tiktok">Connect</button>
+              <div class="platform-actions">
+                <button type="button" class="btn ghost sm selftest-btn" data-platform="tiktok"
+                  title="Run one quick real search and check every step">Test</button>
+                <button type="button" class="btn ghost sm connect" data-platform="tiktok">Connect</button>
+              </div>
             </div>
             <div class="platform" data-platform="instagram">
               <label class="check">
                 <input type="checkbox" name="platforms" value="instagram">
                 <span class="pname">Instagram Reels</span>
               </label>
-              <button type="button" class="btn ghost sm connect" data-platform="instagram">Connect</button>
+              <div class="platform-actions">
+                <button type="button" class="btn ghost sm selftest-btn" data-platform="instagram"
+                  title="Run one quick real search and check every step">Test</button>
+                <button type="button" class="btn ghost sm connect" data-platform="instagram">Connect</button>
+              </div>
             </div>
           </div>
-          <p class="hint">Connect opens the agents' browser so you can log in once. A spare account is safest.</p>
+          <p class="hint">Connect opens the agents' browser so you can log in once. A spare account is safest.
+            Test runs one quick real search to check everything works.</p>
         </section>
 
         <section class="group">
@@ -148,6 +157,18 @@
 
     <!-- ======================= Live view ======================= -->
     <main class="live">
+      <section class="panel selftest-panel" id="selftest" hidden aria-live="polite">
+        <div class="selftest-head">
+          <h2 id="selftest_title">Self-test</h2>
+          <div class="selftest-buttons">
+            <button type="button" class="btn ghost sm" id="copy_report">Copy report</button>
+            <button type="button" class="btn ghost sm" id="close_selftest" aria-label="Close self-test">Close</button>
+          </div>
+        </div>
+        <ol class="steps" id="selftest_steps"></ol>
+        <p class="hint" id="selftest_hint"></p>
+      </section>
+
       <section class="panel progress-panel">
         <div class="progress-head">
           <div class="big-count"><span id="downloaded">0</span><span class="of"> / <span id="target">0</span></span></div>
@@ -185,6 +206,11 @@
 
       <details class="panel log-panel">
         <summary>Activity log</summary>
+        <div class="log-actions">
+          <button type="button" class="btn ghost sm" id="copy_report_log">Copy report</button>
+          <button type="button" class="btn ghost sm" id="open_log">Show log file</button>
+          <span class="hint">If something isn't working, copy the report and paste it into a chat with Claude.</span>
+        </div>
         <div class="log" id="log"></div>
       </details>
     </main>

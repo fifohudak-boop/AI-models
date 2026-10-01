@@ -157,6 +157,10 @@ class Hunt:
         }
 
     def _agent_status(self, status: dict) -> None:
+        before = self.agents.get(status["id"], {})
+        if (before.get("state"), before.get("query")) != (status["state"], status["query"]):
+            log.info("Agent %s (%s) %s — %r %s", status["id"], status["platform"], status["state"],
+                     status["query"], status.get("note") or "")
         self.agents[status["id"]] = status
         self.emit("agent", status)
 
@@ -199,6 +203,7 @@ class Hunt:
         s = self.s
         self.folder.mkdir(parents=True, exist_ok=True)
         self.archive = read_archive(self.archive_path)
+        log.info("Hunt settings: %s", s.model_dump(exclude={"output_dir"}))
         self.say(f"Saving to {self.folder}")
 
         self.brain, warning = await self.brain_factory(s.model)
@@ -354,6 +359,7 @@ class Hunt:
             except asyncio.CancelledError:
                 raise
             except Exception as exc:  # noqa: BLE001
+                log.warning("Couldn't check %s: %r", c.url, exc)
                 c.status, c.reason = "failed", f"Couldn't check: {exc}"[:200]
                 self.counts["failed"] += 1
                 self._show(c)
@@ -373,7 +379,7 @@ class Hunt:
                 if c.maybe_not_video or "no video" in msg:
                     self._reject(c, "Not a video (photo post)")
                     return
-                log.info("probe failed for %s: %s", c.url, exc)
+                log.warning("Couldn't read details of %s: %s", c.url, exc)
             reason = reject_reason(c, s)
             if reason:
                 self._reject(c, reason)
@@ -385,6 +391,7 @@ class Hunt:
         try:
             verdict = await self.brain.judge(s.description, s.keywords, c, image)
         except Exception as exc:  # noqa: BLE001 - AI crashed or timed out: don't stall the hunt
+            log.warning("AI judge failed on %s: %r", c.url, exc)
             if not self._ai_failed_once:
                 self._ai_failed_once = True
                 self.say(f"The AI didn't answer ({exc}); judging by keywords until it recovers.", "warn")
@@ -441,6 +448,8 @@ class Hunt:
             except asyncio.CancelledError:
                 raise
             except Exception as exc:  # noqa: BLE001 - one bad video never stops the hunt
+                if not isinstance(exc, DownloadCancelled):
+                    log.warning("Download failed for %s: %s", c.url, exc)
                 c.status = "failed"
                 c.reason = "Stopped" if isinstance(exc, DownloadCancelled) else f"Download failed: {exc}"[:220]
                 self.counts["failed"] += 1

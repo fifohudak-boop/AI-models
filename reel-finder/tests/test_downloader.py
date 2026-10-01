@@ -110,3 +110,15 @@ def test_cookies_are_copied_per_call(tmp_path):
     dl = Downloader(cookies_file=cookies, ffmpeg="")
     dl._with_cookies(lambda opts: seen.append(opts.get("cookiefile")) or {})
     assert seen[0] and Path(seen[0]) != cookies and not Path(seen[0]).exists()  # temp copy, cleaned up
+
+
+def test_ytdlp_warnings_reach_our_log(caplog):
+    from reelfinder.logs import ytdlp_logger
+
+    logger = ytdlp_logger()
+    with caplog.at_level("WARNING", logger="reelfinder.ytdlp"):
+        logger.debug("[debug] noise")
+        logger.warning("[Instagram] login required")
+        logger.error("ERROR: unable to download")
+    assert [r.getMessage() for r in caplog.records] == ["[Instagram] login required", "ERROR: unable to download"]
+    assert "logger" in Downloader()._opts(None)

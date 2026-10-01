@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import argparse
-import logging
 import socket
 import threading
 import webbrowser
@@ -11,6 +10,7 @@ import webbrowser
 import uvicorn
 
 from .config import HOST, PORT
+from .logs import setup_logging
 
 
 def _port_in_use(port: int) -> bool:
@@ -30,8 +30,7 @@ def main() -> None:
         webbrowser.open(url)
         return
 
-    logging.basicConfig(level=logging.INFO, format="%(asctime)s  %(message)s", datefmt="%H:%M:%S")
-    logging.getLogger("httpx").setLevel(logging.WARNING)
+    setup_logging()
     print(f"\n  🎬  Reel Finder is running at {url}\n      Keep this window open while you use it. Press Ctrl+C to quit.\n")
     if not args.no_browser:
         threading.Timer(1.5, webbrowser.open, args=(url,)).start()
