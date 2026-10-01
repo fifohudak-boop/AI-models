@@ -1,0 +1,180 @@
+# AutoPost — post one video to all your social accounts in one click.
+#
+#   dashboard  — the simple control panel you use every day (this repo)
+#   postiz     — the open-source engine that talks to each social network
+#                (github.com/gitroomhq/postiz-app, AGPL-3.0)
+#   postgres, redis, temporal — what Postiz needs to store posts and run them
+#   caddy      — optional automatic HTTPS (start with: --profile https)
+#
+# All settings live in .env (copy .env.example, or run ./install.sh).
+
+name: autopost
+
+services:
+  dashboard:
+    build: ./dashboard
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      PORT: 3000
+      DATA_DIR: /data
+      POSTIZ_INTERNAL_URL: http://postiz:5000
+      POSTIZ_PUBLIC_URL: ${POSTIZ_URL}
+      TEMPORAL_HTTP_URL: http://temporal:7243
+    volumes:
+      - dashboard-data:/data
+    ports:
+      - '${BIND_ADDRESS:-127.0.0.1}:3000:3000'
+    depends_on:
+      postiz:
+        condition: service_started
+
+  postiz:
+    # Pinned on purpose: the dashboard is tested against this exact version.
+    # Bump it deliberately (see README "Updating"), never by accident.
+    image: ghcr.io/gitroomhq/postiz-app:${POSTIZ_VERSION:-v2.24.0}
+    restart: unless-stopped
+    # Platform keys (X_API_KEY, YOUTUBE_CLIENT_ID, ...) come straight from .env
+    env_file: .env
+    environment:
+      MAIN_URL: ${POSTIZ_URL}
+      FRONTEND_URL: ${POSTIZ_URL}
+      NEXT_PUBLIC_BACKEND_URL: ${POSTIZ_URL}/api
+      BACKEND_INTERNAL_URL: http://localhost:3000
+      JWT_SECRET: ${JWT_SECRET:?run ./install.sh or set JWT_SECRET in .env}
+      DATABASE_URL: postgresql://postiz:${POSTGRES_PASSWORD}@postgres:5432/postiz
+      REDIS_URL: redis://redis:6379
+      TEMPORAL_ADDRESS: temporal:7233
+      IS_GENERAL: 'true'
+      # Only the very first sign-up is allowed (that's you); nobody else can register.
+      DISABLE_REGISTRATION: 'true'
+      RUN_CRON: 'true'
+      STORAGE_PROVIDER: local
+      UPLOAD_DIRECTORY: /uploads
+      NEXT_PUBLIC_UPLOAD_DIRECTORY: /uploads
+      # Max one-click posts per hour (each click is one request, however many accounts).
+      API_LIMIT: ${POSTIZ_API_LIMIT:-60}
+    volumes:
+      - postiz-config:/config
+      - postiz-uploads:/uploads
+      - ./postiz-healthcheck.js:/autopost/healthcheck.js:ro
+    labels:
+      autopost.autoheal: 'true'
+    # Same port outside and inside on purpose: Postiz downloads your video
+    # from POSTIZ_URL itself, so http://localhost:5000 must work in both places.
+    ports:
+      - '${BIND_ADDRESS:-127.0.0.1}:5000:5000'
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      temporal:
+        condition: service_healthy
+    # Healthy = API up AND the background worker is really picking up jobs.
+    healthcheck:
+      test: ['CMD', 'node', '/autopost/healthcheck.js']
+      interval: 30s
+      timeout: 20s
+      retries: 4
+      start_period: 240s
+
+  # One Postgres for both Postiz and Temporal keeps the memory footprint small.
+  postgres:
+    image: postgres:17-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: postiz
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?run ./install.sh or set POSTGRES_PASSWORD in .env}
+      POSTGRES_DB: postiz
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U postiz -d postiz']
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  redis:
+    image: redis:7.2-alpine
+    restart: unless-stopped
+    volumes:
+      - redis-data:/data
+    healthcheck:
+      test: ['CMD-SHELL', 'redis-cli ping | grep -q PONG']
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  # Runs each post as a durable job (retries, token refresh, upload checks).
+  # Uses Postgres for search instead of Elasticsearch to save ~1 GB of RAM.
+  temporal:
+    image: temporalio/auto-setup:1.28.1
+    restart: unless-stopped
+    environment:
+      DB: postgres12
+      DB_PORT: 5432
+      POSTGRES_USER: postiz
+      POSTGRES_PWD: ${POSTGRES_PASSWORD}
+      POSTGRES_SEEDS: postgres
+      ENABLE_ES: 'false'
+      DEFAULT_NAMESPACE: default
+      # Postgres search allows only 3 text fields; skip Temporal's demo fields
+      # so Postiz can register the two it needs.
+      SKIP_ADD_CUSTOM_SEARCH_ATTRIBUTES: 'true'
+    depends_on:
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      test: ['CMD', 'temporal', 'operator', 'cluster', 'health', '--address', 'temporal:7233']
+      interval: 10s
+      timeout: 5s
+      retries: 30
+      start_period: 30s
+
+  # Restarts Postiz automatically if its health check fails (e.g. its worker
+  # stopped picking up posts). Has Docker access but no network at all.
+  watchdog:
+    image: docker:cli
+    restart: unless-stopped
+    network_mode: none
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+    entrypoint: ['/bin/sh', '-c']
+    command:
+      - |
+        echo "watchdog: restarting unhealthy containers labelled autopost.autoheal"
+        while true; do
+          for id in $$(docker ps -q --filter label=autopost.autoheal=true --filter health=unhealthy); do
+            echo "$$(date -u +%FT%TZ) restarting $$(docker inspect -f '{{.Name}}' $$id) (unhealthy)"
+            docker restart -t 30 $$id > /dev/null
+          done
+          sleep 30
+        done
+
+  caddy:
+    image: caddy:2-alpine
+    profiles: [https]
+    restart: unless-stopped
+    environment:
+      POSTIZ_DOMAIN: ${POSTIZ_DOMAIN}
+      DASHBOARD_DOMAIN: ${DASHBOARD_DOMAIN}
+    ports:
+      - '80:80'
+      - '443:443'
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy-data:/data
+      - caddy-config:/config
+    depends_on:
+      - postiz
+      - dashboard
+
+volumes:
+  dashboard-data:
+  postiz-config:
+  postiz-uploads:
+  postgres-data:
+  redis-data:
+  caddy-data:
+  caddy-config:

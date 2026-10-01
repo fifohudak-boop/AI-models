@@ -1,5 +1,8 @@
 # Calendar
 
+> This repository also contains **AutoPost** — post one video to all your
+> social media accounts in one click. See [`autopost/README.md`](autopost/README.md).
+
 A month-view calendar with an agenda panel, event categories, and conflict
 detection, backed by a small shared server so every device sees the same
 events.

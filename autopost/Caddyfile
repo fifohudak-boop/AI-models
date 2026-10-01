@@ -1,0 +1,11 @@
+# Automatic HTTPS (free Let's Encrypt certificates) for both sites.
+# Used only when you start with: docker compose --profile https up -d
+# Both domains must already point at this server's public IP.
+
+{$POSTIZ_DOMAIN} {
+	reverse_proxy postiz:5000
+}
+
+{$DASHBOARD_DOMAIN} {
+	reverse_proxy dashboard:3000
+}
