@@ -10,7 +10,7 @@ then shows up as connectable on the Accounts page.
 
 Throughout this page, `POSTIZ_URL` means the value in your `.env`:
 - on a server: `https://postiz.yourname.duckdns.org`
-- on your own computer: `http://localhost:5000`
+- on your own computer: `http://localhost:4007`
 
 Every network asks for a **redirect URI** (also called a callback URL). It's
 always:

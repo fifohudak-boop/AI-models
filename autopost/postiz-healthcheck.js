@@ -1,6 +1,6 @@
 // Docker healthcheck for the Postiz container (mounted read-only, run by
 // Postiz's own Node). Healthy only when:
-//   1. the Postiz API answers, and
+//   1. the Postiz API answers (through the port-4007 forwarder), and
 //   2. a worker process running in THIS container is really polling Temporal
 //      for jobs right now.
 // Check 2 catches a known Postiz failure where the worker silently never
@@ -26,7 +26,7 @@ function isOurLiveWorker(identity) {
 }
 
 async function main() {
-  const api = await fetch('http://localhost:5000/api/public/v1/is-connected', { signal: AbortSignal.timeout(8000) });
+  const api = await fetch('http://localhost:4007/api/public/v1/is-connected', { signal: AbortSignal.timeout(8000) });
   if (api.status >= 500) throw new Error(`Postiz API answered ${api.status}`);
 
   const res = await fetch(

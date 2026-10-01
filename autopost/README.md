@@ -39,6 +39,10 @@ post limits. The only costs are a server (free or ~€5.50/month, see
 
 ## Quick start
 
+**On a Mac with Claude Cowork?** Follow
+**[docs/mac-with-cowork.md](docs/mac-with-cowork.md)**: you install Docker,
+and Cowork does the rest.
+
 You need [Docker](https://docs.docker.com/get-docker/).
 
 ```sh
@@ -140,7 +144,6 @@ Your uploaded media is in the `autopost_postiz-uploads` volume.
 | TikTok fails with "privacy level" or "unaudited" | Settings → TikTok → *Only me*, and set your TikTok account to private, until TikTok approves your app. |
 | YouTube videos are private | Expected until Google's API audit passes, see above. |
 | An account fails with "reconnect" | Its login expired; click **Connect** for it again on the Accounts page. |
-| Port 5000 is in use (Mac) | Turn off AirPlay Receiver in System Settings → General → AirDrop & Handoff. |
 
 ## What's in this folder
 

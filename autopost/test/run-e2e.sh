@@ -13,7 +13,7 @@ compose() {
 }
 
 [ -f .env ] || { echo "Create .env first (./install.sh, local mode)"; exit 1; }
-grep -q '^POSTIZ_URL=http://localhost:5000' .env || { echo ".env must be in local mode (POSTIZ_URL=http://localhost:5000)"; exit 1; }
+grep -q '^POSTIZ_URL=http://localhost:4007' .env || { echo ".env must be in local mode (POSTIZ_URL=http://localhost:4007)"; exit 1; }
 getent hosts mock-mastodon >/dev/null || { echo "Add '127.0.0.1 mock-mastodon' to /etc/hosts"; exit 1; }
 
 echo "Resetting the stack (deletes all AutoPost data in this checkout)…"
@@ -22,13 +22,13 @@ compose up -d ${NO_BUILD:+--no-build}
 
 echo "Waiting for Postiz (1-3 minutes)…"
 i=0
-until [ "$(curl -s -o /dev/null -w '%{http_code}' http://localhost:5000/api/public/v1/is-connected)" = "401" ]; do
+until [ "$(curl -s -o /dev/null -w '%{http_code}' http://localhost:4007/api/public/v1/is-connected)" = "401" ]; do
   i=$((i + 1)); [ $i -gt 100 ] && { echo "Postiz did not start"; compose logs postiz | tail -50; exit 1; }
   sleep 3
 done
 
 echo "Creating the Postiz account…"
-curl -fs -X POST http://localhost:5000/api/auth/register -H 'Content-Type: application/json' \
+curl -fs -X POST http://localhost:4007/api/auth/register -H 'Content-Type: application/json' \
   -d '{"email":"e2e@example.com","password":"E2e-password-123","company":"E2E Test","provider":"LOCAL"}' >/dev/null
 POSTIZ_API_KEY=$(compose exec -T postgres psql -U postiz -d postiz -tAc 'select "apiKey" from "Organization" limit 1')
 DASHBOARD_PASSWORD=$(sed -n 's/^DASHBOARD_PASSWORD=//p' .env)

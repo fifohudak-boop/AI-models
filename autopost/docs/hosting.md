@@ -83,15 +83,12 @@ Docker restarts everything automatically after a reboot.
    (Mac/Windows) or Docker Engine (Linux).
 2. Run `./install.sh` and choose **1**.
 3. Open **http://localhost:3000**.
-   - **Mac:** Postiz uses port 5000, which macOS' "AirPlay Receiver" also
-     uses. If start-up complains about port 5000, turn it off in **System
-     Settings → General → AirDrop & Handoff → AirPlay Receiver**.
 4. Scheduled posts only go out while the computer is on and Docker is running.
 
 To use TikTok/Instagram from your own computer, you'd need a public https
 address. A [Cloudflare Tunnel](https://developers.cloudflare.com/cloudflare-one/connections/connect-networks/)
 with your own domain can provide one. Set it up to point
-`postiz.yourdomain` → `localhost:5000` and `yourdomain` → `localhost:3000`,
+`postiz.yourdomain` → `localhost:4007` and `yourdomain` → `localhost:3000`,
 then put those https URLs in `.env`. This is more fiddly than options A/B.
 
 ## Costs summary

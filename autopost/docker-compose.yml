@@ -54,16 +54,20 @@ services:
       NEXT_PUBLIC_UPLOAD_DIRECTORY: /uploads
       # Max one-click posts per hour (each click is one request, however many accounts).
       API_LIMIT: ${POSTIZ_API_LIMIT:-60}
+    # Postiz's own start command, plus a tiny forwarder that makes POSTIZ_URL
+    # (http://localhost:4007 on your own computer) work inside this container
+    # too, because Postiz downloads your video from that address. If you ever
+    # change POSTIZ_VERSION, compare with: docker inspect <image> (Config.Cmd).
+    command: ['sh', '-c', 'node /autopost/local-port.js & nginx && pnpm run pm2']
     volumes:
       - postiz-config:/config
       - postiz-uploads:/uploads
       - ./postiz-healthcheck.js:/autopost/healthcheck.js:ro
+      - ./postiz-local-port.js:/autopost/local-port.js:ro
     labels:
       autopost.autoheal: 'true'
-    # Same port outside and inside on purpose: Postiz downloads your video
-    # from POSTIZ_URL itself, so http://localhost:5000 must work in both places.
     ports:
-      - '${BIND_ADDRESS:-127.0.0.1}:5000:5000'
+      - '${BIND_ADDRESS:-127.0.0.1}:4007:4007'
     depends_on:
       postgres:
         condition: service_healthy
