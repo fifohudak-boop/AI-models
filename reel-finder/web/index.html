@@ -1,0 +1,239 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Reel Finder</title>
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🎬</text></svg>">
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand">
+      <span class="logo" aria-hidden="true">🎬</span>
+      <div>
+        <h1>Reel Finder</h1>
+        <p class="tagline">AI agents that hunt short-form reference videos</p>
+      </div>
+    </div>
+    <div class="pills" id="pills" aria-live="polite"></div>
+  </header>
+
+  <div class="layout">
+    <!-- ======================= Search options ======================= -->
+    <form class="panel options" id="options" autocomplete="off">
+      <div class="options-scroll">
+        <section class="group">
+          <label class="label" for="description">What are you looking for?</label>
+          <textarea id="description" name="description" rows="4"
+            placeholder="e.g. Cinematic slow-motion car drifts at night with smoke, no talking, filmed from low angles"></textarea>
+          <div class="row2">
+            <div>
+              <label class="label sm" for="keywords">Must-use keywords / hashtags</label>
+              <input id="keywords" name="keywords" placeholder="#cardrift, night drift">
+            </div>
+            <div>
+              <label class="label sm" for="exclude">Skip videos mentioning</label>
+              <input id="exclude" name="exclude" placeholder="giveaway, tutorial">
+            </div>
+          </div>
+        </section>
+
+        <section class="group">
+          <div class="label">Where to search</div>
+          <div class="platforms">
+            <div class="platform" data-platform="tiktok">
+              <label class="check">
+                <input type="checkbox" name="platforms" value="tiktok">
+                <span class="pname">TikTok</span>
+              </label>
+              <div class="platform-actions">
+                <button type="button" class="btn ghost sm selftest-btn" data-platform="tiktok"
+                  title="Run one quick real search and check every step">Test</button>
+                <button type="button" class="btn ghost sm connect" data-platform="tiktok">Connect</button>
+              </div>
+            </div>
+            <div class="platform" data-platform="instagram">
+              <label class="check">
+                <input type="checkbox" name="platforms" value="instagram">
+                <span class="pname">Instagram Reels</span>
+              </label>
+              <div class="platform-actions">
+                <button type="button" class="btn ghost sm selftest-btn" data-platform="instagram"
+                  title="Run one quick real search and check every step">Test</button>
+                <button type="button" class="btn ghost sm connect" data-platform="instagram">Connect</button>
+              </div>
+            </div>
+          </div>
+          <p class="hint">Connect opens the agents' browser so you can log in once. A spare account is safest.
+            Test runs one quick real search to check everything works.</p>
+        </section>
+
+        <section class="group">
+          <div class="row3">
+            <div>
+              <label class="label sm" for="target_count">Videos to download</label>
+              <input id="target_count" name="target_count" type="number" min="1" max="500">
+            </div>
+            <div>
+              <label class="label sm" for="time_limit_min">Time limit (min)</label>
+              <input id="time_limit_min" name="time_limit_min" type="number" min="1" max="240">
+            </div>
+            <div>
+              <label class="label sm" for="agents">AI agents <output id="agents_out"></output></label>
+              <input id="agents" name="agents" type="range" min="1" max="6" step="1">
+            </div>
+          </div>
+        </section>
+
+        <details class="group" open>
+          <summary class="label">Filters</summary>
+          <div class="row2">
+            <div>
+              <label class="label sm" for="min_duration">Min length (sec)</label>
+              <input id="min_duration" name="min_duration" type="number" min="0" placeholder="0">
+            </div>
+            <div>
+              <label class="label sm" for="max_duration">Max length (sec)</label>
+              <input id="max_duration" name="max_duration" type="number" min="0" placeholder="no limit">
+            </div>
+            <div>
+              <label class="label sm" for="min_views">Min views</label>
+              <input id="min_views" name="min_views" type="number" min="0" step="1000" placeholder="0">
+            </div>
+            <div>
+              <label class="label sm" for="min_likes">Min likes</label>
+              <input id="min_likes" name="min_likes" type="number" min="0" step="100" placeholder="0">
+            </div>
+            <div>
+              <label class="label sm" for="max_age_days">Posted within (days)</label>
+              <input id="max_age_days" name="max_age_days" type="number" min="0" placeholder="any time">
+            </div>
+          </div>
+        </details>
+
+        <details class="group" open>
+          <summary class="label">AI</summary>
+          <label class="label sm" for="model">Model (runs on your Mac with Ollama)</label>
+          <div class="inline">
+            <select id="model" name="model"></select>
+            <button type="button" class="btn ghost sm" id="pull" hidden>Download</button>
+          </div>
+          <p class="hint" id="model_hint"></p>
+          <label class="label sm" for="strictness">How strict <output id="strictness_out"></output></label>
+          <input id="strictness" name="strictness" type="range" min="0" max="100" step="5">
+          <div class="scale"><span>Loose</span><span>Exact</span></div>
+          <label class="check toggle">
+            <input type="checkbox" name="watch_check">
+            <span>Watch-check: AI looks at frames after downloading and deletes misses</span>
+          </label>
+        </details>
+
+        <section class="group">
+          <label class="label" for="output_dir">Save videos to</label>
+          <div class="inline">
+            <input id="output_dir" name="output_dir" spellcheck="false">
+            <button type="button" class="btn ghost sm" id="browse">Browse…</button>
+          </div>
+          <label class="check toggle">
+            <input type="checkbox" name="subfolder_per_hunt">
+            <span>New subfolder for every hunt</span>
+          </label>
+          <label class="check toggle">
+            <input type="checkbox" name="show_browser">
+            <span>Show the agents scrolling (otherwise they run hidden)</span>
+          </label>
+        </section>
+      </div>
+
+      <div class="actions">
+        <button type="submit" class="btn primary big" id="start">
+          <span class="when-idle">Start hunt</span>
+          <span class="when-running">Stop hunt</span>
+        </button>
+        <button type="button" class="btn ghost" id="open_folder" title="Open the download folder in Finder">Open folder</button>
+      </div>
+    </form>
+
+    <!-- ======================= Live view ======================= -->
+    <main class="live">
+      <section class="panel selftest-panel" id="selftest" hidden aria-live="polite">
+        <div class="selftest-head">
+          <h2 id="selftest_title">Self-test</h2>
+          <div class="selftest-buttons">
+            <button type="button" class="btn ghost sm" id="copy_report">Copy report</button>
+            <button type="button" class="btn ghost sm" id="close_selftest" aria-label="Close self-test">Close</button>
+          </div>
+        </div>
+        <ol class="steps" id="selftest_steps"></ol>
+        <p class="hint" id="selftest_hint"></p>
+      </section>
+
+      <section class="panel progress-panel">
+        <div class="progress-head">
+          <div class="big-count"><span id="downloaded">0</span><span class="of"> / <span id="target">0</span></span></div>
+          <div class="progress-text">
+            <div id="headline">Ready when you are</div>
+            <div class="muted" id="subline">Describe what you need, then press Start hunt.</div>
+          </div>
+        </div>
+        <div class="bar" role="progressbar" aria-label="Downloaded" aria-valuemin="0" id="bar"><span id="bar_fill"></span></div>
+        <div class="stats" id="stats"></div>
+      </section>
+
+      <section class="agents" id="agents_grid" aria-label="Agents"></section>
+
+      <section class="panel feed-panel">
+        <div class="feed-head">
+          <div class="tabs" role="tablist">
+            <button class="tab active" data-filter="all" role="tab">All <span id="n_all"></span></button>
+            <button class="tab" data-filter="downloaded" role="tab">Downloaded <span id="n_downloaded"></span></button>
+            <button class="tab" data-filter="active" role="tab">In progress <span id="n_active"></span></button>
+            <button class="tab" data-filter="rejected" role="tab">Skipped <span id="n_rejected"></span></button>
+          </div>
+        </div>
+        <div class="feed" id="feed" data-filter="all"></div>
+        <div class="empty" id="empty">
+          <h2>How it works</h2>
+          <ol>
+            <li><b>Connect</b> TikTok and Instagram once (left side). Log in, then close that window.</li>
+            <li><b>Describe</b> the videos you want, in plain words. Add must-have hashtags if you like.</li>
+            <li>Press <b>Start hunt</b>. The AI plans searches, the agents scroll, and every video is
+              judged against your description. Matches land in your folder with a log of why each was picked.</li>
+          </ol>
+        </div>
+      </section>
+
+      <details class="panel log-panel">
+        <summary>Activity log</summary>
+        <div class="log-actions">
+          <button type="button" class="btn ghost sm" id="copy_report_log">Copy report</button>
+          <button type="button" class="btn ghost sm" id="open_log">Show log file</button>
+          <span class="hint">If something isn't working, copy the report and paste it into a chat with Claude.</span>
+        </div>
+        <div class="log" id="log"></div>
+      </details>
+    </main>
+  </div>
+
+  <div class="toast" id="toast" role="status" hidden></div>
+
+  <template id="card_tpl">
+    <article class="card">
+      <a class="thumb" target="_blank" rel="noopener">
+        <img alt="" loading="lazy">
+        <span class="badge platform"></span>
+        <span class="badge score"></span>
+      </a>
+      <div class="body">
+        <div class="status"></div>
+        <p class="caption"></p>
+        <div class="meta"></div>
+        <p class="reason"></p>
+      </div>
+    </article>
+  </template>
+
+  <script src="app.js"></script>
+</body>
+</html>
