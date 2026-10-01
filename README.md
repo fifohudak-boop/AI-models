@@ -70,6 +70,13 @@ both devices for access from anywhere without deploying. The deployed
 version above makes this unnecessary, but it's there if you'd rather not
 deploy.
 
+## Also in this repo: Reel Finder
+
+[`reel-finder/`](reel-finder/README.md) is a separate Mac app: AI agents that scroll TikTok
+and Instagram Reels for short-form reference videos matching your description and download
+them into a folder you choose. Double-click `reel-finder/start.command` to run it. It runs
+only on your computer and isn't part of the calendar's Render deploy.
+
 ## What's in here
 
 - `src/` — the React + TypeScript frontend (Vite)

@@ -1,0 +1,34 @@
+{
+ "data": [
+  {
+   "type": 1,
+   "item": {
+    "id": "7412345678901234571",
+    "desc": "general search hit",
+    "createTime": 1725000300,
+    "author": {
+     "uniqueId": "gen"
+    },
+    "stats": {
+     "playCount": 10,
+     "diggCount": 1
+    },
+    "video": {
+     "duration": 9,
+     "cover": "https://p16.example/g.jpeg"
+    }
+   }
+  },
+  {
+   "type": 4,
+   "user_list": [
+    {
+     "user_info": {
+      "uid": "1",
+      "unique_id": "someone"
+     }
+    }
+   ]
+  }
+ ]
+}

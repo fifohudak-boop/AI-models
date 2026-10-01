@@ -1,0 +1,91 @@
+{
+ "media_grid": {
+  "sections": [
+   {
+    "layout_content": {
+     "medias": [
+      {
+       "media": {
+        "pk": "1",
+        "id": "1_2",
+        "code": "C1aBcDeFgH",
+        "media_type": 2,
+        "product_type": "clips",
+        "taken_at": 1725000000,
+        "caption": {
+         "text": "Drifting at midnight #cardrift"
+        },
+        "user": {
+         "username": "nightdrifter"
+        },
+        "play_count": 50000,
+        "ig_play_count": 52000,
+        "like_count": 4100,
+        "video_duration": 12.4,
+        "image_versions2": {
+         "candidates": [
+          {
+           "width": 1080,
+           "height": 1920,
+           "url": "https://ig.example/1080.jpg"
+          },
+          {
+           "width": 640,
+           "height": 1137,
+           "url": "https://ig.example/640.jpg"
+          },
+          {
+           "width": 240,
+           "height": 426,
+           "url": "https://ig.example/240.jpg"
+          }
+         ]
+        }
+       }
+      },
+      {
+       "media": {
+        "code": "C2Photo123",
+        "media_type": 1,
+        "caption": {
+         "text": "a photo"
+        },
+        "user": {
+         "username": "p"
+        }
+       }
+      },
+      {
+       "media": {
+        "code": "C3Carousel1",
+        "media_type": 8,
+        "user": {
+         "username": "c"
+        },
+        "carousel_media": [
+         {
+          "media_type": 2,
+          "id": "x",
+          "video_duration": 5
+         }
+        ]
+       }
+      },
+      {
+       "media": {
+        "code": "C6NoCaption",
+        "media_type": 2,
+        "caption": null,
+        "user": {
+         "username": "quiet"
+        },
+        "like_and_view_counts_disabled": true,
+        "video_duration": 7.0
+       }
+      }
+     ]
+    }
+   }
+  ]
+ }
+}
