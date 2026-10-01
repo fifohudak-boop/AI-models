@@ -233,7 +233,7 @@ function renderModelHint() {
   pull.disabled = !!o?.pulling;
   const hint = $("#model_hint");
   if (!o) hint.textContent = "";
-  else if (!o.running) hint.textContent = "Ollama isn't running. Open the Ollama app (or run start.command again). Until then, videos are matched by keywords.";
+  else if (!o.running) hint.textContent = "Ollama isn't running. Quit and reopen Reel Finder; it installs and starts Ollama for you. Until then, videos are matched by keywords.";
   else if (!installed) {
     const rec = RECOMMENDED_MODELS.find((r) => r.name === model);
     hint.textContent = o.pulling ? "Downloading model…"

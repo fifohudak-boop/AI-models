@@ -3,6 +3,7 @@
 # First run installs everything it needs; later runs start in a few seconds.
 
 cd "$(dirname "$0")" || exit 1
+HERE="$(pwd)"
 export PATH="$HOME/.local/bin:/opt/homebrew/bin:/usr/local/bin:$PATH"
 URL="http://127.0.0.1:8765"
 
@@ -15,6 +16,14 @@ printf "\n🎬  Reel Finder\n"
 if curl -s -o /dev/null "$URL/api/status"; then
   open "$URL"
   exit 0
+fi
+
+# 0) Installed with the one-line installer? Then fetch any newer version first (keeps your data).
+if [ "${1:-}" != "--no-update" ] && [ -f .installed_commit ] && [ -f update.sh ]; then
+  bash ./update.sh
+  if [ $? -eq 10 ]; then
+    cd "$HERE" && exec "$HERE/start.command" --no-update
+  fi
 fi
 
 # 1) uv installs the right Python version and all packages (no Homebrew needed).
@@ -40,21 +49,45 @@ if [ ! -d "/Applications/Google Chrome.app" ] && [ ! -d "$HOME/Applications/Goog
   .venv/bin/python -m playwright install chromium || fail "Couldn't install Chromium."
 fi
 
-# 4) The free local AI (Ollama) and its model.
-OLLAMA_BIN="$(command -v ollama || true)"
-if [ -z "$OLLAMA_BIN" ] && [ -x /Applications/Ollama.app/Contents/Resources/ollama ]; then
-  OLLAMA_BIN=/Applications/Ollama.app/Contents/Resources/ollama
-fi
+# 4) The free local AI (Ollama) and its model — installed for you if it's missing.
+find_ollama() {
+  OLLAMA_APP=""
+  for app in "/Applications/Ollama.app" "$HOME/Applications/Ollama.app"; do
+    [ -d "$app" ] && OLLAMA_APP="$app" && break
+  done
+  OLLAMA_BIN="$(command -v ollama || true)"
+  if [ -z "$OLLAMA_BIN" ] && [ -n "$OLLAMA_APP" ] && [ -x "$OLLAMA_APP/Contents/Resources/ollama" ]; then
+    OLLAMA_BIN="$OLLAMA_APP/Contents/Resources/ollama"
+  fi
+}
+
+install_ollama() {
+  say "Installing Ollama, the free local AI (one-time, about 200 MB)…"
+  local dest="/Applications" tmp
+  [ -w "$dest" ] || dest="$HOME/Applications"
+  mkdir -p "$dest" || return 1
+  tmp="$(mktemp -d)" || return 1
+  curl -fL --progress-bar https://ollama.com/download/Ollama-darwin.zip -o "$tmp/Ollama.zip" \
+    && ditto -x -k "$tmp/Ollama.zip" "$dest"
+  local ok=$?
+  rm -rf "$tmp"
+  return $ok
+}
+
+find_ollama
 if [ -z "$OLLAMA_BIN" ]; then
-  say "Ollama (the free local AI) isn't installed yet."
-  echo "Opening its download page. Install it, then double-click start.command again."
-  echo "Until then Reel Finder still works, matching videos by keywords only."
-  open "https://ollama.com/download"
-else
+  install_ollama || echo "Couldn't install Ollama right now — Reel Finder will match videos by keywords until it's installed."
+  find_ollama
+fi
+if [ -n "$OLLAMA_BIN" ]; then
   if ! curl -s -o /dev/null http://127.0.0.1:11434/api/tags; then
     say "Starting Ollama…"
-    open -a Ollama 2>/dev/null || ("$OLLAMA_BIN" serve >/dev/null 2>&1 &)
-    for _ in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15; do
+    if [ -n "$OLLAMA_APP" ]; then
+      open "$OLLAMA_APP" 2>/dev/null || ("$OLLAMA_BIN" serve >/dev/null 2>&1 &)
+    else
+      ("$OLLAMA_BIN" serve >/dev/null 2>&1 &)
+    fi
+    for _ in $(seq 1 30); do
       curl -s -o /dev/null http://127.0.0.1:11434/api/tags && break
       sleep 1
     done

@@ -8,22 +8,50 @@ Everything runs on your Mac: your logins, your videos and the AI never leave it.
 
 ---
 
-## Start it (Mac)
+## Install it (Mac): one line
 
-1. **Get the files.** Clone this repo, or download it as a ZIP and unzip it.
-2. **Double-click `reel-finder/start.command`.**
-   - If macOS says it's from an unidentified developer, right-click it, choose **Open**,
-     then **Open** again. You only need to do this once.
-   - The first run sets everything up, which takes a few minutes:
-     - Python and the packages, through [uv](https://github.com/astral-sh/uv)
-     - a browser for the agents (it uses your Google Chrome if you have it)
-     - the free local AI, [Ollama](https://ollama.com). If Ollama isn't installed, its
-       download page opens. Install it, then double-click `start.command` again.
-       The first time, it also downloads the AI model, which is a few GB.
-3. The Reel Finder page opens in your browser at **http://127.0.0.1:8765**.
-   Keep the Terminal window open while you use it; closing it quits Reel Finder.
+1. Open **Terminal**: press ⌘ Space, type `Terminal`, and press Enter.
+2. Paste this line and press Enter:
 
-Later starts take a few seconds.
+   ```
+   curl -fsSL https://raw.githubusercontent.com/fifohudak-boop/AI-models/main/reel-finder/install.sh | bash
+   ```
+
+The installer sets everything up, which takes a few minutes the first time:
+
+- **Reel Finder itself:** installed in `~/Applications/Reel Finder`.
+- **A Reel Finder app:** shows up in Launchpad and Spotlight, with a shortcut on your Desktop.
+- **Python and the packages:** installed through [uv](https://github.com/astral-sh/uv).
+- **A browser for the agents:** your Google Chrome if you have it, otherwise a private Chromium.
+- **The free local AI:** [Ollama](https://ollama.com) and its model, a few GB. If macOS asks
+  for your password while Ollama installs, that's expected.
+
+Then the Reel Finder page opens in your browser at **http://127.0.0.1:8765**. A Terminal
+window stays open while Reel Finder runs; closing it quits Reel Finder.
+
+**Next time,** just open the **Reel Finder** app.
+
+**Updates are automatic.** Each time the app opens, it checks for a newer version and
+installs it, keeping your settings, logins and downloads. Running the install line again
+does the same.
+
+**To uninstall,** delete these three things:
+
+- the `Reel Finder` folder and the `Reel Finder` app in `~/Applications`
+- the Desktop shortcut
+- Ollama, from Applications, if you don't use it for anything else
+
+Your downloaded videos stay where you saved them.
+
+<details>
+<summary>Without the installer</summary>
+
+1. Download this repo as a ZIP and unzip it.
+2. Double-click `reel-finder/start.command`. If macOS blocks it, right-click it, choose
+   **Open**, then **Open** again.
+
+This copy won't update itself.
+</details>
 
 ## Use it
 
@@ -128,7 +156,7 @@ opens the full log in Finder.
   and it carries on by itself. This is why visible mode is recommended.
 - **"Needs you: log in" on Instagram.** Click **Connect** next to Instagram and log in.
 - **No videos are found on a platform.** These sites change their pages often.
-  `start.command` updates the downloader every time it starts, so quit and restart first.
+  Reel Finder updates itself and the downloader every time it starts, so quit and reopen it first.
   If one platform still finds nothing, untick it and keep using the other.
 - **Downloads fail with "login required".** Click Connect and log in again; your session
   may have expired.
@@ -136,7 +164,8 @@ opens the full log in Finder.
   in fewer, plainer words.
 - **The AI is slow.** Use a smaller model (`gemma3:4b`) or fewer agents. The AI checks
   videos one at a time, and the agents pause automatically when it falls behind.
-- **Start over completely.** Quit Reel Finder and delete the `reel-finder/data` folder.
+- **Start over completely.** Quit Reel Finder and delete the `data` folder inside
+  `~/Applications/Reel Finder` (or `reel-finder/data` in a downloaded copy).
   This removes your saved logins and settings; downloaded videos are not affected.
 
 ## Built on
@@ -186,6 +215,7 @@ How the code is laid out:
 | `reelfinder/logs.py` | The log file (`data/logs/reelfinder.log`), version info, yt-dlp warnings into the log |
 | `reelfinder/main.py` | The local web server (localhost only) |
 | `web/` | The page |
+| `install.sh`, `update.sh`, `start.command` | The one-line installer, the auto-updater, and the launcher that sets up Python, the browser and Ollama |
 
 ## Please note
 
