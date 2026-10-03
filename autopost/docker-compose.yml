@@ -1,13 +1,17 @@
-# AutoPost — post one video to all your social accounts in one click.
+# Fifofarm — post one video to all your social accounts in one click.
 #
-#   dashboard  — the simple control panel you use every day (this repo)
+#   dashboard  — the Fifofarm control panel you use every day (this repo)
 #   postiz     — the open-source engine that talks to each social network
 #                (github.com/gitroomhq/postiz-app, AGPL-3.0)
 #   postgres, redis, temporal — what Postiz needs to store posts and run them
 #   caddy      — optional automatic HTTPS (start with: --profile https)
 #
 # All settings live in .env (copy .env.example, or run ./install.sh).
+# Network keys and the domain can also be changed in Fifofarm → Settings;
+# scripts/maintain.sh (cron, every minute) applies them and installs updates.
 
+# Internal project name from the AutoPost days. Keep it: renaming it would
+# start with new, empty volumes (accounts, posts and certificates "vanish").
 name: autopost
 
 services:
@@ -21,8 +25,12 @@ services:
       POSTIZ_INTERNAL_URL: http://postiz:5000
       POSTIZ_PUBLIC_URL: ${POSTIZ_URL}
       TEMPORAL_HTTP_URL: http://temporal:7243
+      RUNTIME_DIR: /runtime
     volumes:
       - dashboard-data:/data
+      # Shared with scripts/maintain.sh on the server (settings to apply,
+      # update status). Never contains anything the dashboard runs.
+      - ./runtime:/runtime
     ports:
       - '${BIND_ADDRESS:-127.0.0.1}:3000:3000'
     depends_on:

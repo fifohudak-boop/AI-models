@@ -7,6 +7,12 @@ export const DATA_DIR = path.resolve(process.env.DATA_DIR || path.join(process.c
 export const UPLOAD_TMP_DIR = path.join(DATA_DIR, 'tmp');
 fs.mkdirSync(UPLOAD_TMP_DIR, { recursive: true });
 
+export const VERIFICATION_DIR = path.join(DATA_DIR, 'verification');
+fs.mkdirSync(VERIFICATION_DIR, { recursive: true });
+
+// The product name shown everywhere. Change it here (or BRAND_NAME in .env).
+export const BRAND_NAME = (process.env.BRAND_NAME || 'Fifofarm').trim() || 'Fifofarm';
+
 export const PORT = Number(process.env.PORT) || 3000;
 export const POSTIZ_INTERNAL_URL = (process.env.POSTIZ_INTERNAL_URL || 'http://localhost:4007').replace(/\/+$/, '');
 export const POSTIZ_PUBLIC_URL = (process.env.POSTIZ_PUBLIC_URL || process.env.POSTIZ_URL || POSTIZ_INTERNAL_URL).replace(
@@ -14,6 +20,8 @@ export const POSTIZ_PUBLIC_URL = (process.env.POSTIZ_PUBLIC_URL || process.env.P
   ''
 );
 export const DASHBOARD_URL = (process.env.DASHBOARD_URL || '').replace(/\/+$/, '');
+export const DASHBOARD_DOMAIN = (process.env.DASHBOARD_DOMAIN || '').trim();
+export const POSTIZ_DOMAIN = (process.env.POSTIZ_DOMAIN || '').trim();
 export const TEMPORAL_HTTP_URL = (process.env.TEMPORAL_HTTP_URL || '').replace(/\/+$/, '');
 export const DASHBOARD_PASSWORD = process.env.DASHBOARD_PASSWORD || '';
 
@@ -53,6 +61,11 @@ export function getSettings() {
   const stored = readJson(SETTINGS_FILE, {});
   return {
     postizApiKey: stored.postizApiKey || '',
+    // Set when the dashboard created the Postiz account itself (fresh installs).
+    postizLogin: stored.postizLogin || null,
+    // Set once the password was changed in Settings; overrides DASHBOARD_PASSWORD.
+    passwordHash: stored.passwordHash || '',
+    passwordVersion: Number(stored.passwordVersion) || 0,
     preferences: { ...DEFAULT_PREFERENCES, ...(stored.preferences || {}) },
   };
 }

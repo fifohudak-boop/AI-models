@@ -30,7 +30,7 @@ Requirements:
 - a local-mode `.env` (`./install.sh`, option 1). The test setup supplies
   the fake Mastodon's keys itself.
 
-**Warning: the script wipes this checkout's AutoPost data** (`docker compose
+**Warning: the script wipes this checkout's Fifofarm data** (`docker compose
 down -v`). Don't run it on your real install.
 
 ```sh

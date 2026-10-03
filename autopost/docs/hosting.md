@@ -1,6 +1,6 @@
-# Where to run AutoPost (free or cheap)
+# Where to run Fifofarm (free or cheap)
 
-AutoPost needs a computer that is **always on** (posts go out even while you
+Fifofarm needs a computer that is **always on** (posts go out even while you
 sleep) with about **2 GB of free RAM**. 4 GB of total RAM is comfortable. For
 TikTok, Instagram, Facebook, Threads and Pinterest, it also needs a **public
 https address**, because those networks download your video from it.
@@ -22,13 +22,13 @@ already included).
 
 What you get (2026): an ARM server with up to **2 CPUs and 12 GB RAM** free
 forever. Oracle reduced this from 4 CPUs / 24 GB in June 2026, but it's still
-plenty for AutoPost.
+plenty for Fifofarm.
 
 Caveats:
 - Sign-up needs a credit card for identity checks; you're not charged.
 - Popular regions are sometimes "out of capacity". Try again later or pick
   another region.
-- Oracle may reclaim free servers that sit almost completely idle. AutoPost
+- Oracle may reclaim free servers that sit almost completely idle. Fifofarm
   runs constantly, so this normally isn't an issue.
 
 Steps:
@@ -58,24 +58,31 @@ providers have no firewall by default; if yours does, allow ports 80 and 443.
 ## Set up the server (A or B)
 
 1. **Domain:** sign in at [duckdns.org](https://www.duckdns.org), create
-   `yourname`, and set its IP to your server's public IP.
-2. **SSH in** and install Docker:
+   `yourname`, and set its **current ip** to your server's public IP (the
+   default is the IP of the device you're on — change it).
+2. **SSH in** and run:
    ```sh
-   curl -fsSL https://get.docker.com | sudo sh
-   sudo usermod -aG docker $USER && newgrp docker
-   ```
-3. **Get AutoPost and install:**
-   ```sh
-   git clone <this repository> autopost-repo
-   cd autopost-repo/autopost
-   ./install.sh
+   git clone https://github.com/fifohudak-boop/AI-models.git fifofarm
+   cd fifofarm/autopost
+   sh install.sh
    ```
    Choose **2 (server)**:
-   - dashboard domain: `yourname.duckdns.org`
-   - Postiz domain: `postiz.yourname.duckdns.org` (just press Enter)
-4. Follow the "Next steps" it prints.
+   - Fifofarm domain: `yourname.duckdns.org`
+   - posting-engine domain: `postiz.yourname.duckdns.org` (just press Enter)
+   - a password (you see what you type; Enter makes one for you)
+
+   The installer installs Docker if needed, opens ports 80/443 (also Oracle's
+   built-in firewall), waits until your domain points to the server, starts
+   everything, sets up the posting engine and turns on automatic updates.
+3. Open the address it prints and sign in. Then Accounts → Set up → Connect.
 
 Docker restarts everything automatically after a reboot.
+
+### Moving from Oracle to another server later
+
+Install on the new server as above, then reconnect your accounts there (each
+network's developer app only needs its redirect URLs updated if the domain
+changes). Ask Claude for help copying your data across instead.
 
 ## C. Your own computer (€0)
 
@@ -95,7 +102,7 @@ then put those https URLs in `.env`. This is more fiddly than options A/B.
 
 | What | Cost |
 |---|---|
-| AutoPost, Postiz, Temporal, Postgres, Redis, Caddy (all open source) | €0 |
+| Fifofarm, Postiz, Temporal, Postgres, Redis, Caddy (all open source) | €0 |
 | Server | €0 (Oracle free / own PC) or ~€5.50/month |
 | Domain + https certificates | €0 (DuckDNS + Let's Encrypt) |
 | YouTube, TikTok, Instagram, Facebook, Threads, LinkedIn, Pinterest, Bluesky, Mastodon APIs | €0 |

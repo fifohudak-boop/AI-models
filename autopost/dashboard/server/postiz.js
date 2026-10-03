@@ -58,9 +58,64 @@ async function call(urlPath, { method = 'GET', json, form, apiKey, publicApi = t
   return parsed;
 }
 
+// Postiz's own (non-public) API, used once on a fresh install to create the
+// Postiz account automatically. Returns the parsed body and the auth token.
+async function callInternal(urlPath, { method = 'GET', json, jwt, timeoutMs = 30_000 } = {}) {
+  const headers = {};
+  if (json !== undefined) headers['Content-Type'] = 'application/json';
+  if (jwt) {
+    headers.auth = jwt;
+    headers.Cookie = `auth=${jwt}`;
+  }
+  let res;
+  try {
+    res = await fetch(`${POSTIZ_INTERNAL_URL}/api${urlPath}`, {
+      method,
+      headers,
+      body: json !== undefined ? JSON.stringify(json) : undefined,
+      signal: AbortSignal.timeout(timeoutMs),
+    });
+  } catch (err) {
+    const reason = err.name === 'TimeoutError' ? 'timed out' : err.cause?.code || err.message;
+    throw new PostizError(`Can't reach Postiz (${reason}). Is it running?`, 503);
+  }
+  const text = await res.text();
+  let parsed = text;
+  try {
+    parsed = text ? JSON.parse(text) : null;
+  } catch {
+    // keep plain text
+  }
+  if (!res.ok) throw new PostizError(messageFrom(parsed, `Postiz returned HTTP ${res.status}.`), res.status, parsed);
+  const cookies = typeof res.headers.getSetCookie === 'function' ? res.headers.getSetCookie() : [];
+  const authCookie = cookies.map((c) => /^auth=([^;]+)/.exec(c)?.[1]).find(Boolean);
+  return { body: parsed, jwt: res.headers.get('auth') || authCookie || null };
+}
+
 export const postiz = {
   async checkKey(apiKey) {
     return call('/is-connected', { apiKey });
+  },
+
+  // ---- First-run setup (no API key yet) ----
+
+  async canRegister() {
+    const { body } = await callInternal('/auth/can-register');
+    return !!body?.register;
+  },
+
+  async register({ email, password, company }) {
+    const { jwt } = await callInternal('/auth/register', {
+      method: 'POST',
+      json: { email, password, company, provider: 'LOCAL' },
+    });
+    if (!jwt) throw new PostizError('Postiz created the account but returned no login token.', 500);
+    return jwt;
+  },
+
+  async publicApiKey(jwt) {
+    const { body } = await callInternal('/user/self', { jwt });
+    return typeof body?.publicApi === 'string' ? body.publicApi : '';
   },
 
   listIntegrations() {

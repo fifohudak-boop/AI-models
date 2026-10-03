@@ -1,11 +1,83 @@
 export type PostizState = 'ok' | 'no-key' | 'bad-key' | 'unreachable';
 
 export interface Status {
+  brand: string;
   postiz: PostizState;
   postizUrl: string;
   apiKeyFromEnv: boolean;
+  autoSetup: 'idle' | 'waiting' | 'done' | 'taken' | 'error';
   worker?: 'ok' | 'down' | 'unknown';
   detail?: string;
+}
+
+export interface SetupField {
+  env: string;
+  label: string;
+  secret: boolean;
+  placeholder: string;
+  filled: boolean;
+}
+
+export interface NetworkSetup {
+  id: string;
+  title: string;
+  platforms: string[];
+  console: { label: string; url: string };
+  steps: string[];
+  notes: string[];
+  verification: boolean;
+  redirectUrls: string[];
+  verificationPrefix: string | null;
+  legal: { terms: string; privacy: string } | null;
+  fields: SetupField[];
+  configured: boolean;
+}
+
+export interface ApplyState {
+  state: 'running' | 'done' | 'failed';
+  at: string;
+  message: string;
+  keys: string;
+}
+
+export interface NetworksInfo {
+  setups: NetworkSetup[];
+  verificationFiles: string[];
+  autoApply: boolean;
+  pending: boolean;
+  apply: ApplyState | null;
+}
+
+export interface UpdateState {
+  state: 'ok' | 'updating' | 'failed' | 'offline' | 'off' | '';
+  message: string;
+  branch: string;
+  commit: string;
+  commitDate: string;
+  subject: string;
+  checkedAt: string;
+  installedAt: string;
+  heartbeatAt: string;
+  autoUpdate: boolean;
+}
+
+export interface SystemInfo {
+  brand: string;
+  host: {
+    available: boolean;
+    helperActive: boolean;
+    pending: boolean;
+    apply: ApplyState | null;
+    update: UpdateState | null;
+  };
+  domains: {
+    serverMode: boolean;
+    dashboard: string;
+    postiz: string;
+    dashboardUrl: string;
+    postizUrl: string;
+  };
+  postizLogin: { email: string; password: string } | null;
 }
 
 export interface Account {

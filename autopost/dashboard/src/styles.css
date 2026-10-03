@@ -512,7 +512,7 @@ textarea:focus,
   gap: 8px;
 }
 .platform-tile .row {
-  flex-wrap: nowrap;
+  flex-wrap: wrap;
 }
 
 /* ---- Status ---- */
@@ -609,5 +609,118 @@ textarea:focus,
   }
   .account-side {
     max-width: 40%;
+  }
+}
+
+/* ---- Fifofarm additions ---- */
+
+.brand-logo {
+  width: 26px;
+  height: 26px;
+  border-radius: 7px;
+}
+.login-brand {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.login-brand img {
+  width: 36px;
+  height: 36px;
+  border-radius: 9px;
+}
+.login-brand h1 {
+  margin: 0;
+}
+
+.spacer {
+  flex: 1;
+}
+
+.account-group {
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 10px;
+  display: grid;
+  gap: 8px;
+}
+.account-group-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.account-group-head .badge {
+  position: static;
+}
+
+.platform-tile.wide {
+  grid-column: 1 / -1;
+}
+
+.setup-panel {
+  margin-top: 10px;
+  padding-top: 10px;
+  border-top: 1px solid var(--border);
+}
+.setup-steps {
+  margin: 0;
+  padding-left: 20px;
+  display: grid;
+  gap: 6px;
+}
+
+.copy-field {
+  display: grid;
+  gap: 2px;
+}
+.copy-row {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+.copy-value {
+  flex: 1;
+  min-width: 0;
+  overflow-wrap: anywhere;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 6px 8px;
+  font-size: 13px;
+}
+.verification-file {
+  margin-right: 10px;
+}
+
+.network-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-bottom: 10px;
+}
+.network-chip {
+  border: 1px solid var(--border);
+  background: var(--surface);
+  border-radius: 99px;
+  padding: 3px 10px;
+  font-size: 13px;
+  cursor: pointer;
+}
+.network-chip.on {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+}
+
+.progress.indeterminate > div {
+  width: 35%;
+  animation: progress-slide 1.4s ease-in-out infinite;
+}
+@keyframes progress-slide {
+  0% {
+    transform: translateX(-100%);
+  }
+  100% {
+    transform: translateX(300%);
   }
 }

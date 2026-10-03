@@ -16,7 +16,7 @@ compose() {
 grep -q '^POSTIZ_URL=http://localhost:4007' .env || { echo ".env must be in local mode (POSTIZ_URL=http://localhost:4007)"; exit 1; }
 getent hosts mock-mastodon >/dev/null || { echo "Add '127.0.0.1 mock-mastodon' to /etc/hosts"; exit 1; }
 
-echo "Resetting the stack (deletes all AutoPost data in this checkout)…"
+echo "Resetting the stack (deletes all Fifofarm data in this checkout)…"
 compose down -v --remove-orphans
 compose up -d ${NO_BUILD:+--no-build}
 
@@ -27,9 +27,12 @@ until [ "$(curl -s -o /dev/null -w '%{http_code}' http://localhost:4007/api/publ
   sleep 3
 done
 
-echo "Creating the Postiz account…"
-curl -fs -X POST http://localhost:4007/api/auth/register -H 'Content-Type: application/json' \
-  -d '{"email":"e2e@example.com","password":"E2e-password-123","company":"E2E Test","provider":"LOCAL"}' >/dev/null
+echo "Waiting for Fifofarm to create the Postiz account by itself…"
+i=0
+until curl -fs http://localhost:3000/api/health | grep -q '"engine":"ready"'; do
+  i=$((i + 1)); [ $i -gt 60 ] && { echo "Automatic Postiz setup did not finish"; compose logs dashboard | tail -50; exit 1; }
+  sleep 3
+done
 POSTIZ_API_KEY=$(compose exec -T postgres psql -U postiz -d postiz -tAc 'select "apiKey" from "Organization" limit 1')
 DASHBOARD_PASSWORD=$(sed -n 's/^DASHBOARD_PASSWORD=//p' .env)
 

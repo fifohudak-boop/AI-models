@@ -37,14 +37,7 @@ try {
   await page.getByLabel('Password').fill(PASSWORD);
   await page.getByRole('button', { name: 'Sign in' }).click();
 
-  step('One-time setup: paste the Postiz API key');
-  await page.getByRole('heading', { name: 'One-time setup' }).waitFor();
-  await shot(page, '01-setup');
-  await page.getByLabel('Postiz API key').fill('not-a-real-key');
-  await page.getByRole('button', { name: 'Save and continue' }).click();
-  await page.getByText("Postiz didn't accept that key").waitFor();
-  await page.getByLabel('Postiz API key').fill(API_KEY);
-  await page.getByRole('button', { name: 'Save and continue' }).click();
+  step('No setup screen: Fifofarm created the Postiz account and key by itself');
   await page.getByRole('link', { name: 'Accounts' }).waitFor();
   await shot(page, '02-post-empty');
 

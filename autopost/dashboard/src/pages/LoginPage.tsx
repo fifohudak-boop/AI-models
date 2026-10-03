@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import { api } from '../api';
+import { BRAND } from '../brand';
 
 export function LoginPage({ onLoggedIn }: { onLoggedIn: () => void }) {
   const [password, setPassword] = useState('');
@@ -24,8 +25,11 @@ export function LoginPage({ onLoggedIn }: { onLoggedIn: () => void }) {
           }
         }}
       >
-        <h1>AutoPost</h1>
-        <p className="muted">Post one video to all your accounts.</p>
+        <div className="login-brand">
+          <img src="/icon.svg" alt="" />
+          <h1>{BRAND.name}</h1>
+        </div>
+        <p className="muted">{BRAND.tagline}</p>
         <label className="field">
           <span>Password</span>
           <input type="password" autoFocus value={password} onChange={(e) => setPassword(e.target.value)} />

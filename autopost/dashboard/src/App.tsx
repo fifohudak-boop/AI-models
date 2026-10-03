@@ -7,6 +7,7 @@ import { ComposePage } from './pages/ComposePage';
 import { AccountsPage } from './pages/AccountsPage';
 import { HistoryPage } from './pages/HistoryPage';
 import { SettingsPage } from './pages/SettingsPage';
+import { BRAND } from './brand';
 
 type Tab = 'post' | 'accounts' | 'history' | 'settings';
 const TABS: { id: Tab; label: string }[] = [
@@ -66,6 +67,8 @@ export function App() {
   if (session === 'unknown') return null;
   if (session === 'out') return <LoginPage onLoggedIn={() => setSession('in')} />;
   if (!status) return <div className="center-page muted">Loading…</div>;
+  const brand = status.brand || BRAND.name;
+  if (document.title !== brand) document.title = brand;
   const blip = everConnected && status.postiz === 'unreachable';
   if (status.postiz !== 'ok' && !blip) return <SetupPage status={status} onDone={loadStatus} />;
   const engineDown = blip || status.worker === 'down';
@@ -79,11 +82,12 @@ export function App() {
       <header className="topbar">
         <div className="topbar-inner">
           <div className="brand">
+            <img className="brand-logo" src="/icon.svg" alt="" />
+            {brand}
             <span
               className={`brand-dot${engineDown ? ' down' : ''}`}
               title={engineDown ? 'Posting engine is restarting' : 'Posting engine running'}
             />
-            AutoPost
           </div>
           <nav className="tabs">
             {TABS.map((t) => (

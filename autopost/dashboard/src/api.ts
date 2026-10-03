@@ -3,9 +3,11 @@ import type {
   AccountPreview,
   Batch,
   MediaJob,
+  NetworksInfo,
   Platform,
   Preferences,
   Status,
+  SystemInfo,
 } from './types';
 
 export class ApiError extends Error {
@@ -53,10 +55,34 @@ export const api = {
   savePreferences: (patch: Partial<Preferences>) =>
     request<Preferences>('/api/preferences', { method: 'PUT', body: patch }),
 
+  autoSetup: () => request<{ phase: Status['autoSetup']; detail: string | null }>('/api/setup/auto', { method: 'POST' }),
+  changePassword: (current: string, next: string) =>
+    request<{ ok: true }>('/api/settings/password', { method: 'PUT', body: { current, next } }),
+  changeDomain: (domain: string) =>
+    request<{ ok: true; dashboardUrl: string; postizUrl: string }>('/api/settings/domain', {
+      method: 'PUT',
+      body: { domain },
+    }),
+  system: () => request<SystemInfo>('/api/system'),
+  checkUpdates: () => request<{ ok: true }>('/api/system/check-updates', { method: 'POST' }),
+
+  networks: () => request<NetworksInfo>('/api/networks'),
+  saveNetwork: (id: string, values: Record<string, string>) =>
+    request<{ ok: true; autoApply: boolean; keys: string[] }>(`/api/networks/${encodeURIComponent(id)}`, {
+      method: 'PUT',
+      body: { values },
+    }),
+  saveVerification: (name: string, content: string) =>
+    request<{ ok: true; files: string[] }>('/api/verification', { method: 'PUT', body: { name, content } }),
+  deleteVerification: (name: string) =>
+    request<{ ok: true; files: string[] }>(`/api/verification/${encodeURIComponent(name)}`, { method: 'DELETE' }),
+
   platforms: () => request<Platform[]>('/api/platforms'),
   accounts: () => request<Account[]>('/api/accounts'),
-  connectUrl: (provider: string) =>
-    request<{ url: string }>('/api/accounts/connect', { method: 'POST', body: { provider } }),
+  connectUrl: (provider: string, another = false) =>
+    request<{ url: string }>('/api/accounts/connect', { method: 'POST', body: { provider, another } }),
+  connectLink: (provider: string) =>
+    request<{ url: string; expiresAt: string }>('/api/accounts/connect-link', { method: 'POST', body: { provider } }),
   connectBluesky: (handle: string, appPassword: string) =>
     request<{ ok: true }>('/api/accounts/bluesky', { method: 'POST', body: { handle, appPassword } }),
   removeAccount: (id: string) => request<{ ok: true }>(`/api/accounts/${encodeURIComponent(id)}`, { method: 'DELETE' }),

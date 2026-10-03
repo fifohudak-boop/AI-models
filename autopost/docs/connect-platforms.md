@@ -1,12 +1,17 @@
 # Connecting each social network
 
-Every network makes you register a free "developer app" once. That gives you
-two keys, which go into `.env`. After that you can connect as many accounts of
-that network as you want, with one click each, from the dashboard's
-**Accounts** page.
+**Easiest: do it inside Fifofarm.** Accounts → pick a network → **Set up**
+shows these same steps with the exact redirect URLs for your server (copy
+buttons), fields for the two keys, and applies them for you within a minute or
+two. No `.env` editing, no terminal. This page is the reference behind it.
 
-**Every time you change `.env`, run `docker compose up -d`.** The network
-then shows up as connectable on the Accounts page.
+Every network makes you register a free "developer app" once. That gives you
+two keys. After that you can connect as many accounts of that network as you
+want from the **Accounts** page: **+ Add another** asks the network which
+account to use, and **Send link** gives you a sign-in link to open on a phone
+or send to whoever owns the account (valid for an hour).
+
+By hand instead: put the keys into `.env` and run `docker compose up -d`.
 
 Throughout this page, `POSTIZ_URL` means the value in your `.env`:
 - on a server: `https://postiz.yourname.duckdns.org`
@@ -87,7 +92,11 @@ account or Brand Account in the sign-in window.
      `postiz.yourname.duckdns.org`.
    - TikTok downloads your video from there, and refuses domains you haven't
      verified.
-   - DuckDNS supports the TXT record TikTok asks for: open
+   - Easiest: choose **URL prefix** → `POSTIZ_URL/` → **signature file**,
+     download the `.txt` file and upload it in Fifofarm (Accounts → TikTok →
+     Set up → Verification file). Fifofarm serves it at the right address;
+     then click Verify in TikTok.
+   - Or with DNS: DuckDNS supports the TXT record TikTok asks for: open
      `https://www.duckdns.org/update?domains=yourname&token=YOURTOKEN&txt=THE_VALUE`
      in a browser.
 5. Copy the client key and secret into `TIKTOK_CLIENT_ID` and
@@ -96,7 +105,7 @@ account or Brand Account in the sign-in window.
    - Posts can only be *Only me*.
    - Your TikTok account must be set to private.
    - At most 5 accounts can post per day.
-   - In the dashboard, go to **Settings → TikTok → Who can watch → Only me**.
+   - In Fifofarm, go to **Settings → TikTok → Who can watch → Only me**.
 7. Submit the app for review in the developer portal. After approval, switch
    to *Everyone*.
 
@@ -208,7 +217,7 @@ credits, no free tier for new developers since February 2026.
 3. Copy the app ID and secret into `PINTEREST_CLIENT_ID` and
    `PINTEREST_CLIENT_SECRET`.
 4. After connecting, **pick a board** for each Pinterest account on the
-   dashboard's Accounts page.
+   Accounts page in Fifofarm.
    - Video pins get a cover image automatically (a frame from your video).
 
 ## Bluesky
@@ -216,7 +225,7 @@ credits, no free tier for new developers since February 2026.
 Nothing to register.
 1. In Bluesky, go to **Settings → Privacy and security → App passwords** and
    create one.
-2. On the dashboard's Accounts page, click **Bluesky → Connect**, then enter
+2. On the Accounts page in Fifofarm, click **Bluesky → Connect**, then enter
    your handle and that app password.
 
 Videos can be up to 3 minutes and 100 MB.
@@ -236,6 +245,6 @@ Postiz also supports Reddit, Discord, Telegram, Google Business, Dribbble,
 Twitch, VK, Nostr, Lemmy, WordPress and more.
 - Connect them inside Postiz itself (open `POSTIZ_URL`).
 - Those that need no extra per-post settings (Telegram, Nostr, VK) also appear
-  in the dashboard and get the one-click post.
+  in Fifofarm and get the one-click post.
 - The rest (Reddit needs a subreddit, Discord a channel, and so on) are posted
   from Postiz.

@@ -84,6 +84,16 @@ export function ComposePage({ onGoAccounts }: { onGoAccounts: () => void }) {
   const ready = selected.filter((a) => (preview[a.id]?.problems.length ?? 0) === 0);
   const skipped = selected.filter((a) => (preview[a.id]?.problems.length ?? 0) > 0);
   const needsTitle = selected.some((a) => TITLE_PLATFORMS.has(a.identifier));
+  // "All Instagram", "All TikTok", ... — handy with many accounts per network.
+  const networkGroups = useMemo(() => {
+    const map = new Map<string, { identifier: string; name: string; ids: string[] }>();
+    for (const a of usable) {
+      const g = map.get(a.identifier) ?? { identifier: a.identifier, name: a.platform, ids: [] };
+      g.ids.push(a.id);
+      map.set(a.identifier, g);
+    }
+    return [...map.values()];
+  }, [usable]);
 
   function toggle(id: string) {
     setUnselected((prev) => {
@@ -338,6 +348,31 @@ export function ComposePage({ onGoAccounts }: { onGoAccounts: () => void }) {
             </div>
           )}
         </div>
+        {networkGroups.length > 1 && (
+          <div className="network-chips" role="group" aria-label="Select a whole network">
+            {networkGroups.map((g) => {
+              const allOn = g.ids.every((id) => !unselected.has(id));
+              return (
+                <button
+                  key={g.identifier}
+                  className={`network-chip${allOn ? ' on' : ''}`}
+                  onClick={() =>
+                    setUnselected((prev) => {
+                      const next = new Set(prev);
+                      for (const id of g.ids) {
+                        if (allOn) next.add(id);
+                        else next.delete(id);
+                      }
+                      return next;
+                    })
+                  }
+                >
+                  {g.name} · {g.ids.length}
+                </button>
+              );
+            })}
+          </div>
+        )}
         {loadError && <div className="notice error">{loadError}</div>}
         {accounts === null && !loadError && <p className="muted">Loading accounts…</p>}
         {accounts?.length === 0 && (

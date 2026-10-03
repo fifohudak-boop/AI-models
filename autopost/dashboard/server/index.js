@@ -1,18 +1,26 @@
 import express from 'express';
 import multer from 'multer';
+import dns from 'node:dns';
+import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
+  BRAND_NAME,
+  DASHBOARD_DOMAIN,
   DASHBOARD_PASSWORD,
+  DASHBOARD_URL,
   PORT,
+  POSTIZ_DOMAIN,
   POSTIZ_PUBLIC_URL,
   UPLOAD_TMP_DIR,
+  VERIFICATION_DIR,
   apiKeyFromEnv,
   getApiKey,
   getSettings,
   saveSettings,
 } from './config.js';
 import {
+  changePassword,
   checkPassword,
   clearSessionCookie,
   isLoggedIn,
@@ -21,6 +29,16 @@ import {
   sessionCookie,
   tooManyFailures,
 } from './auth.js';
+import {
+  VERIFICATION_NAME_PATTERN,
+  setupCatalog,
+  validateSetupValues,
+  validateVerificationFile,
+  withAccountChooser,
+} from './networks.js';
+import { hostStatus, requestEnvChanges, requestUpdateCheck } from './runtime.js';
+import { autoSetupState, startAutoSetup, trySetupOnce } from './setup.js';
+import { legalPage } from './legal.js';
 import { PostizError, postiz } from './postiz.js';
 import {
   buildPostRequest,
@@ -41,7 +59,7 @@ import {
   withStatus,
 } from './batches.js';
 
-if (!DASHBOARD_PASSWORD) {
+if (!DASHBOARD_PASSWORD && !getSettings().passwordHash) {
   console.error('DASHBOARD_PASSWORD is not set. Run ./install.sh or add it to .env, then restart.');
   process.exit(1);
 }
@@ -61,6 +79,44 @@ const asyncRoute = (fn) => (req, res, next) => Promise.resolve(fn(req, res, next
 function isNonEmptyString(value) {
   return typeof value === 'string' && value.trim().length > 0;
 }
+
+// ---- Public pages (no login) ----
+
+// Terms / privacy / data-deletion pages that developer apps ask for.
+app.get('/legal/:page', (req, res) => {
+  const html = legalPage(req.params.page, {
+    name: BRAND_NAME,
+    domain: DASHBOARD_DOMAIN,
+    contact: process.env.LEGAL_CONTACT_EMAIL,
+  });
+  if (!html) return res.status(404).send('Not found');
+  res.type('html').send(html);
+});
+
+// Site-verification files uploaded in Settings (e.g. TikTok's URL-prefix
+// signature file). Caddy also routes "/<name>.txt" on the Postiz domain here.
+app.get(/^\/([A-Za-z0-9_-]{1,120}\.txt)$/, (req, res, next) => {
+  const name = req.params[0];
+  if (!VERIFICATION_NAME_PATTERN.test(name)) return next();
+  const file = path.join(VERIFICATION_DIR, name);
+  if (!fs.existsSync(file)) return res.status(404).type('text').send('Not found');
+  res.type('text/plain').send(fs.readFileSync(file, 'utf8'));
+});
+
+// For install.sh: is everything up? No secrets in here.
+app.get(
+  '/api/health',
+  asyncRoute(async (_req, res) => {
+    let engine = 'starting';
+    if (getApiKey()) {
+      engine = await postiz
+        .checkKey()
+        .then(() => 'ready')
+        .catch((err) => (err instanceof PostizError && err.status === 401 ? 'bad-key' : 'starting'));
+    }
+    res.json({ dashboard: 'ok', engine, setup: autoSetupState().phase });
+  })
+);
 
 // ---- Session ----
 
@@ -91,7 +147,12 @@ app.use('/api', requireLogin);
 app.get(
   '/api/status',
   asyncRoute(async (_req, res) => {
-    const base = { postizUrl: POSTIZ_PUBLIC_URL, apiKeyFromEnv: apiKeyFromEnv() };
+    const base = {
+      brand: BRAND_NAME,
+      postizUrl: POSTIZ_PUBLIC_URL,
+      apiKeyFromEnv: apiKeyFromEnv(),
+      autoSetup: autoSetupState().phase,
+    };
     if (!getApiKey()) return res.json({ ...base, postiz: 'no-key' });
     try {
       const [, worker] = await Promise.all([postiz.checkKey(), postiz.workerState()]);
@@ -123,6 +184,156 @@ app.put(
     res.json({ ok: true });
   })
 );
+
+// Fresh install: create the Postiz account + API key now (also runs by itself
+// in the background while Postiz starts).
+app.post(
+  '/api/setup/auto',
+  asyncRoute(async (_req, res) => {
+    const phase = await trySetupOnce();
+    res.json({ phase, detail: autoSetupState().detail });
+  })
+);
+
+app.put('/api/settings/password', (req, res) => {
+  const result = changePassword(req.ip, req.body?.current, req.body?.next);
+  if (!result.ok) return res.status(result.status).json({ error: result.error });
+  // This browser stays signed in; every other one has to sign in again.
+  res.setHeader('Set-Cookie', sessionCookie());
+  res.json({ ok: true });
+});
+
+// ---- System: version, updates, domain ----
+
+function serverDomains() {
+  return {
+    serverMode: !!DASHBOARD_DOMAIN,
+    dashboard: DASHBOARD_DOMAIN,
+    postiz: POSTIZ_DOMAIN,
+    dashboardUrl: DASHBOARD_URL,
+    postizUrl: POSTIZ_PUBLIC_URL,
+  };
+}
+
+app.get('/api/system', (_req, res) => {
+  const { postizLogin } = getSettings();
+  res.json({
+    brand: BRAND_NAME,
+    host: hostStatus(),
+    domains: serverDomains(),
+    postizLogin: postizLogin ? { email: postizLogin.email, password: postizLogin.password } : null,
+  });
+});
+
+app.post('/api/system/check-updates', (_req, res) => {
+  try {
+    requestUpdateCheck();
+  } catch (err) {
+    return res.status(409).json({ error: err.message });
+  }
+  res.json({ ok: true });
+});
+
+const DOMAIN_PATTERN = /^(?=.{4,253}$)(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,63}$/;
+
+async function ipv4(host) {
+  try {
+    return await dns.promises.resolve4(host);
+  } catch {
+    return [];
+  }
+}
+
+app.put(
+  '/api/settings/domain',
+  asyncRoute(async (req, res) => {
+    if (!DASHBOARD_DOMAIN) {
+      return res.status(409).json({ error: 'Changing the domain needs server mode (install.sh → option 2).' });
+    }
+    const domain = String(req.body?.domain ?? '')
+      .trim()
+      .toLowerCase()
+      .replace(/^https?:\/\//, '')
+      .replace(/\/.*$/, '');
+    const engine = String(req.body?.engineDomain ?? '').trim().toLowerCase() || `postiz.${domain}`;
+    if (!DOMAIN_PATTERN.test(domain) || !DOMAIN_PATTERN.test(engine)) {
+      return res.status(400).json({ error: 'Enter a domain like fifofarm.com' });
+    }
+    if (domain === DASHBOARD_DOMAIN && engine === POSTIZ_DOMAIN) {
+      return res.status(400).json({ error: 'That is already the current domain.' });
+    }
+    const serverIps = await ipv4(DASHBOARD_DOMAIN);
+    const [a, b] = await Promise.all([ipv4(domain), ipv4(engine)]);
+    const ip = serverIps[0] ?? 'this server\'s IP';
+    const pointsHere = (ips) => ips.some((x) => serverIps.includes(x));
+    if (!pointsHere(a) || !pointsHere(b)) {
+      return res.status(400).json({
+        error: `First point ${domain} and ${engine} to ${ip} (an "A" record at your domain provider), wait a few minutes, then try again.`,
+        dns: { [domain]: a, [engine]: b, server: serverIps },
+      });
+    }
+    try {
+      requestEnvChanges({
+        DASHBOARD_DOMAIN: domain,
+        POSTIZ_DOMAIN: engine,
+        DASHBOARD_URL: `https://${domain}`,
+        POSTIZ_URL: `https://${engine}`,
+      });
+    } catch (err) {
+      return res.status(409).json({ error: err.message });
+    }
+    res.json({ ok: true, dashboardUrl: `https://${domain}`, postizUrl: `https://${engine}` });
+  })
+);
+
+// ---- Network setup (developer keys) ----
+
+function verificationFiles() {
+  try {
+    return fs.readdirSync(VERIFICATION_DIR).filter((name) => VERIFICATION_NAME_PATTERN.test(name));
+  } catch {
+    return [];
+  }
+}
+
+app.get('/api/networks', (_req, res) => {
+  const host = hostStatus();
+  res.json({
+    setups: setupCatalog(process.env, { postizUrl: POSTIZ_PUBLIC_URL, dashboardUrl: DASHBOARD_URL }),
+    verificationFiles: verificationFiles(),
+    autoApply: host.available && host.helperActive,
+    pending: host.pending,
+    apply: host.apply,
+  });
+});
+
+app.put('/api/networks/:id', (req, res) => {
+  const { changes, error } = validateSetupValues(req.params.id, req.body?.values);
+  if (error) return res.status(400).json({ error });
+  try {
+    requestEnvChanges(changes);
+  } catch (err) {
+    return res.status(409).json({ error: err.message });
+  }
+  const host = hostStatus();
+  res.json({ ok: true, autoApply: host.helperActive, keys: Object.keys(changes) });
+});
+
+app.put('/api/verification', (req, res) => {
+  const { name, content, error } = validateVerificationFile(
+    String(req.body?.name ?? '').trim(),
+    String(req.body?.content ?? '')
+  );
+  if (error) return res.status(400).json({ error });
+  fs.writeFileSync(path.join(VERIFICATION_DIR, name), content);
+  res.json({ ok: true, files: verificationFiles() });
+});
+
+app.delete('/api/verification/:name', (req, res) => {
+  if (!VERIFICATION_NAME_PATTERN.test(req.params.name)) return res.status(400).json({ error: 'Bad name.' });
+  fs.rmSync(path.join(VERIFICATION_DIR, req.params.name), { force: true });
+  res.json({ ok: true, files: verificationFiles() });
+});
 
 const PREFERENCE_RULES = {
   youtubeVisibility: (v) => ['public', 'unlisted', 'private'].includes(v),
@@ -206,18 +417,40 @@ app.get(
   })
 );
 
+function connectableEntry(provider, res) {
+  const entry = platformCatalog(process.env).find((p) => p.identifier === provider);
+  if (!entry || entry.connect !== 'oauth') {
+    res.status(400).json({ error: 'Unknown network.' });
+    return null;
+  }
+  if (!entry.configured) {
+    res.status(400).json({ error: `${entry.name} isn't set up yet — click "Set up" next to it first.` });
+    return null;
+  }
+  return entry;
+}
+
+// `another: true` makes the network ask which account to use (or to log in),
+// instead of silently reusing the account the browser is already logged in to.
 app.post(
   '/api/accounts/connect',
   asyncRoute(async (req, res) => {
     const provider = req.body?.provider;
-    const entry = platformCatalog(process.env).find((p) => p.identifier === provider);
-    if (!entry || entry.connect !== 'oauth') return res.status(400).json({ error: 'Unknown network.' });
-    if (!entry.configured) {
-      return res.status(400).json({
-        error: `${entry.name} isn't set up yet. Add ${entry.missingKeys.join(' and ')} to .env and restart.`,
-      });
-    }
-    res.json({ url: await postiz.connectUrl(provider) });
+    if (!connectableEntry(provider, res)) return;
+    const url = await postiz.connectUrl(provider);
+    res.json({ url: req.body?.another ? withAccountChooser(provider, url) : url });
+  })
+);
+
+// A sign-in link to send to someone else (or open on your phone). Whoever
+// opens it and approves adds their account here. Valid for one hour.
+app.post(
+  '/api/accounts/connect-link',
+  asyncRoute(async (req, res) => {
+    const provider = req.body?.provider;
+    if (!connectableEntry(provider, res)) return;
+    const url = withAccountChooser(provider, await postiz.connectUrl(provider));
+    res.json({ url, expiresAt: new Date(Date.now() + 55 * 60 * 1000).toISOString() });
   })
 );
 
@@ -511,5 +744,6 @@ app.get(/^(?!\/api\/).*/, (_req, res) => {
 });
 
 app.listen(PORT, () => {
-  console.log(`AutoPost dashboard on http://localhost:${PORT} (Postiz: ${POSTIZ_PUBLIC_URL})`);
+  console.log(`${BRAND_NAME} dashboard on http://localhost:${PORT} (Postiz: ${POSTIZ_PUBLIC_URL})`);
+  startAutoSetup();
 });

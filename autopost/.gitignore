@@ -4,3 +4,5 @@ dashboard/dist
 dashboard/data
 test/node_modules
 test/artifacts
+runtime/
+Caddyfile.bak
