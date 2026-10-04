@@ -64,16 +64,35 @@
                 <button type="button" class="btn ghost sm connect" data-platform="instagram">Connect</button>
               </div>
             </div>
+            <div class="platform" data-platform="pinterest">
+              <label class="check">
+                <input type="checkbox" name="platforms" value="pinterest">
+                <span class="pname">Pinterest</span>
+              </label>
+              <div class="platform-actions">
+                <button type="button" class="btn ghost sm selftest-btn" data-platform="pinterest"
+                  title="Run one quick real search and check every step">Test</button>
+                <button type="button" class="btn ghost sm connect" data-platform="pinterest">Connect</button>
+              </div>
+              <label class="check sub-option">
+                <input type="checkbox" name="include_images">
+                <span>Also save reference images (not just videos)</span>
+              </label>
+            </div>
           </div>
           <p class="hint">Connect opens the agents' browser so you can log in once. A spare account is safest.
             Test runs one quick real search to check everything works.</p>
         </section>
 
         <section class="group">
-          <div class="row3">
+          <div class="row2">
             <div>
-              <label class="label sm" for="target_count">Videos to download</label>
+              <label class="label sm" for="target_count">Videos to save</label>
               <input id="target_count" name="target_count" type="number" min="1" max="500">
+            </div>
+            <div>
+              <label class="label sm" for="pool_size">Videos to look at</label>
+              <input id="pool_size" name="pool_size" type="number" min="0" max="2000" step="10">
             </div>
             <div>
               <label class="label sm" for="time_limit_min">Time limit (min)</label>
@@ -84,6 +103,8 @@
               <input id="agents" name="agents" type="range" min="1" max="6" step="1">
             </div>
           </div>
+          <p class="hint">The agents look at this many videos, the AI scores every one, and the best ones are
+            saved. Empty = 4× what you want to save.</p>
         </section>
 
         <details class="group" open>
@@ -120,9 +141,9 @@
             <button type="button" class="btn ghost sm" id="pull" hidden>Download</button>
           </div>
           <p class="hint" id="model_hint"></p>
-          <label class="label sm" for="strictness">How strict <output id="strictness_out"></output></label>
-          <input id="strictness" name="strictness" type="range" min="0" max="100" step="5">
-          <div class="scale"><span>Loose</span><span>Exact</span></div>
+          <label class="label sm" for="min_score">Minimum AI score <output id="min_score_out"></output></label>
+          <input id="min_score" name="min_score" type="range" min="0" max="90" step="5">
+          <div class="scale"><span>0 = always save the number I asked for</span><span>Only near-perfect</span></div>
           <label class="check toggle">
             <input type="checkbox" name="watch_check">
             <span>Watch-check: AI looks at frames after downloading and deletes misses</span>
@@ -144,12 +165,23 @@
             <span>Show the agents scrolling (otherwise they run hidden)</span>
           </label>
         </section>
+
+        <section class="group">
+          <label class="label" for="link_url">Save a video from a link</label>
+          <div class="inline">
+            <input id="link_url" type="url" placeholder="https://www.tiktok.com/@…/video/…" spellcheck="false">
+            <button type="button" class="btn ghost sm" id="save_link">Save</button>
+          </div>
+          <p class="hint" id="link_hint">Any TikTok, Instagram, Pinterest or YouTube video. It's saved as an MP4 that
+            plays on any Mac, in “Saved links” inside your download folder.</p>
+        </section>
       </div>
 
       <div class="actions">
         <button type="submit" class="btn primary big" id="start">
           <span class="when-idle">Start hunt</span>
-          <span class="when-running">Stop hunt</span>
+          <span class="when-running">Finish now</span>
+          <span class="when-finishing">Stop now</span>
         </button>
         <button type="button" class="btn ghost" id="open_folder" title="Open the download folder in Finder">Open folder</button>
       </div>
@@ -186,20 +218,20 @@
       <section class="panel feed-panel">
         <div class="feed-head">
           <div class="tabs" role="tablist">
-            <button class="tab active" data-filter="all" role="tab">All <span id="n_all"></span></button>
-            <button class="tab" data-filter="downloaded" role="tab">Downloaded <span id="n_downloaded"></span></button>
-            <button class="tab" data-filter="active" role="tab">In progress <span id="n_active"></span></button>
+            <button class="tab active" data-filter="best" role="tab">Best <span id="n_best"></span></button>
+            <button class="tab" data-filter="downloaded" role="tab">Saved <span id="n_downloaded"></span></button>
+            <button class="tab" data-filter="all" role="tab">All <span id="n_all"></span></button>
             <button class="tab" data-filter="rejected" role="tab">Skipped <span id="n_rejected"></span></button>
           </div>
         </div>
-        <div class="feed" id="feed" data-filter="all"></div>
+        <div class="feed" id="feed" data-filter="best"></div>
         <div class="empty" id="empty">
           <h2>How it works</h2>
           <ol>
-            <li><b>Connect</b> TikTok and Instagram once (left side). Log in, then close that window.</li>
+            <li><b>Connect</b> TikTok, Instagram and Pinterest once (left side). Log in, then close that window.</li>
             <li><b>Describe</b> the videos you want, in plain words. Add must-have hashtags if you like.</li>
-            <li>Press <b>Start hunt</b>. The AI plans searches, the agents scroll, and every video is
-              judged against your description. Matches land in your folder with a log of why each was picked.</li>
+            <li>Press <b>Start hunt</b>. The agents look at lots of videos, the AI scores every one against your
+              description, and the best ones are saved — as many as you asked for, as MP4s that play on any Mac.</li>
           </ol>
         </div>
       </section>

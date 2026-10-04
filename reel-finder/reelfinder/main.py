@@ -6,6 +6,7 @@ import asyncio
 import json
 import logging
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -26,10 +27,11 @@ from .config import (
     COOKIES_FILE, LOG_DIR, LOG_FILE, OLLAMA_HOST, PLATFORM_LABELS, PLATFORMS, THUMBS_DIR, WEB_DIR,
     HuntSettings, load_settings, save_settings,
 )
-from .downloader import Downloader, find_ffmpeg
+from .downloader import Downloader, NotAVideo, find_ffmpeg, safe_name
 from .events import EventBus
-from .hunt import Hunt, validate
+from .hunt import Hunt, short_error, validate
 from .logs import diagnostics, tail
+from .models import Candidate
 from .selftest import SelfTest
 
 log = logging.getLogger("reelfinder")
@@ -37,7 +39,7 @@ log = logging.getLogger("reelfinder")
 ALLOWED_HOSTS = {"127.0.0.1", "localhost"}
 # For testing against a stand-in site, e.g. REELFINDER_SITE_TIKTOK=http://127.0.0.1:9000
 SITE_OVERRIDES = {
-    p: os.environ[f"REELFINDER_SITE_{p.upper()}"] for p in ("tiktok", "instagram") if os.environ.get(f"REELFINDER_SITE_{p.upper()}")
+    p: os.environ[f"REELFINDER_SITE_{p.upper()}"] for p in PLATFORMS if os.environ.get(f"REELFINDER_SITE_{p.upper()}")
 }
 
 
@@ -51,6 +53,7 @@ class AppState:
         self.pull_task: asyncio.Task | None = None
         self.selftests: dict[str, SelfTest] = {}
         self.selftest_task: asyncio.Task | None = None
+        self.link_tasks: set[asyncio.Task] = set()
 
     @property
     def hunting(self) -> bool:
@@ -289,11 +292,59 @@ async def _run_hunt(hunt: Hunt) -> None:
         await _release_browser()
 
 
+@app.post("/api/hunt/finish")
+async def finish_hunt() -> dict:
+    """Stop searching and save the best videos found so far."""
+    if state.hunt:
+        state.hunt.finish()
+    return {"ok": True}
+
+
 @app.post("/api/hunt/stop")
 async def stop_hunt() -> dict:
+    """Stop everything right now."""
     if state.hunt:
         state.hunt.stop("Stopped by you")
     return {"ok": True}
+
+
+# ---------------------------------------------------------------- save a single link
+
+class LinkBody(BaseModel):
+    url: str
+
+
+@app.post("/api/save-link")
+async def save_link(body: LinkBody) -> dict:
+    url = body.url.strip()
+    if not re.match(r"^https?://\S+$", url):
+        raise HTTPException(400, "Paste a full link that starts with https://")
+    task = asyncio.create_task(_save_link(url))
+    state.link_tasks.add(task)
+    task.add_done_callback(state.link_tasks.discard)
+    return {"ok": True}
+
+
+async def _save_link(url: str) -> None:
+    """Download one video from a link (TikTok, Instagram, Pinterest, YouTube…) as a playable MP4."""
+    state.bus.emit("link", {"url": url, "status": "working"})
+    folder = Path(state.settings.output_dir).expanduser() / "Saved links"
+    downloader = Downloader(COOKIES_FILE)
+    try:
+        info = await asyncio.to_thread(downloader.probe, url)
+        if info.get("_type") == "playlist":
+            raise NotAVideo("That's a playlist or profile — paste the link of one video")
+        platform = safe_name((info.get("extractor_key") or "link").lower(), 20)
+        cand = Candidate(platform=platform, id=str(info.get("id") or abs(hash(url))), url=info.get("webpage_url") or url,
+                         author=info.get("uploader") or info.get("channel") or "")
+        path = await asyncio.to_thread(downloader.download, cand, folder, None)
+        media = await asyncio.to_thread(downloader.inspect, path)
+        log.info("Saved link %s → %s (%s)", url, path, media.summary())
+        state.bus.emit("link", {"url": url, "status": "done", "file": str(path), "folder": str(folder),
+                                "summary": media.summary()})
+    except Exception as exc:  # noqa: BLE001 - tell the page what went wrong
+        log.warning("Couldn't save link %s: %s", url, exc)
+        state.bus.emit("link", {"url": url, "status": "failed", "error": short_error(exc)})
 
 
 # ---------------------------------------------------------------- self-test & report

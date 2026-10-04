@@ -28,12 +28,13 @@ def excluded_term(caption: str, exclude: list[str]) -> str | None:
 
 
 def needs_probe(c: Candidate, s: HuntSettings) -> bool:
-    """True when a filter (or the AI) needs metadata the agent couldn't see."""
+    """True when the AI would have nothing to look at, or one of *your* filters needs a number the
+    agent couldn't see. Length is checked while downloading instead: looking up every video's
+    details first was the slowest part of a hunt."""
+    if c.kind == "image":
+        return False
     return (
-        c.maybe_not_video
-        or not c.caption
-        or not c.thumbnail_url
-        or (c.duration is None and bool(s.min_duration or s.max_duration))
+        (not c.caption and not c.thumbnail_url)
         or (c.views is None and s.min_views > 0)
         or (c.likes is None and s.min_likes > 0)
         or (c.timestamp is None and s.max_age_days > 0)

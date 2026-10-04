@@ -12,6 +12,7 @@ from __future__ import annotations
 import html
 import http.server
 import json
+import re
 import subprocess
 import sys
 import tempfile
@@ -79,6 +80,29 @@ def tiktok_item(base: str, q: str, page: int, i: int) -> dict:
     }
 
 
+def media_for(n: int) -> str:
+    """Like the real sites, some posts don't give you a normal video:
+    n % 6 == 4 → a "video" that's only music (TikTok photo slideshows do this),
+    n % 6 == 2 → HEVC/H.265 video (TikTok's 1080p), which QuickTime often can't show."""
+    return {4: "audio_only.mp4", 2: "clip_hevc.mp4"}.get(n % 6, "clip.mp4")
+
+
+def pinterest_pin(base: str, q: str, page: int, i: int, scope: str) -> dict:
+    n = _n(q, page, i)
+    is_image = scope == "pins" and n % 3 == 1
+    pid = str((800 if is_image else 900) * 10**12 + (zlib.crc32(q.encode()) % 100000) * 1000 + n)
+    cover = f"{base}/cover/{n % len(COLORS)}.jpg"
+    pin = {
+        "type": "pin", "id": pid, "grid_title": _caption(q, n).split(" #")[0], "description": _caption(q, n),
+        "created_at": "Tue, 12 Mar 2024 10:00:00 +0000", "is_promoted": n == 11,
+        "pinner": {"username": f"pinner{n % 3}"}, "reaction_counts": {"1": 40 * (n + 1)},
+        "images": {"236x": {"url": cover}, "474x": {"url": cover}, "orig": {"url": cover, "width": 270, "height": 480}},
+        "videos": None if is_image else {"video_list": {"V_720P": {"url": f"{base}/media/clip.mp4",
+                                                                    "duration": (6 + n % 9) * 1000}}},
+    }
+    return pin
+
+
 def instagram_media(base: str, q: str, page: int, i: int) -> dict:
     n = _n(q, page, i)
     code = f"C{zlib.crc32(q.encode()) % 100000:05d}x{n:03d}"
@@ -110,6 +134,13 @@ class FakeSite:
         subprocess.run([ffmpeg, "-v", "error", "-y", "-f", "lavfi", "-i", "testsrc=size=360x640:rate=25:duration=3",
                         "-f", "lavfi", "-i", "sine=frequency=330:duration=3", "-shortest", "-c:v", "libx264",
                         "-pix_fmt", "yuv420p", "-c:a", "aac", str(self.dir / "clip.mp4")], check=True)
+        subprocess.run([ffmpeg, "-v", "error", "-y", "-f", "lavfi", "-i", "sine=frequency=500:duration=3",
+                        "-c:a", "aac", str(self.dir / "audio_only.mp4")], check=True)
+        hevc = subprocess.run([ffmpeg, "-v", "error", "-y", "-f", "lavfi", "-i", "testsrc2=size=360x640:rate=25:duration=3",
+                               "-f", "lavfi", "-i", "sine=frequency=700:duration=3", "-shortest", "-c:v", "libx265",
+                               "-tag:v", "hev1", "-pix_fmt", "yuv420p", "-c:a", "aac", str(self.dir / "clip_hevc.mp4")])
+        if hevc.returncode != 0:  # no HEVC encoder here: fall back to a normal clip
+            (self.dir / "clip_hevc.mp4").write_bytes((self.dir / "clip.mp4").read_bytes())
 
     def start(self) -> FakeSite:
         threading.Thread(target=self.server.serve_forever, daemon=True).start()
@@ -147,6 +178,29 @@ class FakeSite:
                 site.requests.append(self.path)
                 base = site.url
 
+                if path in ("/search/videos/", "/search/pins/"):
+                    q, scope = qs.get("q", ""), path.split("/")[2]
+                    if q == "needlogin":
+                        return self._send(b"", "text/html", 302, {"Location": "/login/"})
+                    return self._html(GRID_PAGE.format(
+                        title=f"Pinterest {scope} search: {html.escape(q)}", bg="#fff", captcha="",
+                        api=f"/resource/BaseSearchResource/get/?scope={scope}&q=",
+                    ))
+
+                if path == "/resource/BaseSearchResource/get/":
+                    q, page, scope = qs.get("q", ""), int(qs.get("page", 0)), qs.get("scope", "videos")
+                    pins = [pinterest_pin(base, q, page, i, scope) for i in range(PER_PAGE)]
+                    tiles = [{"href": f"/pin/{p['id']}/", "alt": p["description"], "cover": p["images"]["236x"]["url"]}
+                             for p in pins]
+                    return self._json({"resource_response": {"data": {"results": pins}},
+                                       "has_more": int(page + 1 < PAGES), "tiles": tiles})
+
+                if path.startswith("/pin/"):
+                    pid = path.strip("/").split("/")[-1]
+                    # Image pins (ids starting with 8) have no <video>, so yt-dlp finds nothing there.
+                    body = '<img src="/cover/0.jpg">' if pid.startswith("8") else '<video src="/media/clip.mp4"></video>'
+                    return self._html(f"<!doctype html><html><head><title>pin {pid}</title></head><body>{body}</body></html>")
+
                 if path in ("/search/video", "/explore/search/keyword/") or path.startswith("/tag/"):
                     is_ig = path.startswith("/explore")
                     q = qs.get("q", "") if not path.startswith("/tag/") else "#" + path.split("/")[2]
@@ -179,10 +233,11 @@ class FakeSite:
 
                 if "/video/" in path or path.startswith(("/reel/", "/p/")):
                     title = html.escape(path.strip("/").replace("/", " "))
+                    n = int(re.sub(r"\D", "", path.strip("/").split("/")[-1][-3:]) or 0)
                     return self._html(f'<!doctype html><html><head><title>{title}</title></head><body>'
-                                      f'<video src="/media/clip.mp4" controls></video></body></html>')
+                                      f'<video src="/media/{media_for(n)}" controls></video></body></html>')
 
-                if path.startswith("/cover/") or path == "/media/clip.mp4":
+                if path.startswith(("/cover/", "/media/")):
                     f = site.dir / path.rsplit("/", 1)[-1]
                     if f.exists():
                         ctype = "image/jpeg" if f.suffix == ".jpg" else "video/mp4"
@@ -193,6 +248,8 @@ class FakeSite:
                     return self._html("<h1>Log in to Instagram</h1>")
                 if path == "/login":
                     return self._html("<h1>Log in to TikTok</h1>")
+                if path == "/login/":
+                    return self._html("<h1>Log in to Pinterest</h1>")
                 return self._send(b"not found", "text/plain", 404)
 
         return Handler

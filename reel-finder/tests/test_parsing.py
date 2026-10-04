@@ -85,3 +85,63 @@ def test_split_terms():
 def test_parsers_ignore_garbage():
     assert parse_tiktok_json({"weird": [1, "x", None, {"id": "123"}]}) == []
     assert parse_instagram_json(["nope", 3, {"code": 5}]) == []
+
+
+def test_pinterest_real_search_results():
+    from reelfinder.parsing import parse_pinterest_json
+
+    cands = parse_pinterest_json(load_fixture("pinterest_search.json"))
+    by_id = {c.id: c for c in cands}
+    assert "1111111111111111" not in by_id  # promoted pins (ads) are dropped
+    assert "6977350996506936" not in by_id  # the "story" carousel isn't a pin
+    video = by_id["1052716481630882749"]
+    assert video.kind == "video" and video.rich and video.duration == 7.1
+    assert video.url == "https://www.pinterest.com/pin/1052716481630882749/"
+    assert video.caption.startswith("Mercedes Drift") and video.author == "kd6459142"
+    assert video.likes and video.timestamp and video.thumbnail_url.startswith("https://i.pinimg.com/474x/")
+    assert by_id["9148005522406293"].kind == "video"  # an Idea pin with a clip inside
+    images = [c for c in cands if c.kind == "image"]
+    assert len(images) == 2 and all(c.image_url and "/originals/" in c.image_url for c in images)
+
+
+def test_pinterest_caption_has_no_repeats():
+    from reelfinder.parsing import parse_pinterest_json
+
+    pin = {"type": "pin", "id": "1", "grid_title": "Night drift", "title": "Night drift",
+           "description": "Night drift with smoke #cardrift", "auto_alt_text": "a car drifting at night",
+           "images": {"474x": {"url": "https://i.pinimg.com/474x/a.jpg"}},
+           "videos": {"video_list": {"V_720P": {"url": "u", "duration": 5000}}}}
+    [c] = parse_pinterest_json({"resource_response": {"data": {"results": [pin]}}})
+    assert c.caption == "Night drift with smoke #cardrift · a car drifting at night"
+
+
+def test_pinterest_links():
+    from reelfinder.parsing import parse_pinterest_links
+
+    cands = parse_pinterest_links([
+        {"href": "/pin/1052716481630882749/", "alt": "Mercedes drift at night",
+         "src": "https://i.pinimg.com/236x/26/5d/ed/265ded.jpg"},
+        {"href": "https://www.pinterest.co.uk/pin/some-title--27514247718193220/", "alt": ""},
+        {"href": "/ideas/cars/123/"},
+    ])
+    assert [c.id for c in cands] == ["1052716481630882749", "27514247718193220"]
+    first = cands[0]
+    assert first.maybe_not_video and first.caption == "Mercedes drift at night"
+    assert first.thumbnail_url == "https://i.pinimg.com/474x/26/5d/ed/265ded.jpg"
+    assert first.image_url == "https://i.pinimg.com/736x/26/5d/ed/265ded.jpg"
+
+
+def test_page_links_carry_their_cover_image():
+    links = [{"href": "/@a/video/7412345678901234567", "alt": "x", "src": "https://p16.example/c.jpeg"},
+             {"href": "/p/Cabc12345/", "src": "data:image/gif;base64,R0lGOD"}]
+    assert parse_tiktok_links(links[:1])[0].thumbnail_url == "https://p16.example/c.jpeg"
+    assert parse_instagram_links(links[1:])[0].thumbnail_url is None  # placeholders ignored
+
+
+def test_site_data_beats_a_bare_link():
+    from reelfinder.models import Candidate
+
+    link = Candidate(platform="instagram", id="C1", url="u", caption="Photo by someone", maybe_not_video=True)
+    rich = Candidate(platform="instagram", id="C1", url="u", caption="Night drift with smoke", views=5, rich=True)
+    link.merge(rich)
+    assert (link.caption, link.views, link.rich, link.maybe_not_video) == ("Night drift with smoke", 5, True, False)

@@ -1,8 +1,13 @@
 # 🎬 Reel Finder
 
-Describe the short-form videos you need. Press **Start hunt**. AI agents scroll
-**TikTok** and **Instagram Reels** at the same time, a local AI checks every video
-against your description, and the matches download into the folder you choose.
+Describe the short-form videos you need and say how many you want. Press **Start hunt**.
+AI agents scroll **TikTok**, **Instagram Reels** and **Pinterest** at the same time and
+collect a big pool of videos. A local AI scores every one against your description, and
+the best ones download into the folder you choose. Ask for 20 and you get the best 20
+it found.
+
+Every file it saves is a real video that plays on any Mac: an H.264 MP4 with picture
+and sound. Music-only files are never kept.
 
 Everything runs on your Mac: your logins, your videos and the AI never leave it.
 
@@ -55,9 +60,10 @@ This copy won't update itself.
 
 ## Use it
 
-1. **Connect your accounts (once).** Click **Connect** next to TikTok and Instagram.
-   A browser window opens: log in, then close the window. Instagram search doesn't work
-   without logging in. A spare account is safest, because heavy scrolling can get an
+1. **Connect your accounts (once).** Click **Connect** next to TikTok, Instagram and
+   Pinterest. A browser window opens: log in, then close the window. Instagram search
+   doesn't work without logging in; TikTok and Pinterest work without, but show more when
+   you're logged in. A spare account is safest, because heavy scrolling can get an
    account rate-limited.
 2. **Run a self-test (once).** Click **Test** next to each platform. Each test runs one
    quick real search on your Mac and checks every step:
@@ -74,31 +80,57 @@ This copy won't update itself.
    You can also add:
    - must-use keywords or hashtags, such as `#cardrift`
    - words that mean a video should be skipped, such as `tutorial, giveaway`
-4. **Pick a folder** with **Browse…**, set how many videos you want, and press **Start hunt**.
+4. **Pick a folder** with **Browse…**, set **Videos to save**, and press **Start hunt**.
 
 What happens next:
 
-- **Plan:** the AI turns your description into several searches per platform, mixing
-  keywords and hashtags.
-- **Agents scroll:** each agent is its own browser window scrolling one search. When a
-  search runs dry, the agent moves to the next one. With *Show the agents scrolling* on,
-  the windows are tiled so you can watch them.
-- **Quick filters:** videos that are too long or too short, have too few views or likes,
-  are too old, or mention an excluded word are skipped without asking the AI.
-- **AI judge:** the AI reads the caption and looks at the cover image, then scores the
-  video from 0 to 100 with a one-line reason. Videos scoring at or above **How strict**
-  are downloaded.
+- **Plan:** the AI turns your description into several searches per platform: your exact
+  words first, then variations with keywords and hashtags, in the style each site uses.
+- **Agents collect a pool:** each agent is its own browser window scrolling one search.
+  When a search runs dry, the agent moves to the next one. They keep going until they have
+  looked at **Videos to look at** (by default 4× what you want to save, at least 40). If
+  every search runs out first, the AI plans new searches. With *Show the agents scrolling*
+  on, the windows are tiled so you can watch them.
+- **Quick filters:** videos that break your own limits (length, views, likes, age, or an
+  excluded word) are skipped without asking the AI.
+- **The AI scores every video:** it reads the caption and looks at the cover image, then
+  gives a score from 0 to 100 with a one-line reason. Nothing is left unchecked: if time
+  runs short, the rest are scored quickly from their captions.
+- **The best ones are saved:** the top-scoring videos download, best first, until exactly
+  the number you asked for is saved. If one can't be downloaded or turns out not to be a
+  real video, the next best takes its place. If the pool runs out first, the agents go
+  back and look for more.
+- **Every file is checked:** after downloading, Reel Finder opens each file with ffmpeg.
+  Music-only files and photo slideshows are thrown away and replaced. HEVC, VP9 and other
+  formats QuickTime can't always play are converted to H.264.
 - **Watch-check (optional):** after downloading, the AI looks at 3 frames from the video
-  itself and deletes it if the footage doesn't match.
-- **The hunt stops** when it reaches your target, hits the time limit, runs out of
-  searches, or you press **Stop hunt**.
+  itself and replaces it if the footage doesn't match.
+- **Finish now** stops the searching and saves the best videos found so far. Press it
+  again (**Stop now**) to stop straight away.
+
+Watch the results in the tabs under the progress bar: **Best** (ranked by score),
+**Saved**, **All** and **Skipped**.
 
 Each hunt gets its own subfolder, for example `2026-10-01 18.41 Cinematic night car drifts`.
 It contains:
 
-- the videos, named `tiktok_<creator>_<id>.mp4` or `instagram_<creator>_<code>.mp4`
-- `reelfinder-log.csv`, listing each video's link, caption, creator, views, likes,
-  length, AI score, the AI's reason, and which search found it
+- the videos, named `tiktok_<creator>_<id>.mp4`, `instagram_<creator>_<code>.mp4` or
+  `pinterest_<creator>_<id>.mp4`
+- `reelfinder-log.csv`, listing the saved videos best first: rank, link, caption, creator,
+  views, likes, length, AI score, the AI's reason, and which search found it
+
+### Pinterest pictures
+
+Tick **Also save reference images** under Pinterest to save picture pins as well as
+video pins. They're scored by the AI like the videos and saved as `.jpg`.
+
+### Save a video from a link
+
+Paste a link to one video (TikTok, Instagram, Pinterest, YouTube and more) into
+**Save a video from a link** and press **Save**. It's downloaded with yt-dlp, checked and
+converted the same way, and saved as an MP4 in **Saved links** inside your download
+folder. Use this instead of downloading from Safari, which often saves only the sound or
+a file that won't open.
 
 Reel Finder remembers every video it has downloaded to a folder in
 `.reelfinder-archive.txt`, so later hunts never download the same video twice.
@@ -107,14 +139,15 @@ Reel Finder remembers every video it has downloaded to a folder in
 
 | Setting | What it does |
 |---|---|
-| Videos to download | The hunt stops once this many are saved. |
-| Time limit | A hard stop, in case the searches go on forever. |
-| AI agents | How many browser windows scroll at once (1–6). Instagram is capped at 3 so your account doesn't get flagged. |
-| Min/Max length | In seconds. A max of 0 means no limit. |
+| Videos to save | Exactly how many videos to save: the best ones found. |
+| Videos to look at | How many videos the agents collect and the AI scores before picking. Leave empty for 4× the number to save. More means better picks but a longer hunt. |
+| Time limit | Searching stops at about ¾ of this, so there's time to score and save. |
+| AI agents | How many browser windows scroll at once (1–6). Instagram and Pinterest are capped at 3 so your account doesn't get flagged. |
+| Min/Max length | In seconds. A max of 0 means no limit. The default max is 180. |
 | Min views / likes | Leave at 0 to ignore. Some Instagram posts hide their counts; those still pass. |
 | Posted within | Only videos posted in the last N days. 0 means any time. |
-| How strict | The AI score a video needs. 70 is a good default. Lower it if too few videos pass. |
-| Model | Which Ollama model judges. Models marked "sees images" also look at the cover. |
+| Minimum AI score | Off (0) by default, so you always get the number you asked for. Raise it only if you'd rather get fewer videos than weak matches. |
+| Model | Which Ollama model scores the videos. Models marked "sees images" also look at the cover. |
 | Watch-check | Slower but more exact: checks frames of the downloaded video itself. |
 | Show the agents scrolling | Visible windows (recommended: TikTok trusts them more, and you can solve a captcha) or run hidden. |
 
@@ -154,16 +187,21 @@ opens the full log in Finder.
 
 - **An agent card says "Needs you: captcha".** Solve the captcha in that agent's window
   and it carries on by itself. This is why visible mode is recommended.
-- **"Needs you: log in" on Instagram.** Click **Connect** next to Instagram and log in.
+- **"Needs you: log in" on Instagram or Pinterest.** Click **Connect** next to it and log in.
 - **No videos are found on a platform.** These sites change their pages often.
   Reel Finder updates itself and the downloader every time it starts, so quit and reopen it first.
   If one platform still finds nothing, untick it and keep using the other.
 - **Downloads fail with "login required".** Click Connect and log in again; your session
   may have expired.
-- **Too few videos pass.** Lower **How strict**, loosen the filters, or describe the videos
-  in fewer, plainer words.
-- **The AI is slow.** Use a smaller model (`gemma3:4b`) or fewer agents. The AI checks
-  videos one at a time, and the agents pause automatically when it falls behind.
+- **Fewer videos saved than you asked for.** The headline says why. Usually every search
+  ran out: add more platforms, use broader or plainer words, loosen the length and views
+  filters, or give it a longer time limit. Check that **Minimum AI score** is off.
+- **The videos don't match well.** Raise **Videos to look at** so the AI has more to
+  choose from, add a must-use hashtag, and use a model that sees images.
+- **A saved file only plays sound.** This shouldn't happen any more: every file is
+  checked. If it does, click **Copy report** and send it.
+- **The AI is slow.** Use a smaller model (`gemma3:4b`) or fewer agents. Videos the AI
+  hasn't reached when time runs short are scored from their captions, so none are skipped.
 - **Start over completely.** Quit Reel Finder and delete the `data` folder inside
   `~/Applications/Reel Finder` (or `reel-finder/data` in a downloaded copy).
   This removes your saved logins and settings; downloaded videos are not affected.
@@ -173,7 +211,10 @@ opens the full log in Finder.
 Reel Finder ties together open-source tools that are maintained and still worked as of 2026:
 
 - [yt-dlp](https://github.com/yt-dlp/yt-dlp) downloads videos. It's updated almost daily
-  as the sites change, and it uses `curl-cffi` for TikTok.
+  as the sites change, and it uses `curl-cffi` for TikTok. Reel Finder asks it for H.264
+  video with sound in one file.
+- [ffmpeg](https://ffmpeg.org) checks every download and converts anything QuickTime
+  can't play.
 - [Playwright](https://playwright.dev/python/) drives the agents' browser.
 - [Ollama](https://ollama.com) runs the local AI, using structured JSON answers.
 - [FastAPI](https://fastapi.tiangolo.com) and [uv](https://github.com/astral-sh/uv) run the app and manage Python.
@@ -196,20 +237,22 @@ uv venv --python 3.12 .venv && uv pip install --python .venv/bin/python -r requi
 .venv/bin/python -m pytest              # includes real-browser end-to-end runs
 ```
 
-`tests/fakesite.py` is a stand-in TikTok/Instagram: search pages that load videos via JSON
-as you scroll, captcha and login walls, and playable videos. The end-to-end tests drive
-real Chromium agents against it and download through yt-dlp. To point the app at it, set
-`REELFINDER_SITE_TIKTOK` / `REELFINDER_SITE_INSTAGRAM` to its URL.
+`tests/fakesite.py` is a stand-in TikTok/Instagram/Pinterest: search pages that load
+videos via JSON as you scroll, captcha and login walls, and media files, including the
+kinds that used to arrive broken (music only, HEVC). The end-to-end tests drive real
+Chromium agents against it and download through yt-dlp. To point the app at it, set
+`REELFINDER_SITE_TIKTOK`, `REELFINDER_SITE_INSTAGRAM` or `REELFINDER_SITE_PINTEREST` to
+its URL.
 
 How the code is laid out:
 
 | File | Job |
 |---|---|
-| `reelfinder/hunt.py` | The pipeline: plan → agents → filters → AI judge → downloads |
+| `reelfinder/hunt.py` | The pipeline: plan → agents fill a pool → filters → AI scores every video → download the best N, replacing failures |
 | `reelfinder/scouts.py` | The agents: scrolling, reading the site's JSON and links, captcha and login detection |
-| `reelfinder/parsing.py` | Finds video objects anywhere in TikTok and Instagram responses |
-| `reelfinder/ai.py` | Ollama planner and judge, plus the keyword fallback |
-| `reelfinder/downloader.py` | yt-dlp, the download log, frame grabs |
+| `reelfinder/parsing.py` | Finds video objects anywhere in TikTok, Instagram and Pinterest responses |
+| `reelfinder/ai.py` | Ollama planner and scorer, plus the keyword fallback |
+| `reelfinder/downloader.py` | yt-dlp, the ffmpeg check and H.264 conversion, the download log, frame grabs |
 | `reelfinder/browser.py` | The saved browser profile, logins, cookies handed to yt-dlp |
 | `reelfinder/selftest.py` | The per-platform self-test (one real search, checked step by step) |
 | `reelfinder/logs.py` | The log file (`data/logs/reelfinder.log`), version info, yt-dlp warnings into the log |

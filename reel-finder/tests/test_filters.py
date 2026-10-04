@@ -39,9 +39,10 @@ def test_excluded_words():
 def test_needs_probe():
     s = HuntSettings(min_duration=0, max_duration=0)
     assert not needs_probe(cand(), s)
-    assert needs_probe(cand(caption=""), s)
-    assert needs_probe(cand(thumbnail_url=None), s)
-    assert needs_probe(cand(maybe_not_video=True), s)
-    assert needs_probe(cand(), HuntSettings(max_duration=60))  # duration unknown
-    assert not needs_probe(cand(duration=12), HuntSettings(max_duration=60))
-    assert needs_probe(cand(duration=12), HuntSettings(max_duration=60, min_views=5))
+    assert not needs_probe(cand(caption=""), s)  # the cover alone is enough for the AI
+    assert not needs_probe(cand(thumbnail_url=None), s)  # …and so is the caption
+    assert needs_probe(cand(caption="", thumbnail_url=None), s)  # nothing to judge
+    assert not needs_probe(cand(maybe_not_video=True), s)  # the download step finds out
+    assert not needs_probe(cand(), HuntSettings(max_duration=60))  # length is checked while downloading
+    assert needs_probe(cand(duration=12), HuntSettings(max_duration=60, min_views=5))  # your views filter
+    assert not needs_probe(cand(kind="image", caption="", thumbnail_url=None), s)

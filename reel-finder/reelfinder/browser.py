@@ -18,9 +18,11 @@ from .config import COOKIES_FILE, PROFILE_DIR
 LOGIN_URLS = {
     "tiktok": "https://www.tiktok.com/login",
     "instagram": "https://www.instagram.com/accounts/login/",
+    "pinterest": "https://www.pinterest.com/login/",
 }
-COOKIE_DOMAINS = {"tiktok": "tiktok.com", "instagram": "instagram.com"}
-SESSION_COOKIE = "sessionid"
+COOKIE_DOMAINS = {"tiktok": "tiktok.com", "instagram": "instagram.com", "pinterest": "pinterest.com"}
+# The cookie each site sets once you're logged in (and, if it matters, its logged-in value).
+SESSION_COOKIES = {"tiktok": ("sessionid", None), "instagram": ("sessionid", None), "pinterest": ("_auth", "1")}
 
 
 def _cookie_domain_platform(domain: str) -> str | None:
@@ -65,8 +67,12 @@ def logins_from_cookies(cookies: list[dict]) -> dict[str, bool]:
     state = {p: False for p in COOKIE_DOMAINS}
     for c in cookies:
         platform = _cookie_domain_platform(c.get("domain", ""))
+        if not platform:
+            continue
+        name, value = SESSION_COOKIES[platform]
         expires = c.get("expires") or -1
-        if platform and c.get("name") == SESSION_COOKIE and c.get("value") and (expires < 0 or expires > now):
+        if (c.get("name") == name and c.get("value") and (value is None or c["value"] == value)
+                and (expires < 0 or expires > now)):
             state[platform] = True
     return state
 
@@ -83,16 +89,18 @@ def logins_from_profile(profile: Path = PROFILE_DIR) -> dict[str, bool]:
             try:
                 shutil.copyfile(db, copy)
                 con = sqlite3.connect(copy)
+                names = sorted({name for name, _value in SESSION_COOKIES.values()})
                 rows = con.execute(
-                    "SELECT host_key, expires_utc FROM cookies WHERE name = ?", (SESSION_COOKIE,)
+                    f"SELECT host_key, name, expires_utc FROM cookies WHERE name IN ({','.join('?' * len(names))})",
+                    names,
                 ).fetchall()
                 con.close()
             except (OSError, sqlite3.Error):
                 continue
         now_chrome = (time.time() + 11644473600) * 1_000_000  # Chrome counts from 1601
-        for host, expires in rows:
+        for host, name, expires in rows:
             platform = _cookie_domain_platform(host)
-            if platform and (not expires or expires > now_chrome):
+            if platform and name == SESSION_COOKIES[platform][0] and (not expires or expires > now_chrome):
                 state[platform] = True
         break
     return state

@@ -85,6 +85,14 @@ def test_without_ai_the_last_step_warns(tmp_path, site):
     assert steps["AI judge"]["status"] == "warn" and "Ollama" in steps["AI judge"]["detail"]
 
 
+def test_pinterest_all_steps_pass(tmp_path, site):
+    _, steps, _ = run_test(tmp_path, site, "pinterest", SeeingBrain(), description="night car drift")
+    assert steps["Logged in"]["status"] == "warn" and "Pinterest" in steps["Logged in"]["detail"]
+    for name in ("Search page", "Videos found", "Video details", "Download", "AI judge"):
+        assert steps[name]["status"] == "ok", (name, steps[name])
+    assert "H264" in steps["Download"]["detail"]
+
+
 def test_query_choice():
     assert pick_test_query(HuntSettings(keywords="#cardrift, jdm", description="x y z")) == "#cardrift"
     assert pick_test_query(HuntSettings(description="Cinematic night drifts, with smoke!")) == "Cinematic night drifts"
