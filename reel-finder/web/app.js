@@ -7,18 +7,22 @@ const RECOMMENDED_MODELS = [
   { name: "qwen3-vl:8b-instruct", note: "recommended, sees thumbnails, ~6 GB, best on 16 GB Macs" },
   { name: "gemma3:4b", note: "smaller and faster, sees thumbnails, ~3.3 GB, fine on 8 GB Macs" },
 ];
-const NUMBER_FIELDS = ["target_count", "agents", "time_limit_min", "min_duration", "max_duration",
-  "min_views", "min_likes", "max_age_days", "strictness"];
+const NUMBER_FIELDS = ["target_count", "pool_size", "agents", "time_limit_min", "min_duration", "max_duration",
+  "min_views", "min_likes", "max_age_days", "min_score"];
 const STATUS_TEXT = {
-  queued: "In line", found: "Found", judging: "AI is checking", accepted: "Match — downloading soon",
-  downloading: "Downloading", checking: "Watch-check", downloaded: "✓ Downloaded",
-  rejected: "Skipped", failed: "Failed", spare: "Match — target already reached",
-  unchecked: "Not checked (hunt ended)",
+  queued: "Waiting to be checked", checking: "AI is checking", scored: "Checked",
+  picked: "Picked — saving soon", downloading: "Saving", watching: "Watch-check", downloaded: "✓ Saved",
+  skipped: "Skipped (your filters)", notpicked: "Checked — not in the top picks",
+  failed: "Couldn't save — next best used instead", unchecked: "Not checked (stopped)",
 };
-const DONE_NOT_SAVED = ["rejected", "failed", "spare", "unchecked"];
+const DONE_NOT_SAVED = ["skipped", "failed", "unchecked", "notpicked"];
 const AGENT_STATE = {
-  opening: "Opening search", scrolling: "Scrolling", waiting: "Waiting for the AI",
+  opening: "Opening search", scrolling: "Scrolling",
   captcha: "Needs you: captcha", login: "Needs you: log in", error: "Error", done: "Finished",
+};
+const PHASE_TEXT = {
+  starting: "Starting the agents…", searching: "Looking at videos", checking: "Scoring the last videos",
+  downloading: "Saving the best ones", done: "Done",
 };
 
 const form = $("#options");
@@ -69,7 +73,12 @@ function fmtTime(sec) {
   return m ? `${m}m ${String(s).padStart(2, "0")}s` : `${s}s`;
 }
 
-const PLATFORM_NAMES = { tiktok: "TikTok", instagram: "Instagram" };
+const PLATFORM_NAMES = { tiktok: "TikTok", instagram: "Instagram", pinterest: "Pinterest" };
+const PLATFORM_BADGE = { tiktok: "TikTok", instagram: "IG", pinterest: "Pinterest" };
+
+function autoPool(target) {
+  return Math.min(Math.max(target * 4, target + 20, 40), 600);
+}
 
 // ------------------------------------------------------------------ settings form
 
@@ -99,7 +108,9 @@ function readForm() {
 
 function updateOutputs() {
   $("#agents_out").textContent = $("#agents").value;
-  $("#strictness_out").textContent = $("#strictness").value;
+  const min = +$("#min_score").value;
+  $("#min_score_out").textContent = min ? min : "off";
+  $("#pool_size").placeholder = `auto (${autoPool(+$("#target_count").value || 20)})`;
 }
 
 let saveTimer;
@@ -120,7 +131,11 @@ form.addEventListener("input", (e) => {
 form.addEventListener("submit", async (e) => {
   e.preventDefault();
   if (running) {
-    await api("/api/hunt/stop", { method: "POST" }).catch((err) => toast(err.message));
+    // First press: stop searching and save the best found so far. Second press: stop everything.
+    const finishing = document.body.classList.contains("finishing");
+    if (!finishing) document.body.classList.add("finishing");
+    await api(finishing ? "/api/hunt/stop" : "/api/hunt/finish", { method: "POST" })
+      .catch((err) => toast(err.message));
     return;
   }
   const s = readForm();
@@ -187,8 +202,8 @@ function renderStatus() {
   else if (!o.installed) pills.append(pill(`AI model missing`, "warn", `Download ${o.model} (left side)`));
   else pills.append(pill(`AI: ${o.model}`, "ok"));
   pills.append(status.ffmpeg ? pill("ffmpeg", "ok") : pill("ffmpeg missing", "bad"));
-  for (const p of ["tiktok", "instagram"]) {
-    const ok = status.logins[p];
+  for (const p of ["tiktok", "instagram", "pinterest"]) {
+    const ok = !!status.logins[p];
     pills.append(pill(`${PLATFORM_NAMES[p]} ${ok ? "connected" : "not connected"}`, ok ? "ok" : ""));
     const btn = $(`.connect[data-platform=${p}]`);
     btn.textContent = ok ? "Connected ✓" : "Connect";
@@ -324,6 +339,7 @@ $("#open_log").addEventListener("click", () => {
 function setRunning(on) {
   running = on;
   document.body.classList.toggle("running", on);
+  if (!on) document.body.classList.remove("finishing");
   updateBusy();
 }
 
@@ -351,15 +367,21 @@ function renderProgress(p) {
   $("#bar").setAttribute("aria-valuenow", String(p.downloaded));
   $("#bar").setAttribute("aria-valuemax", String(p.target));
   if (p.running) {
-    $("#headline").textContent = p.downloaded ? "Hunting — saving matches as they're found" : "Hunting…";
-    $("#subline").textContent = `${p.folder}${p.brain ? ` · judged by ${p.brain}` : ""}`;
+    let head = PHASE_TEXT[p.phase] || "Hunting…";
+    if (p.phase === "searching") head += ` — ${p.looked_at} of ${p.pool_target}`;
+    if (p.phase === "checking") head += ` — ${p.queued} to go${p.quick ? " (from captions)" : ""}`;
+    if (p.finishing) head = `Finishing up — ${head.toLowerCase()}`;
+    $("#headline").textContent = head;
+    $("#subline").textContent = `${p.folder}${p.brain ? ` · scored by ${p.brain}` : ""}`;
+    document.body.classList.toggle("finishing", !!p.finishing || document.body.classList.contains("finishing"));
   } else if (p.finished_reason) {
-    $("#headline").textContent = `${p.finished_reason} — ${p.downloaded} video${p.downloaded === 1 ? "" : "s"} saved`;
+    $("#headline").textContent = p.finished_reason;
     $("#subline").textContent = p.folder;
   }
   const stats = [
-    ["Found", p.found], ["Waiting for AI", p.queued], ["Downloading", p.downloading],
-    ["Skipped", p.rejected], ["Already had", p.already_have], ["Failed", p.failed], ["Time", fmtTime(p.elapsed)],
+    ["Looked at", `${p.looked_at ?? 0} / ${p.pool_target ?? "–"}`], ["Scored", p.scored ?? 0],
+    ["Waiting for AI", p.queued], ["Saving", p.downloading], ["Skipped by filters", p.skipped ?? 0],
+    ["Replaced", p.failed], ["Already had", p.already_have], ["Time", fmtTime(p.elapsed)],
   ];
   $("#stats").replaceChildren(...stats.map(([k, v]) => {
     const span = document.createElement("span");
@@ -414,10 +436,15 @@ function renderCandidate(c) {
     img.onerror = () => { if (!img.src.includes("/thumbs/")) img.removeAttribute("src"); };
     img.dataset.src = img.src = c.thumbnail_url;
   }
-  $(".badge.platform", el).textContent = c.platform === "tiktok" ? "TikTok" : "IG";
+  $(".badge.platform", el).textContent =
+    (PLATFORM_BADGE[c.platform] || c.platform) + (c.kind === "image" ? " · image" : "");
+  const hasScore = c.score !== null && c.score !== undefined;
   const score = $(".badge.score", el);
-  score.textContent = c.score === null || c.score === undefined ? "" : c.score;
-  score.className = `badge score ${c.score >= (settings?.strictness ?? 70) ? "good" : c.score >= 40 ? "meh" : ""}`;
+  score.textContent = hasScore ? c.score : "";
+  score.title = c.quick ? "Scored from the caption only" : "AI score";
+  score.className = `badge score ${c.score >= 70 ? "good" : c.score >= 40 ? "meh" : ""}`;
+  // The "Best" tab shows everything that's been scored, highest first.
+  el.style.setProperty("--order", String(hasScore ? 1000 - c.score : 2000));
   $(".status", el).textContent = STATUS_TEXT[c.status] || c.status;
   $(".caption", el).textContent = c.caption || "(no caption yet)";
   $(".caption", el).title = c.caption || "";
@@ -433,8 +460,41 @@ function renderCounts() {
   const by = (pred) => all.filter((el) => pred(el.dataset.status)).length;
   $("#n_all").textContent = all.length || "";
   $("#n_downloaded").textContent = by((s) => s === "downloaded") || "";
-  $("#n_rejected").textContent = by((s) => DONE_NOT_SAVED.includes(s)) || "";
-  $("#n_active").textContent = by((s) => s !== "downloaded" && !DONE_NOT_SAVED.includes(s)) || "";
+  $("#n_rejected").textContent = by((s) => s === "skipped" || s === "failed" || s === "unchecked") || "";
+  $("#n_best").textContent = by((s) => BEST_STATES.includes(s)) || "";
+}
+
+const BEST_STATES = ["scored", "picked", "downloading", "watching", "downloaded", "notpicked"];
+
+// ------------------------------------------------------------------ save a link
+
+$("#save_link").addEventListener("click", saveLink);
+$("#link_url").addEventListener("keydown", (e) => { if (e.key === "Enter") { e.preventDefault(); saveLink(); } });
+
+async function saveLink() {
+  const url = $("#link_url").value.trim();
+  if (!url) return;
+  const hint = $("#link_hint");
+  const before = hint.textContent;
+  hint.textContent = "Saving…";  // before the request: a quick save can finish before the reply arrives
+  try {
+    await api("/api/save-link", { method: "POST", body: { url } });
+  } catch (err) {
+    hint.textContent = before;
+    toast(err.message);
+  }
+}
+
+function renderLink(d) {
+  const hint = $("#link_hint");
+  if (d.status === "working") hint.textContent = "Saving…";
+  else if (d.status === "done") {
+    hint.textContent = `✓ Saved: ${d.summary}. In “Saved links”.`;
+    $("#link_url").value = "";
+    toast("Video saved to “Saved links”.");
+  } else {
+    hint.textContent = `Couldn't save it: ${d.error}`;
+  }
 }
 
 function addLog(entry, { silent = false } = {}) {
@@ -478,10 +538,11 @@ function connect() {
         renderProgress(data);
         setRunning(false);
         if (data.downloaded) $(".tab[data-filter=downloaded]").click();
-        toast(`${data.finished_reason}: ${data.downloaded} video${data.downloaded === 1 ? "" : "s"} saved.`, 6000);
+        toast(`${data.finished_reason}.`, 7000);
         refreshStatus();
         break;
       case "selftest": renderSelfTest(data); break;
+      case "link": renderLink(data); break;
       case "model_pull":
         if (data.error) { toast(data.error, 7000); refreshStatus(); }
         else if (data.done) { toast(`${data.model} is ready.`); refreshStatus(); }

@@ -13,7 +13,7 @@ from reelfinder.browser import BrowserManager
 from reelfinder.config import HuntSettings
 from reelfinder.downloader import LOG_NAME, Downloader, find_ffmpeg
 from reelfinder.hunt import Hunt
-from reelfinder.scouts import Instagram, Scout, TikTok
+from reelfinder.scouts import Instagram, Pinterest, Scout, TikTok
 
 if not os.environ.get("REELFINDER_BROWSER_PATH") and Path("/opt/pw-browsers/chromium").exists():
     os.environ["REELFINDER_BROWSER_PATH"] = "/opt/pw-browsers/chromium"
@@ -100,13 +100,49 @@ def test_full_hunt_downloads_matching_videos(tmp_path, site):
         return hunt
 
     hunt = asyncio.run(go())
-    assert hunt.finished_reason == "Target reached", [d for k, d in events if k == "log"]
+    logs = [d for k, d in events if k == "log"]
+    assert hunt.finished_reason.startswith("Saved the best 4 of"), logs
     files = list(hunt.folder.glob("*.mp4"))
     assert len(files) == 4 and all(f.stat().st_size > 1000 for f in files)
+    dl = Downloader()
+    for f in files:  # every file really is a video QuickTime can play: no music-only, no HEVC
+        info = dl.inspect(f)
+        assert info.video_codec == "h264" and info.is_mp4 and info.audio_codecs == ["aac"], (f, info.summary())
     rows = list(csv.DictReader((hunt.folder / LOG_NAME).open()))
     assert len(rows) == 4 and all("drift" in r["caption"].lower() for r in rows)
-    rejected = [c for c in hunt.candidates.values() if c.status == "rejected"]
-    assert rejected and all("pasta" in c.caption.lower() for c in rejected if c.caption)
+    assert [r["rank"] for r in rows] == ["1", "2", "3", "4"]
+    cands = list(hunt.candidates.values())
+    assert not [c for c in cands if c.status in ("queued", "checking", "unchecked")]  # every video was checked
+    assert hunt.counts["scored"] >= 30  # it looked at a pool of videos, not just the first 4
+    saved = [c for c in cands if c.status == "downloaded"]
+    assert len(saved) == 4 and not [c for c in saved if "pasta" in c.caption.lower()]
+    best_unsaved = max((c.score for c in cands if c.status == "notpicked"), default=0)
+    assert min(c.score for c in saved) >= best_unsaved  # the best ones were saved
+    failed = [c for c in cands if c.status == "failed"]
+    assert all("audio only" in c.reason for c in failed), [c.reason for c in failed]
     assert list((tmp_path / "thumbs").glob("*.jpg"))
     platforms = {a["platform"] for a in hunt.agents.values()}
     assert platforms == {"tiktok", "instagram"}
+
+
+def test_pinterest_agent_finds_video_pins(tmp_path, site):
+    found, states = run_scout(tmp_path, Pinterest(site.url), "night drift")
+    assert len(found) >= 12, states
+    pins = list(found.values())
+    assert all(c.url.startswith("https://www.pinterest.com/pin/") or c.url.startswith(site.url + "/pin/")
+               for c in pins)
+    assert all(c.kind == "video" and c.duration and c.thumbnail_url for c in pins if c.rich)
+    assert not [c for c in pins if c.kind == "image"]  # pictures are left out unless asked for
+    assert "scrolling" in states and states[-1] == "done"
+
+
+def test_pinterest_agent_can_include_pictures(tmp_path, site):
+    found, _ = run_scout(tmp_path, Pinterest(site.url, include_images=True), "night drift")
+    kinds = {c.kind for c in found.values()}
+    assert kinds == {"video", "image"}
+    assert all(c.image_url for c in found.values() if c.kind == "image")
+
+
+def test_pinterest_agent_reports_login_wall(tmp_path, site):
+    found, states = run_scout(tmp_path, Pinterest(site.url), "needlogin")
+    assert states[-1] == "login" and not found

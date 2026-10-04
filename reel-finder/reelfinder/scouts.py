@@ -19,6 +19,7 @@ LINKS_JS = """
 els => els.map(a => {
   const img = a.querySelector('img');
   return { href: a.getAttribute('href') || '', alt: img ? (img.getAttribute('alt') || '') : '',
+           src: img ? (img.currentSrc || img.src || '') : '',
            text: (a.innerText || '').slice(0, 300) };
 })
 """
@@ -35,10 +36,15 @@ class Site:
     base_url: str = ""
     link_selector: str = "a[href]"
 
-    def __init__(self, base_url: str | None = None):
+    def __init__(self, base_url: str | None = None, include_images: bool = False):
         self.real_base = type(self).base_url
+        self.include_images = include_images
         if base_url:
             self.base_url = base_url.rstrip("/")
+
+    def keep(self, cand: Candidate) -> bool:
+        """Whether this sighting belongs in the hunt (images only when you asked for them)."""
+        return cand.kind == "video" or self.include_images
 
     def canonical(self, url: str) -> str:
         """Parsers build real-site links; point them at a stand-in site when testing."""
@@ -88,7 +94,24 @@ class Instagram(Site):
         return "/accounts/login" in page_url or "/challenge/" in page_url
 
 
-SITES: dict[str, type[Site]] = {"tiktok": TikTok, "instagram": Instagram}
+class Pinterest(Site):
+    platform = "pinterest"
+    base_url = "https://www.pinterest.com"
+    link_selector = "a[href*='/pin/']"
+
+    def search_url(self, query: str) -> str:
+        # The "videos" tab when you only want videos; all pins when images count too.
+        scope = "pins" if self.include_images else "videos"
+        return f"{self.base_url}/search/{scope}/?q={quote(query.strip().lstrip('#'))}&rs=typed"
+
+    def wants_response(self, url: str, content_type: str) -> bool:
+        return ("/resource/" in url or "graphql" in url) and "json" in content_type
+
+    def needs_login(self, page_url: str) -> bool:
+        return "/login" in page_url
+
+
+SITES: dict[str, type[Site]] = {"tiktok": TikTok, "instagram": Instagram, "pinterest": Pinterest}
 
 
 class Scout:
@@ -103,7 +126,6 @@ class Scout:
         on_found: Callable[[Candidate], Awaitable[None]],
         on_status: Callable[[dict], None],
         stop: asyncio.Event,
-        backlog: Callable[[], int] = lambda: 0,
         max_scrolls: int = 40,
         patience: int = 5,
         pace: tuple[float, float] = (1.2, 3.2),
@@ -115,7 +137,6 @@ class Scout:
         self.on_found = on_found
         self.on_status = on_status
         self.stop = stop
-        self.backlog = backlog
         self.max_scrolls = max_scrolls
         self.patience = patience
         self.pace = pace
@@ -155,6 +176,8 @@ class Scout:
         for cand in candidates:
             if self.stop.is_set():
                 return
+            if not self.site.keep(cand):
+                continue
             first_time = cand.key not in self._seen
             self._seen.add(cand.key)
             cand.query, cand.agent = self.query, self.id
@@ -221,17 +244,14 @@ class Scout:
             return "error"
         await self._sleep(2.0, 4.0)
         if self.site.needs_login(self.page.url):
-            self.status("login", "Log in first (Connect button) — Instagram search needs an account")
+            label = self.site.platform.capitalize()
+            self.status("login", f"Log in first (Connect button) — {label} sent this agent to its login page")
             return "login"
         self.status("scrolling")
         idle = 0
         while not self.stop.is_set() and self.scrolls < self.max_scrolls and idle < self.patience:
             if await self._blocked_by_captcha() and not await self._wait_out_captcha():
                 return "captcha"
-            # Don't run far ahead of the AI: wait while it has a big backlog.
-            while self.backlog() > 25 and not self.stop.is_set():
-                self.status("waiting", "Waiting for the AI to catch up")
-                await self._sleep(1.5, 2.5)
             self._fresh = 0
             await self._collect_links()
             await self._scroll_once()

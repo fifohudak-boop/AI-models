@@ -23,8 +23,25 @@ def test_page_and_settings_roundtrip(tmp_path):
         s.update(description="night drift", target_count=7, output_dir=str(tmp_path))
         assert c.put("/api/settings", json=s, headers=H).json()["target_count"] == 7
         assert c.get("/api/settings").json()["description"] == "night drift"
-        bad = dict(s, strictness=500)
+        bad = dict(s, min_score=500)
         assert c.put("/api/settings", json=bad, headers=H).status_code == 422
+
+
+def test_old_settings_are_migrated(tmp_path, monkeypatch):
+    import json
+
+    from reelfinder import config
+
+    old = {"description": "drift", "strictness": 70, "max_duration": 90, "target_count": 20,
+           "platforms": ["tiktok"], "model": "qwen3-vl:8b-instruct"}
+    path = tmp_path / "settings.json"
+    path.write_text(json.dumps(old))
+    monkeypatch.setattr(config, "SETTINGS_FILE", path)
+    s = config.load_settings()
+    assert s.settings_version == 2 and s.min_score == 0  # no more rejecting everything under 70
+    assert s.max_duration == 180 and s.description == "drift" and s.model == "qwen3-vl:8b-instruct"
+    assert "strictness" not in s.model_dump()
+    assert config.pool_size_for(s) == 80 and config.pool_size_for(s.model_copy(update={"pool_size": 160})) == 160
 
 
 def test_local_only_guards():
@@ -39,7 +56,7 @@ def test_status_without_ollama():
     with client() as c:
         st = c.get("/api/status").json()
         assert set(st) >= {"ollama", "ffmpeg", "logins", "hunting"}
-        assert st["logins"] == {"tiktok": False, "instagram": False}
+        assert st["logins"] == {"tiktok": False, "instagram": False, "pinterest": False}
         assert st["hunting"] is False
 
 
@@ -64,14 +81,17 @@ def test_cookie_export_is_readable_by_yt_dlp(tmp_path):
         {"name": "tt_csrf", "value": "x", "domain": "www.tiktok.com", "path": "/", "expires": -1,
          "httpOnly": False, "secure": True},
         {"name": "private", "value": "nope", "domain": ".mybank.com", "path": "/", "expires": far},
+        {"name": "_auth", "value": "1", "domain": ".pinterest.com", "path": "/", "expires": far},
     ]
     path = tmp_path / "cookies.txt"
-    assert write_netscape_cookies(cookies, path) == 2  # other sites never leave the browser
+    assert write_netscape_cookies(cookies, path) == 3  # other sites never leave the browser
     jar = YoutubeDLCookieJar(str(path))
     jar.load()
     names = {(c.domain, c.name) for c in jar}
-    assert names == {(".instagram.com", "sessionid"), ("www.tiktok.com", "tt_csrf")}
-    assert logins_from_cookies(cookies) == {"tiktok": False, "instagram": True}
+    assert names == {(".instagram.com", "sessionid"), ("www.tiktok.com", "tt_csrf"), (".pinterest.com", "_auth")}
+    assert logins_from_cookies(cookies) == {"tiktok": False, "instagram": True, "pinterest": True}
+    logged_out = [dict(cookies[-1], value="0")]
+    assert logins_from_cookies(logged_out)["pinterest"] is False
 
 
 def test_login_state_from_chrome_profile(tmp_path):
@@ -83,10 +103,49 @@ def test_login_state_from_chrome_profile(tmp_path):
     past = int((time.time() + 11644473600 - 86400) * 1_000_000)
     con.execute("INSERT INTO cookies VALUES ('.tiktok.com', 'sessionid', ?, x'00')", (future,))
     con.execute("INSERT INTO cookies VALUES ('.instagram.com', 'sessionid', ?, x'00')", (past,))
+    con.execute("INSERT INTO cookies VALUES ('.pinterest.com', '_auth', ?, x'00')", (future,))
+    con.execute("INSERT INTO cookies VALUES ('.pinterest.com', 'sessionid', ?, x'00')", (future,))
     con.commit()
     con.close()
-    assert logins_from_profile(tmp_path) == {"tiktok": True, "instagram": False}
-    assert logins_from_profile(tmp_path / "missing") == {"tiktok": False, "instagram": False}
+    assert logins_from_profile(tmp_path) == {"tiktok": True, "instagram": False, "pinterest": True}
+    assert logins_from_profile(tmp_path / "missing") == {"tiktok": False, "instagram": False, "pinterest": False}
+
+
+def test_save_a_link(tmp_path):
+    import functools
+    import http.server
+    import subprocess
+    import threading
+
+    from reelfinder import main
+    from reelfinder.downloader import find_ffmpeg
+
+    ffmpeg = find_ffmpeg()
+    subprocess.run([ffmpeg, "-v", "error", "-f", "lavfi", "-i", "testsrc2=size=320x568:rate=25:duration=2",
+                    "-c:v", "libx265", "-tag:v", "hev1", str(tmp_path / "mine.mp4")], check=True)
+    handler = functools.partial(http.server.SimpleHTTPRequestHandler, directory=str(tmp_path))
+    handler.log_message = lambda *a: None
+    server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), handler)
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    out = tmp_path / "videos"
+    try:
+        with client() as c, c.websocket_connect("/ws", headers={"origin": "http://127.0.0.1:8765"}) as ws:
+            main.state.settings = main.state.settings.model_copy(update={"output_dir": str(out)})
+            assert c.post("/api/save-link", json={"url": "not a link"}, headers=H).status_code == 400
+            url = f"http://127.0.0.1:{server.server_address[1]}/mine.mp4"
+            assert c.post("/api/save-link", json={"url": url}, headers=H).status_code == 200
+            done = None
+            for _ in range(50):
+                e = ws.receive_json()
+                if e["type"] == "link" and e["data"]["status"] != "working":
+                    done = e["data"]
+                    break
+    finally:
+        server.shutdown()
+    assert done["status"] == "done", done
+    assert "H264" in done["summary"]  # an HEVC file came in, a playable H.264 MP4 went out
+    saved = list((out / "Saved links").glob("*.mp4"))
+    assert len(saved) == 1
 
 
 def test_report_has_diagnostics_and_no_secrets(tmp_path):

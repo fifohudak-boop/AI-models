@@ -135,7 +135,7 @@ class SelfTest:
         elif self.platform == "instagram":
             self._set(0, "fail", "Not logged in — click Connect. Instagram search needs an account.")
         else:
-            self._set(0, "warn", "Not logged in — TikTok works without, but logging in shows more results.")
+            self._set(0, "warn", f"Not logged in — {self.label} works without, but logging in shows more results.")
 
         # 2. Search page
         self._set(1, "running", f"Searching “{self.query}”…")
@@ -191,7 +191,8 @@ class SelfTest:
 
         # 4. Video details via yt-dlp
         self._set(3, "running", "Reading one video's details…")
-        ranked = sorted(found.values(), key=lambda c: (c.maybe_not_video, not (c.thumbnail_url or c.views)))
+        videos = [c for c in found.values() if c.kind == "video"] or list(found.values())
+        ranked = sorted(videos, key=lambda c: (c.maybe_not_video, not c.rich, not (c.thumbnail_url or c.views)))
         sample: Candidate | None = None
         error: BaseException | None = None
         for cand in ranked[:3]:
@@ -219,8 +220,10 @@ class SelfTest:
                 )
                 size = path.stat().st_size
                 took = time.monotonic() - started
+                media = await asyncio.to_thread(self.downloader.inspect, path)
             shown = f"{size / 1e6:.1f} MB" if size >= 1e6 else f"{max(size // 1000, 1)} KB"
-            self._set(4, "ok", f"{shown} in {took:.1f} s (test file deleted)")
+            self._set(4, "ok", f"{shown} in {took:.1f} s — {media.summary()} MP4, plays on any Mac "
+                               "(test file deleted)")
         except Exception as exc:  # noqa: BLE001
             self._set(4, "fail", f"Download failed: {_first_line(exc)}")
 

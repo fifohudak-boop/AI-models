@@ -159,9 +159,10 @@ input[type=checkbox] { accent-color: var(--accent); width: 16px; height: 16px; m
 
 .platforms { display: grid; gap: 8px; }
 .platform {
-  display: flex; align-items: center; justify-content: space-between; gap: 8px;
+  display: flex; align-items: center; justify-content: space-between; gap: 8px; flex-wrap: wrap;
   padding: 9px 10px 9px 12px; border: 1px solid var(--line); border-radius: 10px; background: var(--panel-2);
 }
+.platform .sub-option { flex-basis: 100%; font-size: 12.5px; color: var(--muted); padding-left: 25px; }
 .pname { font-weight: 600; }
 .platform .connect.connected { color: var(--ok); border-color: transparent; background: var(--ok-soft); }
 .platform-actions { display: flex; gap: 6px; flex: none; }
@@ -187,10 +188,12 @@ input[type=checkbox] { accent-color: var(--accent); width: 16px; height: 16px; m
   display: flex; gap: 10px; padding: 14px 18px;
   border-top: 1px solid var(--line); background: var(--panel);
 }
-.when-running { display: none; }
+.when-running, .when-finishing { display: none; }
 body.running .when-idle { display: none; }
-body.running .when-running { display: inline; }
+body.running:not(.finishing) .when-running { display: inline; }
+body.running.finishing .when-finishing { display: inline; }
 body.running #start { background: var(--ink); color: var(--bg); }
+body.running.finishing #start { background: var(--bad); color: #fff; }
 
 /* ---------------- live view ---------------- */
 
@@ -235,17 +238,22 @@ body.running #start { background: var(--ink); color: var(--bg); }
 .feed { display: grid; grid-template-columns: repeat(auto-fill, minmax(168px, 1fr)); gap: 12px; }
 .feed:empty { display: none; }
 .feed[data-filter=downloaded] .card:not([data-status=downloaded]),
-.feed[data-filter=rejected] .card:is([data-status=downloaded], [data-status=queued], [data-status=judging],
-  [data-status=accepted], [data-status=downloading], [data-status=checking]),
-.feed[data-filter=active] .card:is([data-status=downloaded], [data-status=rejected], [data-status=failed],
-  [data-status=spare], [data-status=unchecked]) { display: none; }
+.feed[data-filter=best] .card:is([data-status=queued], [data-status=checking], [data-status=skipped],
+  [data-status=failed], [data-status=unchecked]),
+.feed[data-filter=rejected] .card:not(:is([data-status=skipped], [data-status=failed], [data-status=unchecked])) {
+  display: none;
+}
+/* "Best": highest score first (each card carries --order = 1000 - score). */
+.feed[data-filter=best] .card { order: var(--order, 2000); }
 
 .card {
   border: 1px solid var(--line); border-radius: 12px; overflow: hidden; background: var(--panel-2);
   display: flex; flex-direction: column;
 }
-.card:is([data-status=rejected], [data-status=failed], [data-status=unchecked]) { opacity: .62; }
+.card:is([data-status=skipped], [data-status=failed], [data-status=unchecked]) { opacity: .62; }
+.card[data-status=notpicked] { opacity: .8; }
 .card[data-status=downloaded] { border-color: var(--ok); }
+.card:is([data-status=picked], [data-status=downloading], [data-status=watching]) { border-color: var(--info); }
 .thumb { position: relative; display: block; aspect-ratio: 3 / 4; background: var(--line); overflow: hidden; }
 .thumb img { width: 100%; height: 100%; object-fit: cover; display: block; }
 .thumb img:not([src]), .thumb img[src=""] { display: none; }
@@ -261,8 +269,8 @@ body.running #start { background: var(--ink); color: var(--bg); }
 .body { padding: 8px 10px 10px; display: grid; gap: 4px; }
 .status { font-size: 11.5px; font-weight: 700; text-transform: uppercase; letter-spacing: .03em; color: var(--muted); }
 .card[data-status=downloaded] .status { color: var(--ok); }
-.card[data-status=judging] .status, .card[data-status=downloading] .status,
-.card[data-status=checking] .status, .card[data-status=accepted] .status { color: var(--info); }
+.card:is([data-status=checking], [data-status=picked], [data-status=downloading], [data-status=watching])
+  .status { color: var(--info); }
 .card[data-status=failed] .status { color: var(--bad); }
 .caption {
   margin: 0; font-size: 12.5px; display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden;

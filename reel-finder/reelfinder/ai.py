@@ -21,16 +21,16 @@ _STOPWORDS = set("""
 a an and are as at be but by for from has have i in into is it its me my no not of on or our
 so that the their them then there these this those to too very was we were what when where which
 who with without you your video videos clip clips short shorts reel reels tiktok instagram want
-need looking find some any like just only more most also really
+need looking find some any like just only more most also really pinterest pin pins reference
+references please get give show
 """.split())
+
+PLATFORM_NAMES = {"tiktok": "TikTok", "instagram": "Instagram Reels", "pinterest": "Pinterest"}
 
 PLAN_SCHEMA = {
     "type": "object",
-    "properties": {
-        "tiktok": {"type": "array", "items": {"type": "string"}},
-        "instagram": {"type": "array", "items": {"type": "string"}},
-    },
-    "required": ["tiktok", "instagram"],
+    "properties": {p: {"type": "array", "items": {"type": "string"}} for p in PLATFORM_NAMES},
+    "required": list(PLATFORM_NAMES),
 }
 
 VERDICT_SCHEMA = {
@@ -50,13 +50,18 @@ def _words(text: str) -> list[str]:
     return [w for w in re.findall(r"[a-z0-9]+", text.lower()) if w not in _STOPWORDS and len(w) > 1]
 
 
-def _dedupe(queries: list[str], limit: int) -> list[str]:
+def _dedupe(queries: list[str], limit: int, avoid: set[str] | None = None) -> list[str]:
     out: dict[str, str] = {}
     for q in queries:
         q = re.sub(r"\s+", " ", str(q)).strip().strip('"')
-        if q and q.lower() not in out:
+        if q and q.lower() not in out and q.lower() not in (avoid or set()):
             out[q.lower()] = q
     return list(out.values())[:limit]
+
+
+def core_query(description: str, words: int = 5) -> str:
+    """Your own description, boiled down to the words a search box needs ("night car drift smoke")."""
+    return " ".join(_words(description)[:words])
 
 
 def _describe(c: Candidate) -> str:
@@ -80,14 +85,17 @@ class KeywordBrain:
     name = "keyword matching"
     can_see = False
 
-    async def plan_queries(self, description: str, keywords: str, platforms: list[str], per_platform: int) -> dict[str, list[str]]:
+    async def plan_queries(self, description: str, keywords: str, platforms: list[str], per_platform: int,
+                           avoid: list[str] | tuple = ()) -> dict[str, list[str]]:
         terms = split_terms(keywords)
         words = _words(description)
         base = terms + ([" ".join(words[:4])] if words else [])
         base += [" ".join(words[i:i + 2]) for i in range(0, max(len(words) - 1, 0), 2)]
-        hashtags = ["#" + w for w in words[:4]]
-        queries = _dedupe(base + hashtags, per_platform)
-        return {p: list(queries) for p in platforms}
+        base += [" ".join(words[i:i + 3]) for i in range(1, max(len(words) - 2, 0))]
+        base += [f"{a} {b}" for i, a in enumerate(words[:5]) for b in words[i + 2:6]]
+        hashtags = ["#" + w for w in words[:6]] + ["#" + "".join(words[i:i + 2]) for i in range(0, max(len(words) - 1, 0))]
+        queries = _dedupe(base + hashtags, per_platform, {a.lower() for a in avoid})
+        return {p: [q.lstrip("#") if p == "pinterest" else q for q in queries] for p in platforms}
 
     async def judge(self, description: str, keywords: str, c: Candidate, image: bytes | None) -> Verdict:
         wanted = set(_words(description)) | {w for t in split_terms(keywords) for w in _words(t)}
@@ -145,7 +153,7 @@ class OllamaBrain:
                 text = resp.text.lower()
                 if "think" in text and self._send_think:
                     self._send_think = False
-                    return await self._chat(prompt, schema, images)
+                    return await self._chat(prompt, schema, images, max_tokens)
                 if "image" in text and images and self.can_see:
                     # Text-only model: carry on with captions alone.
                     self.can_see = False
@@ -159,35 +167,51 @@ class OllamaBrain:
             raise ValueError("the model gave no usable answer")
         return data
 
-    async def plan_queries(self, description: str, keywords: str, platforms: list[str], per_platform: int) -> dict[str, list[str]]:
-        names = {"tiktok": "TikTok", "instagram": "Instagram Reels"}
+    async def plan_queries(self, description: str, keywords: str, platforms: list[str], per_platform: int,
+                           avoid: list[str] | tuple = ()) -> dict[str, list[str]]:
+        styles = {
+            "tiktok": "1-3 words or a single #hashtag (no spaces), the way TikTok creators caption such videos",
+            "instagram": "1-3 words or a single #hashtag (no spaces), the way Instagram Reels are captioned",
+            "pinterest": "2-5 descriptive words, no hashtags, the way people search Pinterest for "
+                         "aesthetic references (e.g. 'cinematic night drift', 'moody car photography')",
+        }
         prompt = (
-            "You plan searches for a tool that finds short-form reference videos.\n"
-            f"The user wants: {description or '(see keywords)'}\n"
+            "You plan searches for a tool that finds short-form reference videos for a video editor.\n"
+            f"They want: {description or '(see keywords)'}\n"
             f"Keywords they gave: {keywords or 'none'}\n\n"
-            f"Write {per_platform} different search queries for each of: "
-            f"{', '.join(names[p] for p in platforms)}.\n"
-            "Rules: each query is 1-3 words, like a person types into the app's search box. "
-            "At least a third of them are single hashtags with no spaces (e.g. #cardrift). "
-            "Every query must use different words — cover synonyms, related niches and the slang creators "
-            "put in captions, instead of repeating the same words. "
-            'Answer as JSON: {"tiktok": [...], "instagram": [...]}. '
-            "Use an empty list for a platform that wasn't asked for."
+            f"Write {per_platform} search queries for each of these platforms:\n"
+            + "".join(f"- {p}: {styles[p]}\n" for p in platforms)
+            + "Each query must find exactly this kind of video: keep the main subject in every query, and "
+            "vary the angle (style, mood, setting, technique, the slang and niche words creators use). "
+            "Start with the most direct, literal searches; put wider ones at the end. "
+            + (f"Don't repeat any of these, they were already searched: {', '.join(avoid)}. " if avoid else "")
+            + 'Answer as JSON: {"tiktok": [...], "instagram": [...], "pinterest": [...]} '
+            "with an empty list for any platform not listed above."
         )
-        data = await self._chat(prompt, PLAN_SCHEMA, max_tokens=500)
-        return {p: _dedupe([q for q in data.get(p, []) if isinstance(q, str)], per_platform) for p in platforms}
+        data = await self._chat(prompt, PLAN_SCHEMA, max_tokens=700)
+        avoid_set = {a.lower() for a in avoid}
+        return {p: _dedupe([q for q in data.get(p, []) if isinstance(q, str)], per_platform, avoid_set)
+                for p in platforms}
 
     async def judge(self, description: str, keywords: str, c: Candidate, image: bytes | None) -> Verdict:
+        if c.kind == "image":
+            what, seen = "picture", "The image is the picture itself.\n"
+        else:
+            what, seen = "video", "The image is the video's cover frame.\n"
         prompt = (
-            "You check whether a short-form video matches what a video editor is looking for.\n"
-            f"They want: {description or keywords}\n"
-            + (f"Must relate to: {keywords}\n" if keywords and description else "")
-            + f"\nThe video:\n{_describe(c)}\n"
-            + ("The image is the video's cover frame.\n" if image and self.can_see else "")
-            + "\nScore 0-100 how well this video matches. Be strict: above 70 only when the caption "
-            "or cover clearly shows the requested content, 40-70 if it's related but uncertain, below 40 if "
-            "it's off-topic, a slideshow, a meme template, or an ad. Give a one-sentence reason "
-            '(max 20 words). Answer as JSON: {"score": <int>, "reason": "<text>"}'
+            f"You rate {what}s for a video editor who is collecting reference material.\n"
+            f"What they want: {description or keywords}\n"
+            + (f"It should involve: {keywords}\n" if keywords and description else "")
+            + f"\nThe {what}:\n{_describe(c)}\n"
+            + (seen if image and self.can_see else "")
+            + "\nHow well does it match what they want? Score 0-100:\n"
+            "90-100 exactly it: right subject AND the style/details they asked for\n"
+            "70-89 right subject, most details match\n"
+            "45-69 the subject is there but the style or details differ\n"
+            "20-44 only loosely related\n"
+            "0-19 unrelated, an ad, or a text/meme slideshow\n"
+            "Judge mostly by what the image shows; use the caption to confirm (hashtag spam proves nothing).\n"
+            'Answer as JSON: {"score": <int>, "reason": "<max 15 words>"}'
         )
         data = await self._chat(prompt, VERDICT_SCHEMA, [image] if image else None)
         return _verdict(data)

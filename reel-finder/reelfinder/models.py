@@ -2,13 +2,21 @@ from __future__ import annotations
 
 from pydantic import BaseModel
 
+# Where a candidate is in the pipeline:
+#   queued → checking → scored → picked → downloading → downloaded
+#   skipped   (failed one of your filters)
+#   notpicked (checked, but not among the best N)
+#   failed    (couldn't be saved as a playable video — the next best one takes its place)
+#   unchecked (only when you press "Stop now")
+
 
 class Candidate(BaseModel):
-    """One short video an agent found, plus where it is in the pipeline."""
+    """One short video (or Pinterest image) an agent found, plus where it is in the pipeline."""
 
     platform: str
     id: str
     url: str
+    kind: str = "video"  # "video" or "image" (Pinterest image pins)
     caption: str = ""
     author: str = ""
     views: int | None = None
@@ -16,15 +24,19 @@ class Candidate(BaseModel):
     duration: float | None = None
     timestamp: int | None = None
     thumbnail_url: str | None = None
-    # Instagram grid links (/p/...) can be photos; only a metadata probe can tell.
+    image_url: str | None = None  # full-size picture for image pins
+    # Grid links (Instagram /p/…, Pinterest /pin/…) can be photos; the download step tells for sure.
     maybe_not_video: bool = False
+    # True when the details came from the site's own data (not just a link on the page).
+    rich: bool = False
 
     query: str = ""
     agent: int | None = None
     found_at: float = 0.0
-    status: str = "found"  # found → judging → accepted → downloading → downloaded | rejected | failed
+    status: str = "queued"
     score: int | None = None
     reason: str = ""
+    quick: bool = False  # scored from the caption only (the AI ran out of time)
     thumb: str | None = None  # local thumbnail file name served at /thumbs/
     file: str | None = None
 
@@ -38,9 +50,15 @@ class Candidate(BaseModel):
         return f"{self.platform} {self.id}"
 
     def merge(self, other: Candidate) -> None:
-        """Fill fields this candidate is missing from another sighting of the same video."""
-        for field in ("caption", "author", "views", "likes", "duration", "timestamp", "thumbnail_url"):
-            if not getattr(self, field) and getattr(other, field):
-                setattr(self, field, getattr(other, field))
+        """Combine two sightings of the same video; the site's own data beats a bare page link."""
+        fields = ("caption", "author", "views", "likes", "duration", "timestamp", "thumbnail_url", "image_url")
+        prefer_other = other.rich and not self.rich
+        for field in fields:
+            theirs = getattr(other, field)
+            if theirs and (prefer_other or not getattr(self, field)):
+                setattr(self, field, theirs)
+        if other.rich:
+            self.kind = other.kind
+            self.rich = True
         if not other.maybe_not_video:
             self.maybe_not_video = False
