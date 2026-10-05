@@ -29,12 +29,20 @@ CAPTCHA_SELECTORS = (
     "[class*='captcha_verify'], [class*='captcha-verify'], iframe[src*='captcha'], "
     "iframe[title*='challenge' i], #px-captcha"
 )
+# Only count what you can actually see: login forms carry an invisible reCAPTCHA (Pinterest does).
+VISIBLE_JS = """(els) => els.some((e) => {
+  const r = e.getBoundingClientRect();
+  const shown = e.checkVisibility ? e.checkVisibility({checkOpacity: true, checkVisibilityCSS: true}) : true;
+  return shown && r.width > 40 && r.height > 30 && r.bottom > 0 && r.right > 0;
+})"""
 
 
 class Site:
     platform: str = ""
     base_url: str = ""
     link_selector: str = "a[href]"
+    # A "log in to see more" pop-up over the results. The results loaded before it still count.
+    login_wall: str = ""
 
     def __init__(self, base_url: str | None = None, include_images: bool = False):
         self.real_base = type(self).base_url
@@ -98,6 +106,7 @@ class Pinterest(Site):
     platform = "pinterest"
     base_url = "https://www.pinterest.com"
     link_selector = "a[href*='/pin/']"
+    login_wall = "[data-test-id='fullPageSignupModal'], [data-test-id='login-modal-redesign'], [data-test-id='signup-modal']"
 
     def search_url(self, query: str) -> str:
         # The "videos" tab when you only want videos; all pins when images count too.
@@ -201,11 +210,14 @@ class Scout:
         except asyncio.TimeoutError:
             pass
 
-    async def _blocked_by_captcha(self) -> bool:
+    async def _visible(self, selector: str) -> bool:
         try:
-            return await self.page.locator(CAPTCHA_SELECTORS).count() > 0
-        except Exception:  # noqa: BLE001
+            return await self.page.eval_on_selector_all(selector, VISIBLE_JS)
+        except Exception:  # noqa: BLE001 - page navigating
             return False
+
+    async def _blocked_by_captcha(self) -> bool:
+        return await self._visible(CAPTCHA_SELECTORS)
 
     async def _wait_out_captcha(self) -> bool:
         """Pause until you solve the captcha in the agent window (up to 5 minutes)."""
@@ -254,6 +266,12 @@ class Scout:
                 return "captcha"
             self._fresh = 0
             await self._collect_links()
+            if self.site.login_wall and await self._visible(self.site.login_wall):
+                await self._sleep(1.0, 1.5)  # let the last results arrive, then try the next search
+                label = self.site.platform.capitalize()
+                self.status("limited", f"Not logged in: {label} only shows the first results of each search. "
+                                       "Click Connect to see more.")
+                return "walled"
             await self._scroll_once()
             self.scrolls += 1
             await self._sleep(*self.pace)

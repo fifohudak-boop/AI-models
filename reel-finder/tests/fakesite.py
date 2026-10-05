@@ -1,4 +1,4 @@
-"""A tiny stand-in for TikTok and Instagram, used to test the agents end to end.
+"""A tiny stand-in for TikTok, Instagram and Pinterest, used to test the agents end to end.
 
 It behaves like the real sites in the ways that matter: search pages load more videos
 via JSON API calls as you scroll, tiles link to /@user/video/<id> (TikTok) or /p/<code>/
@@ -59,6 +59,13 @@ CAPTCHA = """<div id="captcha-verify-container-main-page" style="padding:20px;ba
 <script>setTimeout(() => document.getElementById('captcha-verify-container-main-page').remove(), 6000)</script>"""
 
 
+# What Pinterest shows when you're not logged in: a sign-up pop-up over the first results, with an
+# invisible reCAPTCHA inside (which must not be mistaken for a captcha you have to solve).
+PINTEREST_WALL = """<div data-test-id="fullPageSignupModal" style="position:fixed;top:80px;left:80px;width:400px;
+height:420px;background:#fff;border-radius:16px;z-index:9">Welcome to Pinterest<form><input id="email" type="email">
+<iframe src="/recaptcha/enterprise/anchor" style="visibility:hidden;width:256px;height:60px"></iframe></form></div>"""
+
+
 def _n(q: str, page: int, i: int) -> int:
     return page * PER_PAGE + i
 
@@ -80,11 +87,28 @@ def tiktok_item(base: str, q: str, page: int, i: int) -> dict:
     }
 
 
+WORDS = ["DRIFT", "PASTA", "BEACH", "KITTEN", "GYM", "GUITAR"]
+
+
+def make_cover(k: int, path: Path) -> bool:
+    """Cover k: a coloured card with a big word. The similarity model reads the word, so the six
+    covers look clearly different to it, while a video of the same card looks identical."""
+    try:
+        from PIL import Image, ImageDraw, ImageFont
+    except ImportError:
+        return False
+    im = Image.new("RGB", (270, 480), "#" + COLORS[k][2:])
+    ImageDraw.Draw(im).text((20, 180), WORDS[k], fill="white", font=ImageFont.load_default(size=64))
+    im.save(path, "JPEG")
+    return True
+
+
 def media_for(n: int) -> str:
     """Like the real sites, some posts don't give you a normal video:
     n % 6 == 4 → a "video" that's only music (TikTok photo slideshows do this),
-    n % 6 == 2 → HEVC/H.265 video (TikTok's 1080p), which QuickTime often can't show."""
-    return {4: "audio_only.mp4", 2: "clip_hevc.mp4"}.get(n % 6, "clip.mp4")
+    n % 6 == 2 → HEVC/H.265 video (TikTok's 1080p), which QuickTime often can't show.
+    The rest look exactly like their cover."""
+    return {4: "audio_only.mp4", 2: "clip_hevc.mp4"}.get(n % 6, f"look_{n % len(COLORS)}.mp4")
 
 
 def pinterest_pin(base: str, q: str, page: int, i: int, scope: str) -> dict:
@@ -129,8 +153,14 @@ class FakeSite:
         if not ffmpeg:
             return
         for k, color in enumerate(COLORS):
-            subprocess.run([ffmpeg, "-v", "error", "-y", "-f", "lavfi", "-i", f"color=c={color}:size=270x480",
-                            "-frames:v", "1", str(self.dir / f"{k}.jpg")], check=True)
+            if not make_cover(k, self.dir / f"{k}.jpg"):
+                subprocess.run([ffmpeg, "-v", "error", "-y", "-f", "lavfi", "-i", f"color=c={color}:size=270x480",
+                                "-frames:v", "1", str(self.dir / f"{k}.jpg")], check=True)
+            # A video that looks like its cover, so "does it look like the reference" can be tested.
+            subprocess.run([ffmpeg, "-v", "error", "-y", "-loop", "1", "-i", str(self.dir / f"{k}.jpg"), "-f", "lavfi",
+                            "-i", "sine=frequency=440:duration=3", "-t", "3", "-r", "25", "-c:v", "libx264",
+                            "-pix_fmt", "yuv420p", "-vf", "scale=270:480", "-c:a", "aac", "-shortest",
+                            str(self.dir / f"look_{k}.mp4")], check=True)
         subprocess.run([ffmpeg, "-v", "error", "-y", "-f", "lavfi", "-i", "testsrc=size=360x640:rate=25:duration=3",
                         "-f", "lavfi", "-i", "sine=frequency=330:duration=3", "-shortest", "-c:v", "libx264",
                         "-pix_fmt", "yuv420p", "-c:a", "aac", str(self.dir / "clip.mp4")], check=True)
@@ -183,7 +213,8 @@ class FakeSite:
                     if q == "needlogin":
                         return self._send(b"", "text/html", 302, {"Location": "/login/"})
                     return self._html(GRID_PAGE.format(
-                        title=f"Pinterest {scope} search: {html.escape(q)}", bg="#fff", captcha="",
+                        title=f"Pinterest {scope} search: {html.escape(q)}", bg="#fff",
+                        captcha=PINTEREST_WALL if q == "loginwall" else "",
                         api=f"/resource/BaseSearchResource/get/?scope={scope}&q=",
                     ))
 
@@ -198,7 +229,8 @@ class FakeSite:
                 if path.startswith("/pin/"):
                     pid = path.strip("/").split("/")[-1]
                     # Image pins (ids starting with 8) have no <video>, so yt-dlp finds nothing there.
-                    body = '<img src="/cover/0.jpg">' if pid.startswith("8") else '<video src="/media/clip.mp4"></video>'
+                    look = f"look_{int(pid) % 1000 % len(COLORS)}.mp4" if pid.isdigit() else "clip.mp4"
+                    body = '<img src="/cover/0.jpg">' if pid.startswith("8") else f'<video src="/media/{look}"></video>'
                     return self._html(f"<!doctype html><html><head><title>pin {pid}</title></head><body>{body}</body></html>")
 
                 if path in ("/search/video", "/explore/search/keyword/") or path.startswith("/tag/"):

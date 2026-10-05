@@ -65,7 +65,7 @@ def test_start_rejects_bad_settings(tmp_path):
         s = c.get("/api/settings").json()
         s.update(description="", keywords="", output_dir=str(tmp_path))
         r = c.post("/api/hunt/start", json={"settings": s}, headers=H)
-        assert r.status_code == 400 and "Describe" in r.json()["detail"]
+        assert r.status_code == 400 and "reference video" in r.json()["detail"]
 
 
 def test_websocket_sends_snapshot():
@@ -179,3 +179,44 @@ def test_selftest_endpoint_guards():
             assert r.status_code == 409 and "hunt" in r.json()["detail"]
         finally:
             main.state.hunt = None
+
+
+def test_reference_upload_analyse_and_remove(tmp_path):
+    import subprocess
+
+    from reelfinder import main
+    from reelfinder.downloader import find_ffmpeg
+    from reelfinder.references import MAX_REFERENCES
+
+    clip = tmp_path / "ref.mp4"
+    subprocess.run([find_ffmpeg(), "-v", "error", "-f", "lavfi", "-i", "testsrc2=size=320x568:rate=25:duration=3",
+                    "-c:v", "libx264", "-pix_fmt", "yuv420p", str(clip)], check=True)
+    with client() as c:
+        for ref in c.get("/api/references").json():  # start clean
+            c.delete(f"/api/references/{ref['id']}", headers=H)
+        r = c.post("/api/references/upload?name=my%20clip.mp4", content=clip.read_bytes(),
+                   headers={**H, "Content-Type": "video/mp4"})
+        assert r.status_code == 200 and r.json()["status"] == "analyzing" and r.json()["name"] == "my clip.mp4"
+        ref_id = r.json()["id"]
+        for _ in range(240):
+            ref = next(x for x in c.get("/api/references").json() if x["id"] == ref_id)
+            if ref["status"] != "analyzing":
+                break
+            time.sleep(0.25)
+        assert ref["status"] == "ready", ref
+        assert ref["frames"] == 8 and c.get(f"/references/{ref_id}/frame/1.jpg").content[:2] == b"\xff\xd8"
+        assert c.get(f"/references/{ref_id}/frame/9.jpg").status_code == 404
+        assert c.get("/references/not-an-id/frame/1.jpg").status_code == 404
+        assert c.post("/api/references/upload", content=b"", headers=H).status_code == 400
+        assert c.post("/api/references/link", json={"url": "nope"}, headers=H).status_code == 400
+        assert "Similarity model" in c.get("/api/report").text and "my clip.mp4" in c.get("/api/report").text
+
+        for i in range(MAX_REFERENCES - 1):
+            main.state.references.create("link", f"x{i}", url="https://example.com/x")
+        r = c.post("/api/references/link", json={"url": "https://www.tiktok.com/@a/video/1"}, headers=H)
+        assert r.status_code == 409 and "up to" in r.json()["detail"]
+
+        for ref in c.get("/api/references").json():
+            assert c.delete(f"/api/references/{ref['id']}", headers=H).json() == {"ok": True}
+        assert c.get("/api/references").json() == []
+        assert c.delete(f"/api/references/{ref_id}", headers=H).status_code == 404

@@ -220,3 +220,10 @@ def test_ytdlp_warnings_reach_our_log(caplog):
         logger.error("ERROR: unable to download")
     assert [r.getMessage() for r in caplog.records] == ["[Instagram] login required", "ERROR: unable to download"]
     assert "logger" in Downloader()._opts(None)
+
+
+@needs_ffmpeg
+def test_frames_come_from_the_whole_file_even_if_the_site_got_its_length_wrong(video_server):
+    _base, root = video_server
+    frames = Downloader().extract_frames(root / "clip.mp4", duration=60, count=4)  # really 4 s long
+    assert len(frames) == 4 and len(set(frames)) > 1

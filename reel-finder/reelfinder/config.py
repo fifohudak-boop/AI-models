@@ -58,6 +58,8 @@ class HuntSettings(BaseModel):
     max_age_days: int = Field(0, ge=0)
     # Only save videos the AI scored at least this high; 0 = always save the number you asked for.
     min_score: int = Field(0, ge=0, le=100)
+    # With reference videos: how close to them the videos must look (0 = same kind, 100 = nearly identical).
+    closeness: int = Field(60, ge=0, le=100)
     include_images: bool = False  # Pinterest image pins count too
     model: str = DEFAULT_MODEL
     watch_check: bool = False

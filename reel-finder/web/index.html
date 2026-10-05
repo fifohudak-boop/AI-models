@@ -23,8 +23,30 @@
     <!-- ======================= Search options ======================= -->
     <form class="panel options" id="options" autocomplete="off">
       <div class="options-scroll">
+        <section class="group refs-group">
+          <div class="label">Reference videos <span class="label-note">find more that look like these</span></div>
+          <div class="dropzone" id="dropzone">
+            <input type="file" id="ref_file" accept="video/*,image/*" multiple hidden>
+            <span class="drop-icon" aria-hidden="true">⤒</span>
+            <span><b>Drop a video here</b> or <button type="button" class="linkish" id="ref_choose">choose a file</button></span>
+            <span class="drop-sub">Videos or pictures from your Mac, up to 5</span>
+          </div>
+          <div class="inline">
+            <input id="ref_link" type="url" placeholder="…or paste a video link" spellcheck="false"
+              aria-label="Link to a reference video">
+            <button type="button" class="btn ghost sm" id="ref_add_link">Add</button>
+          </div>
+          <div class="refs" id="refs" aria-live="polite"></div>
+          <div class="closeness" id="closeness_box" hidden>
+            <label class="label sm" for="closeness">How close to the reference <output id="closeness_out"></output></label>
+            <input id="closeness" name="closeness" type="range" min="0" max="100" step="5">
+            <div class="scale"><span>Same kind of video</span><span>Nearly identical</span></div>
+            <p class="hint" id="closeness_hint"></p>
+          </div>
+        </section>
+
         <section class="group">
-          <label class="label" for="description">What are you looking for?</label>
+          <label class="label" for="description" id="description_label">What are you looking for?</label>
           <textarea id="description" name="description" rows="4"
             placeholder="e.g. Cinematic slow-motion car drifts at night with smoke, no talking, filmed from low angles"></textarea>
           <div class="row2">
@@ -229,9 +251,12 @@
           <h2>How it works</h2>
           <ol>
             <li><b>Connect</b> TikTok, Instagram and Pinterest once (left side). Log in, then close that window.</li>
-            <li><b>Describe</b> the videos you want, in plain words. Add must-have hashtags if you like.</li>
-            <li>Press <b>Start hunt</b>. The agents look at lots of videos, the AI scores every one against your
-              description, and the best ones are saved — as many as you asked for, as MP4s that play on any Mac.</li>
+            <li><b>Drop a reference video</b> — one that looks like what you want — or describe the videos in
+              plain words. Both together work best.</li>
+            <li>Press <b>Start hunt</b>. The agents look at lots of videos, every one is scored on how much it looks
+              like your reference, and the best ones are saved — as many as you asked for, as MP4s that play on
+              any Mac.</li>
+            <li>Found one that's spot on? Press <b>More like this</b> on it to use it as a reference next time.</li>
           </ol>
         </div>
       </section>
@@ -261,7 +286,9 @@
         <div class="status"></div>
         <p class="caption"></p>
         <div class="meta"></div>
+        <div class="look" hidden><span class="look-bar"><span></span></span><span class="look-text"></span></div>
         <p class="reason"></p>
+        <button type="button" class="btn ghost sm more-like" title="Use this video as a reference for the next hunt">More like this</button>
       </div>
     </article>
   </template>

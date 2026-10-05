@@ -1,0 +1,2 @@
+# Look-matching (CLIP on the CPU via ONNX). Installed separately so the app still starts if it ever fails to install.
+fastembed>=0.7

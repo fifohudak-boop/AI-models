@@ -39,6 +39,16 @@ VERDICT_SCHEMA = {
     "required": ["score", "reason"],
 }
 
+REFERENCE_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "description": {"type": "string"},
+        "search_queries": {"type": "array", "items": {"type": "string"}},
+        "hashtags": {"type": "array", "items": {"type": "string"}},
+    },
+    "required": ["description", "search_queries", "hashtags"],
+}
+
 
 @dataclass
 class Verdict:
@@ -226,6 +236,30 @@ class OllamaBrain:
             '{"score": <int>, "reason": "<one sentence>"}'
         )
         return _verdict(await self._chat(prompt, VERDICT_SCHEMA, frames))
+
+    async def describe_reference(self, frames: list[bytes], caption: str = "") -> dict:
+        """What a reference video shows, written so a search can find more like it."""
+        prompt = (
+            f"These {len(frames)} images are frames, in order, from one short-form video that a video editor "
+            "wants more videos like.\n"
+            + (f"Its caption: {caption[:600]}\n" if caption else "")
+            + "Answer as JSON with:\n"
+            '- "description": 1-2 sentences covering the main subject and action, the setting and time of day, '
+            "the camera work (angle, shot size, movement), lighting and colours, and the editing style "
+            "(cuts, slow motion, text on screen).\n"
+            '- "search_queries": 8 short searches (2-4 words each) that would find videos like this on TikTok, '
+            "Instagram and Pinterest; the most literal first.\n"
+            '- "hashtags": 6 hashtags creators use for this kind of video, without the # sign.'
+        )
+        if not self.can_see:
+            prompt = prompt.replace("These", "(You can't see the frames — go by the caption.) These", 1)
+        data = await self._chat(prompt, REFERENCE_SCHEMA, frames, max_tokens=600)
+        return {
+            "description": str(data.get("description") or "").strip()[:600],
+            "queries": _dedupe([q for q in data.get("search_queries") or [] if isinstance(q, str)], 10),
+            "hashtags": _dedupe([h.lstrip("#").replace(" ", "") for h in data.get("hashtags") or []
+                                 if isinstance(h, str)], 8),
+        }
 
 
 def _verdict(data: dict) -> Verdict:

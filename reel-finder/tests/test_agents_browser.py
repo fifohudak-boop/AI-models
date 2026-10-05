@@ -146,3 +146,57 @@ def test_pinterest_agent_can_include_pictures(tmp_path, site):
 def test_pinterest_agent_reports_login_wall(tmp_path, site):
     found, states = run_scout(tmp_path, Pinterest(site.url), "needlogin")
     assert states[-1] == "login" and not found
+
+
+def test_reference_hunt_saves_videos_that_look_like_it(tmp_path, site):
+    """No description at all: just a reference video. The captions say "pasta", but the pictures match."""
+    import shutil
+
+    from reelfinder.references import Analyzer, ReferenceStore
+    from reelfinder.similarity import Vision, vision
+
+    if not Vision.installed() or not vision.load():
+        pytest.skip("similarity model unavailable")
+    store = ReferenceStore(tmp_path / "refs")
+    ref = store.create("file", "kitten card.mp4")
+    source = store.folder(ref.id) / "source.mp4"
+    shutil.copyfile(site.dir / "look_3.mp4", source)  # what cover 3 ("KITTEN") looks like
+
+    async def keyword_brain(model):
+        return KeywordBrain(), "Ollama isn't running, so videos are matched by keywords only."
+
+    asyncio.run(Analyzer(store, Downloader(), vision, keyword_brain, lambda: "x", lambda k, d: None).run(ref, source))
+    assert store.get(ref.id).status == "ready"
+
+    settings = HuntSettings(description="", platforms=["tiktok", "pinterest"], agents=2, target_count=4,
+                            show_browser=False, output_dir=str(tmp_path / "out"), time_limit_min=3)
+    events = []
+
+    async def go():
+        browser = BrowserManager(profile_dir=tmp_path / "profile", cookies_file=tmp_path / "cookies.txt")
+        hunt = Hunt(settings, lambda k, d: events.append((k, d)), browser=browser, downloader=Downloader(),
+                    brain_factory=keyword_brain, thumbs_dir=tmp_path / "thumbs",
+                    site_urls={"tiktok": site.url, "pinterest": site.url},
+                    scout_options={"pace": (0.2, 0.4), "patience": 3},
+                    references=store.info(), vision=vision)
+        await asyncio.wait_for(hunt.run(), 180)
+        await browser.close()
+        return hunt
+
+    hunt = asyncio.run(go())
+    logs = [d["text"] for k, d in events if k == "log"]
+    assert hunt.finished_reason.startswith("Saved the best 4 of"), logs
+    saved = [c for c in hunt.candidates.values() if c.status == "downloaded"]
+    assert len(saved) == 4
+    assert all(c.thumbnail_url.endswith("/cover/3.jpg") for c in saved), [c.thumbnail_url for c in saved]
+    assert all(c.look >= 90 and c.frames_look >= 90 for c in saved)
+    assert {c.platform for c in saved} <= {"tiktok", "pinterest"}
+    others = [c for c in hunt.candidates.values() if c.look is not None and not c.thumbnail_url.endswith("/3.jpg")]
+    assert others and max(c.look for c in others) < min(c.look for c in saved)
+    assert any("Matching 1 reference video" in t for t in logs)
+
+
+def test_pinterest_login_popup_keeps_the_first_results(tmp_path, site):
+    found, states = run_scout(tmp_path, Pinterest(site.url), "loginwall")
+    assert "limited" in states and "captcha" not in states  # its hidden reCAPTCHA isn't a captcha to solve
+    assert len(found) >= 6  # the first page of results still counts

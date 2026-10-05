@@ -8,10 +8,10 @@ const RECOMMENDED_MODELS = [
   { name: "gemma3:4b", note: "smaller and faster, sees thumbnails, ~3.3 GB, fine on 8 GB Macs" },
 ];
 const NUMBER_FIELDS = ["target_count", "pool_size", "agents", "time_limit_min", "min_duration", "max_duration",
-  "min_views", "min_likes", "max_age_days", "min_score"];
+  "min_views", "min_likes", "max_age_days", "min_score", "closeness"];
 const STATUS_TEXT = {
   queued: "Waiting to be checked", checking: "AI is checking", scored: "Checked",
-  picked: "Picked — saving soon", downloading: "Saving", watching: "Watch-check", downloaded: "✓ Saved",
+  picked: "Picked — saving soon", downloading: "Saving", watching: "Checking the frames", downloaded: "✓ Saved",
   skipped: "Skipped (your filters)", notpicked: "Checked — not in the top picks",
   failed: "Couldn't save — next best used instead", unchecked: "Not checked (stopped)",
 };
@@ -19,6 +19,7 @@ const DONE_NOT_SAVED = ["skipped", "failed", "unchecked", "notpicked"];
 const AGENT_STATE = {
   opening: "Opening search", scrolling: "Scrolling",
   captcha: "Needs you: captcha", login: "Needs you: log in", error: "Error", done: "Finished",
+  limited: "Not logged in — first results only",
 };
 const PHASE_TEXT = {
   starting: "Starting the agents…", searching: "Looking at videos", checking: "Scoring the last videos",
@@ -30,8 +31,11 @@ let settings = null;
 let status = null;
 let running = false;
 let testing = false;
+let huntUsesReference = false;  // the current hunt scores videos by how they look like a reference
 const cards = new Map();
 const agents = new Map();
+const references = new Map();
+const MAX_REFERENCES = 5;
 
 // ------------------------------------------------------------------ helpers
 
@@ -106,11 +110,26 @@ function readForm() {
   return s;
 }
 
+// Mirrors reelfinder/similarity.py: closeness_label() and min_look().
+function closenessLabel(v) {
+  return v < 35 ? "Same kind of video" : v < 70 ? "Same look" : v < 90 ? "Very close" : "Nearly identical";
+}
+function closenessHint(v) {
+  const floor = v < 50 ? 0 : Math.round((v - 50) * 1.4);
+  if (v < 35) return "Same subject and vibe, any style. Always saves the number you asked for.";
+  if (!floor) return "Same subject, setting and style — the most alike are saved first. Always saves the number you asked for.";
+  const strict = v >= 70 ? " May save fewer than you asked for if not enough are found." : "";
+  return `Videos that look less than ${floor}% like your reference are left out, also after checking their frames.${strict}`;
+}
+
 function updateOutputs() {
   $("#agents_out").textContent = $("#agents").value;
   const min = +$("#min_score").value;
   $("#min_score_out").textContent = min ? min : "off";
   $("#pool_size").placeholder = `auto (${autoPool(+$("#target_count").value || 20)})`;
+  const close = +$("#closeness").value;
+  $("#closeness_out").textContent = closenessLabel(close);
+  $("#closeness_hint").textContent = closenessHint(close);
 }
 
 let saveTimer;
@@ -202,6 +221,11 @@ function renderStatus() {
   else if (!o.installed) pills.append(pill(`AI model missing`, "warn", `Download ${o.model} (left side)`));
   else pills.append(pill(`AI: ${o.model}`, "ok"));
   pills.append(status.ffmpeg ? pill("ffmpeg", "ok") : pill("ffmpeg missing", "bad"));
+  const sim = status.similarity;
+  if (sim && !sim.installed) pills.append(pill("Look-matching off", "warn", "Quit and reopen Reel Finder to install it"));
+  else if (sim?.error) pills.append(pill("Look-matching off", "warn", sim.error));
+  else if (sim) pills.append(pill("Look-matching", "ok", sim.downloaded ? "Compares how videos look"
+    : "The model (~600 MB) downloads the first time you add a reference or start a hunt"));
   for (const p of ["tiktok", "instagram", "pinterest"]) {
     const ok = !!status.logins[p];
     pills.append(pill(`${PLATFORM_NAMES[p]} ${ok ? "connected" : "not connected"}`, ok ? "ok" : ""));
@@ -360,6 +384,7 @@ function resetLive() {
 
 function renderProgress(p) {
   if (!p) return;
+  huntUsesReference = !!p.matching_looks;
   $("#downloaded").textContent = p.downloaded;
   $("#target").textContent = p.target;
   const pct = p.target ? Math.min(100, (100 * p.downloaded) / p.target) : 0;
@@ -372,7 +397,8 @@ function renderProgress(p) {
     if (p.phase === "checking") head += ` — ${p.queued} to go${p.quick ? " (from captions)" : ""}`;
     if (p.finishing) head = `Finishing up — ${head.toLowerCase()}`;
     $("#headline").textContent = head;
-    $("#subline").textContent = `${p.folder}${p.brain ? ` · scored by ${p.brain}` : ""}`;
+    const how = p.matching_looks ? ` · matching ${p.references > 1 ? `${p.references} references` : "your reference"} (${p.closeness.toLowerCase()})` : "";
+    $("#subline").textContent = `${p.folder}${p.brain ? ` · scored by ${p.brain}` : ""}${how}`;
     document.body.classList.toggle("finishing", !!p.finishing || document.body.classList.contains("finishing"));
   } else if (p.finished_reason) {
     $("#headline").textContent = p.finished_reason;
@@ -410,7 +436,7 @@ function renderAgent(a) {
   $(".agent-query", el).textContent = a.query ? `“${a.query}”` : "—";
   $(".agent-query", el).title = a.query;
   $(".txt", el).textContent = `${AGENT_STATE[a.state] || a.state}${a.state === "scrolling" ? ` · ${a.scrolls} scrolls` : ""}`;
-  const urgent = a.state === "captcha" || a.state === "login" || a.state === "error";
+  const urgent = ["captcha", "login", "error", "limited"].includes(a.state);
   $(".agent-note", el).textContent = urgent ? a.note : "";
 }
 
@@ -441,7 +467,7 @@ function renderCandidate(c) {
   const hasScore = c.score !== null && c.score !== undefined;
   const score = $(".badge.score", el);
   score.textContent = hasScore ? c.score : "";
-  score.title = c.quick ? "Scored from the caption only" : "AI score";
+  score.title = c.quick ? "Scored quickly (no AI look)" : c.look != null ? `Score: AI ${c.ai_score} + look ${c.look}` : "AI score";
   score.className = `badge score ${c.score >= 70 ? "good" : c.score >= 40 ? "meh" : ""}`;
   // The "Best" tab shows everything that's been scored, highest first.
   el.style.setProperty("--order", String(hasScore ? 1000 - c.score : 2000));
@@ -451,8 +477,26 @@ function renderCandidate(c) {
   const meta = [c.author && `@${c.author}`, c.views != null && `${fmt(c.views)} views`,
     c.likes != null && `${fmt(c.likes)} likes`, c.duration && `${Math.round(c.duration)}s`].filter(Boolean);
   $(".meta", el).textContent = meta.join(" · ");
+  renderLook(el, c);
   $(".reason", el).textContent = c.reason || "";
+  const more = $(".more-like", el);
+  more.hidden = c.kind === "image" || !["scored", "picked", "downloading", "watching", "downloaded", "notpicked"].includes(c.status);
+  more.onclick = () => addReferenceLink(c.url, { fromCard: true });
   renderCounts();
+}
+
+function renderLook(el, c) {
+  const box = $(".look", el);
+  const value = c.frames_look ?? c.look;
+  box.hidden = value === null || value === undefined;
+  if (box.hidden) return;
+  $(".look-bar > span", box).style.width = `${value}%`;
+  box.dataset.level = value >= 70 ? "high" : value >= 40 ? "mid" : "low";
+  const what = huntUsesReference ? "like your reference" : "matches your description";
+  const parts = [`${huntUsesReference ? "Looks " : "Picture "}${value}% ${what}`];
+  if (c.frames_look != null && c.look != null) parts.push(`cover ${c.look}%`);
+  $(".look-text", box).textContent = parts.join(" · ");
+  box.title = c.frames_look != null ? "Measured on the downloaded video's own frames" : "Measured on the cover image";
 }
 
 function renderCounts() {
@@ -495,6 +539,162 @@ function renderLink(d) {
   } else {
     hint.textContent = `Couldn't save it: ${d.error}`;
   }
+}
+
+// ------------------------------------------------------------------ reference videos
+
+function renderReferences() {
+  const list = $("#refs");
+  const refs = [...references.values()].sort((a, b) => a.created - b.created);
+  list.replaceChildren(...refs.map(referenceCard));
+  const ready = refs.some((r) => r.status === "ready");
+  $("#closeness_box").hidden = !refs.length;
+  $("#dropzone").classList.toggle("compact", refs.length > 0);
+  $("#dropzone").hidden = refs.length >= MAX_REFERENCES;
+  $("#description_label").textContent = refs.length ? "Anything to add? (optional)" : "What are you looking for?";
+  $("#description").placeholder = refs.length
+    ? "e.g. only night shots, no talking — or leave empty and let the reference speak"
+    : "e.g. Cinematic slow-motion car drifts at night with smoke, no talking, filmed from low angles";
+  if (!running && $("#headline").textContent === "Ready when you are") {
+    $("#subline").textContent = ready ? "Press Start hunt to find videos that look like your reference."
+      : "Drop a reference video or describe what you need, then press Start hunt.";
+  }
+}
+
+function referenceCard(r) {
+  const el = document.createElement("div");
+  el.className = "ref";
+  el.dataset.status = r.status;
+  const frames = document.createElement("div");
+  frames.className = "ref-frames";
+  if (r.uploading) {
+    frames.textContent = "⤒";
+  } else {
+    const picks = r.frames <= 4 ? [...Array(r.frames).keys()] : [0, 2, 5, 7].filter((i) => i < r.frames);
+    for (const i of picks) {
+      const img = document.createElement("img");
+      img.alt = "";
+      img.loading = "lazy";
+      img.src = `/references/${r.id}/frame/${i + 1}.jpg`;
+      frames.append(img);
+    }
+  }
+  const body = document.createElement("div");
+  body.className = "ref-body";
+  const name = document.createElement("div");
+  name.className = "ref-name";
+  name.textContent = r.source === "link" ? (r.author ? `@${r.author}` : r.name) : r.name;
+  name.title = r.name;
+  const state = document.createElement("div");
+  state.className = "ref-state";
+  state.textContent = r.uploading ? "Uploading…"
+    : r.status === "analyzing" ? (r.step || "Analysing…")
+    : r.status === "failed" ? `Couldn't use it: ${r.error}`
+    : `Ready${r.tags?.length ? ` · ${r.tags.join(", ")}` : ""}`;
+  body.append(name, state);
+  if (r.description) {
+    const desc = document.createElement("p");
+    desc.className = "ref-desc";
+    desc.textContent = r.description;
+    body.append(desc);
+  }
+  if (r.note) {
+    const note = document.createElement("p");
+    note.className = "ref-note";
+    note.textContent = r.note;
+    body.append(note);
+  }
+  el.append(frames, body);
+  if (!r.uploading) {
+    const remove = document.createElement("button");
+    remove.type = "button";
+    remove.className = "ref-remove";
+    remove.setAttribute("aria-label", `Remove ${r.name}`);
+    remove.textContent = "×";
+    remove.addEventListener("click", () => {
+      api(`/api/references/${r.id}`, { method: "DELETE" })
+        .then(() => { references.delete(r.id); renderReferences(); })
+        .catch((err) => toast(err.message));
+    });
+    el.append(remove);
+  }
+  return el;
+}
+
+async function uploadReference(file) {
+  if (references.size >= MAX_REFERENCES) { toast(`Up to ${MAX_REFERENCES} reference videos — remove one first.`); return; }
+  if (!/^(video|image)\//.test(file.type) && !/\.(mp4|mov|m4v|webm|mkv|avi|gif|jpe?g|png|webp|heic)$/i.test(file.name)) {
+    toast(`“${file.name}” isn't a video or picture.`);
+    return;
+  }
+  const temp = `upload-${Date.now()}-${Math.random()}`;
+  references.set(temp, { id: temp, name: file.name, uploading: true, status: "analyzing", created: Date.now() / 1000, frames: 0 });
+  renderReferences();
+  try {
+    const res = await fetch(`/api/references/upload?name=${encodeURIComponent(file.name)}`, {
+      method: "POST",
+      headers: { "X-Reel-Finder": "1", "Content-Type": file.type || "application/octet-stream" },
+      body: file,
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(typeof data.detail === "string" ? data.detail : `Upload failed (${res.status})`);
+    if (!references.has(data.id)) references.set(data.id, data);
+  } catch (err) {
+    toast(err.message, 6000);
+  } finally {
+    references.delete(temp);
+    renderReferences();
+  }
+}
+
+async function addReferenceLink(url, { fromCard = false } = {}) {
+  url = (url || "").trim();
+  if (!url) return;
+  try {
+    const ref = await api("/api/references/link", { method: "POST", body: { url } });
+    if (!references.has(ref.id)) references.set(ref.id, ref);
+    renderReferences();
+    if (!fromCard) $("#ref_link").value = "";
+    else toast(running ? "Added as a reference for your next hunt." : "Added as a reference — press Start hunt to find more like it.", 6000);
+  } catch (err) { toast(err.message, 6000); }
+}
+
+const dropzone = $("#dropzone");
+$("#ref_choose").addEventListener("click", () => $("#ref_file").click());
+dropzone.addEventListener("click", (e) => { if (e.target === dropzone) $("#ref_file").click(); });
+$("#ref_file").addEventListener("change", (e) => {
+  [...e.target.files].forEach(uploadReference);
+  e.target.value = "";
+});
+for (const ev of ["dragenter", "dragover"]) {
+  dropzone.addEventListener(ev, (e) => { e.preventDefault(); dropzone.classList.add("over"); });
+}
+for (const ev of ["dragleave", "drop"]) {
+  dropzone.addEventListener(ev, (e) => { e.preventDefault(); dropzone.classList.remove("over"); });
+}
+dropzone.addEventListener("drop", (e) => {
+  const files = [...(e.dataTransfer?.files || [])];
+  if (files.length) files.forEach(uploadReference);
+  else {
+    const url = e.dataTransfer?.getData("text/uri-list") || e.dataTransfer?.getData("text/plain");
+    if (url && /^https?:\/\//.test(url)) addReferenceLink(url);
+  }
+});
+// A file dropped anywhere else on the page would make the browser open it and leave Reel Finder.
+window.addEventListener("dragover", (e) => e.preventDefault());
+window.addEventListener("drop", (e) => e.preventDefault());
+$("#ref_add_link").addEventListener("click", () => addReferenceLink($("#ref_link").value));
+$("#ref_link").addEventListener("keydown", (e) => {
+  if (e.key === "Enter") { e.preventDefault(); addReferenceLink($("#ref_link").value); }
+});
+
+async function loadReferences() {
+  try {
+    const refs = await api("/api/references");
+    references.clear();
+    refs.forEach((r) => references.set(r.id, r));
+  } catch { /* server restarting */ }
+  renderReferences();
 }
 
 function addLog(entry, { silent = false } = {}) {
@@ -543,6 +743,8 @@ function connect() {
         break;
       case "selftest": renderSelfTest(data); break;
       case "link": renderLink(data); break;
+      case "reference": references.set(data.id, data); renderReferences(); break;
+      case "reference_removed": references.delete(data.id); renderReferences(); break;
       case "model_pull":
         if (data.error) { toast(data.error, 7000); refreshStatus(); }
         else if (data.done) { toast(`${data.model} is ready.`); refreshStatus(); }
@@ -550,6 +752,7 @@ function connect() {
         break;
     }
   };
+  ws.onopen = () => loadReferences();  // catch up on anything that changed while disconnected
   ws.onclose = () => setTimeout(connect, 1500);
 }
 
@@ -563,6 +766,7 @@ function connect() {
     toast(`Couldn't load settings: ${err.message}`);
   }
   await refreshStatus();
+  await loadReferences();
   connect();
   setInterval(refreshStatus, 5000);
 })();

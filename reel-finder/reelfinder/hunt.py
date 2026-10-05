@@ -23,12 +23,15 @@ from yt_dlp.utils import DownloadCancelled, DownloadError
 from .ai import KeywordBrain, core_query, pick_brain
 from .config import MAX_AGENTS_PER_PLATFORM, PLATFORM_LABELS, HuntSettings, pool_size_for
 from .downloader import (
-    ARCHIVE_NAME, Downloader, NotAVideo, append_log, fetch_image, fill_from_info, read_archive, safe_name,
+    ARCHIVE_NAME, Downloader, NotAVideo, append_log, fetch_image, fill_from_info, read_archive,
+    remove_from_archive, safe_name,
 )
 from .filters import needs_probe, reject_reason
 from .models import Candidate
 from .parsing import split_terms
+from .references import ReferenceInfo
 from .scouts import SITES, Scout
+from .similarity import closeness_label, look_weight, min_look, text_score
 
 log = logging.getLogger("reelfinder")
 
@@ -43,9 +46,9 @@ SEARCH_SHARE = 0.75  # of the time limit, spent searching; the rest is for finis
 BLOCKED_STATES = ("login", "captcha")
 
 
-def validate(s: HuntSettings) -> str | None:
-    if not s.description.strip() and not split_terms(s.keywords):
-        return "Describe the videos you want (or give at least one keyword)."
+def validate(s: HuntSettings, references: int = 0) -> str | None:
+    if not s.description.strip() and not split_terms(s.keywords) and not references:
+        return "Add a reference video, or describe the videos you want."
     if not s.platforms:
         return "Pick at least one platform."
     if s.max_duration and s.min_duration > s.max_duration:
@@ -69,8 +72,8 @@ def allocate_agents(platforms: list[str], total: int) -> dict[str, int]:
     return alloc
 
 
-def hunt_folder_name(s: HuntSettings) -> str:
-    words = re.sub(r"[^\w\s-]", "", s.description or s.keywords).split()[:6]
+def hunt_folder_name(s: HuntSettings, fallback: str = "") -> str:
+    words = re.sub(r"[^\w\s-]", "", s.description or s.keywords or fallback).split()[:6]
     return f"{time.strftime('%Y-%m-%d %H.%M')} {' '.join(words)}".strip()[:80]
 
 
@@ -95,10 +98,15 @@ class Hunt:
         site_urls: dict[str, str] | None = None,
         scout_options: dict | None = None,
         time_limit_s: float | None = None,
+        references: ReferenceInfo | None = None,
+        vision: Any = None,
     ):
         self.s = settings
         self.time_limit_s = time_limit_s if time_limit_s is not None else settings.time_limit_min * 60
         self._emit = emit
+        self.refs = references or ReferenceInfo()
+        self.vision = vision  # CLIP similarity (None = judge by the AI alone)
+        self._text_vec = None  # your description, embedded, for text-only hunts
         self.browser = browser
         self.downloader = downloader or Downloader()
         self.brain_factory = brain_factory
@@ -118,7 +126,9 @@ class Hunt:
         self.brain = None
         self.quick = False
         self.base_folder = Path(settings.output_dir).expanduser()
-        self.folder = self.base_folder / hunt_folder_name(settings) if settings.subfolder_per_hunt else self.base_folder
+        like = "Like " + (self.refs.queries or self.refs.hashtags or ["reference"])[0] if self.refs else ""
+        self.folder = (self.base_folder / hunt_folder_name(settings, like) if settings.subfolder_per_hunt
+                       else self.base_folder)
         self.archive_path = self.base_folder / ARCHIVE_NAME
         self.archive: set[str] = set()
         self.pool_target = pool_size_for(settings)
@@ -140,9 +150,29 @@ class Hunt:
         self._logged = 0
         self._pages: list = []
         self._ai_failed_once = False
+        self._limited: set[str] = set()  # platforms showing only a first page because you're not logged in
         self._warned_thinking = False
         self._deadline_search = float("inf")
         self._deadline_check = float("inf")
+
+        # What the AI judges against: your words, plus what it saw in your reference videos.
+        parts = [settings.description.strip()]
+        if self.refs.description:
+            parts.append(f"Videos that look like this reference: {self.refs.description}")
+        self.wanted = ". ".join(p for p in parts if p)[:900]
+        ref_terms = ", ".join(self.refs.hashtags[:6] + self.refs.queries[:4])
+        self.wanted_keywords = ", ".join(t for t in (settings.keywords.strip(), ref_terms) if t)
+        if not self.wanted:
+            self.wanted = self.wanted_keywords
+
+    @property
+    def matching_looks(self) -> bool:
+        """Scoring by how much videos look like your reference videos."""
+        return bool(self.refs.looks) and self.vision is not None
+
+    @property
+    def min_look(self) -> int:
+        return min_look(self.s.closeness) if self.matching_looks else 0
 
     # ------------------------------------------------------------ events
 
@@ -181,6 +211,9 @@ class Hunt:
             "running": self.running,
             "finishing": self.finish_event.is_set(),
             "finished_reason": self.finished_reason,
+            "references": self.refs.count,
+            "matching_looks": self.matching_looks,
+            "closeness": closeness_label(self.s.closeness) if self.refs else "",
         }
 
     def _progress(self) -> None:
@@ -202,6 +235,9 @@ class Hunt:
                      status["query"], status.get("note") or "")
         self.agents[status["id"]] = status
         self.emit("agent", status)
+        if status["state"] == "limited" and status["platform"] not in self._limited:
+            self._limited.add(status["platform"])
+            self.say(status["note"], "warn")
 
     # ------------------------------------------------------------ control
 
@@ -264,6 +300,7 @@ class Hunt:
         self.brain, warning = await self.brain_factory(s.model)
         if warning:
             self.say(warning, "warn")
+        await self._prepare_looks()
         self._progress()
 
         alloc = allocate_agents(list(s.platforms), s.agents)
@@ -326,12 +363,43 @@ class Hunt:
         elif self.pool_count == 0:
             self.finished_reason = (f"All {self.counts['found']} videos found broke your filters (see Skipped) — "
                                     "loosen the length, views, likes or age limits")
+        elif self.min_look and self._too_different():
+            self.finished_reason = (f"Saved {saved} of {s.target_count} — only these looked close enough to your "
+                                    f"reference ({self._too_different()} others didn't). Move “How close” towards "
+                                    "“Same kind of video”, or give it a longer time limit")
         elif out_of_time:
             self.finished_reason = (f"Saved {saved} of {s.target_count} — the time limit ran out before more "
                                     "were found. Give it a longer time limit")
         else:
             self.finished_reason = (f"Saved {saved} of {s.target_count} — that's every usable video found. "
                                     "Try broader words, more platforms or a longer time limit")
+
+    def _too_different(self) -> int:
+        """Checked videos left out because they don't look enough like the reference."""
+        floor = self.min_look
+        return sum(1 for c in self.candidates.values()
+                   if c.status in ("notpicked", "scored") and (c.look or 0) < floor
+                   or c.status == "failed" and c.reason.startswith("Doesn't look"))
+
+    async def _prepare_looks(self) -> None:
+        """Load the similarity model: it scores how much every cover looks like your reference."""
+        if self.vision is None:
+            if self.refs and self.refs.looks:
+                self.say("The similarity model isn't available, so videos are compared with your reference "
+                         "by the AI's description only.", "warn")
+            return
+        if not await asyncio.to_thread(self.vision.load):
+            self.say(f"Couldn't load the similarity model ({self.vision.error}); judging by the AI alone.", "warn")
+            self.vision = None
+            return
+        if self.refs:
+            what = f" — {self.refs.description[:160]}" if self.refs.description else ""
+            self.say(f"Matching {self.refs.count} reference video{'s' if self.refs.count > 1 else ''}{what}. "
+                     f"How close: {closeness_label(self.s.closeness)}.")
+        if not self.refs.looks:
+            text = self.s.description.strip() or self.wanted_keywords
+            if text:
+                self._text_vec = (await asyncio.to_thread(self.vision.embed_texts, [text]))[0]
 
     # ------------------------------------------------------------ planning
 
@@ -341,19 +409,25 @@ class Hunt:
         per_platform = max(8, max(alloc.values(), default=1) * 4)
         self.say("Planning searches…")
         try:
-            planned = await self.brain.plan_queries(s.description, s.keywords, platforms, per_platform)
+            planned = await self.brain.plan_queries(self.wanted, self.wanted_keywords, platforms, per_platform)
         except Exception as exc:  # noqa: BLE001 - AI hiccup: plan from your words instead
             self.say(f"The AI couldn't plan searches ({exc}); planning from your words instead.", "warn")
-            planned = await KeywordBrain().plan_queries(s.description, s.keywords, platforms, per_platform)
+            planned = await KeywordBrain().plan_queries(self.wanted, self.wanted_keywords, platforms, per_platform)
         literal = core_query(s.description)
+        refs = self.refs
         for p in platforms:
             self.queues[p] = asyncio.Queue()
+            # Your own words first, then what the reference videos are about, then the AI's ideas.
             first = split_terms(s.keywords) + ([literal] if literal else [])
+            first += refs.queries[:3] + ["#" + h for h in refs.hashtags[:3]]
+            later = refs.queries[3:] + ["#" + h for h in refs.hashtags[3:]]
             if p == "pinterest":
                 first = [q.lstrip("#") for q in first]
-            queries = first + list(planned.get(p, []))
+                later = [q.lstrip("#") for q in later]
+            queries = first + list(planned.get(p, [])) + later
             if not planned.get(p):
-                queries += (await KeywordBrain().plan_queries(s.description, s.keywords, [p], per_platform))[p]
+                queries += (await KeywordBrain().plan_queries(self.wanted, self.wanted_keywords, [p],
+                                                              per_platform))[p]
             self._add_queries(p, queries)
         self.emit("plan", self.plan)
         for p, qs in self.plan.items():
@@ -386,16 +460,16 @@ class Hunt:
             return False
         self.replans += 1
         self.say("The searches ran out before finding enough videos — planning new ones…")
-        s = self.s
         per = 8
         used = sorted({k.split(":", 1)[1] for k in self.used_queries})
         try:
-            planned = await self.brain.plan_queries(s.description, s.keywords, platforms, per, avoid=used)
+            planned = await self.brain.plan_queries(self.wanted, self.wanted_keywords, platforms, per, avoid=used)
         except Exception:  # noqa: BLE001
             planned = {}
         added = sum(self._add_queries(p, planned.get(p, [])) for p in platforms)
         if not added:
-            fallback = await KeywordBrain().plan_queries(s.description, s.keywords, platforms, per * 3, avoid=used)
+            fallback = await KeywordBrain().plan_queries(self.wanted, self.wanted_keywords, platforms, per * 3,
+                                                         avoid=used)
             added = sum(self._add_queries(p, fallback.get(p, [])) for p in platforms)
         self.emit("plan", self.plan)
         return added > 0
@@ -463,6 +537,8 @@ class Hunt:
         if c.archive_id in self.archive:
             self.counts["already_have"] += 1
             return
+        if self.refs.urls and len(c.id) >= 5 and any(c.id in url for url in self.refs.urls):
+            return  # that's your reference video itself
         c.found_at = time.monotonic()
         c.status = "queued"
         self.candidates[c.key] = c
@@ -515,8 +591,8 @@ class Hunt:
                 raise
             except Exception as exc:  # noqa: BLE001 - one odd video never stalls the hunt
                 log.warning("Couldn't check %s: %r", c.url, exc)
-                verdict = await KeywordBrain().judge(self.s.description, self.s.keywords, c, None)
-                self._scored(c, verdict.score, verdict.reason, quick=True)
+                verdict = await KeywordBrain().judge(self.wanted, self.wanted_keywords, c, None)
+                self._scored(c, verdict.score, verdict.reason, quick=True, look=c.look)
             finally:
                 self._busy -= 1
                 self.score_q.task_done()
@@ -544,25 +620,55 @@ class Hunt:
                 self._skip(c, reason)
                 return
 
-        image = None if quick else await self._thumbnail(c)
+        # The cover is always looked at when the similarity model is there: it takes milliseconds.
+        image = await self._thumbnail(c) if (not quick or self.vision is not None) else None
+        c.look = await self._look(c, image)
         brain = KeywordBrain() if quick else self.brain
         try:
-            verdict = await brain.judge(s.description, s.keywords, c, image)
+            verdict = await brain.judge(self.wanted, self.wanted_keywords, c, None if quick else image)
         except Exception as exc:  # noqa: BLE001 - AI crashed or timed out: don't stall the hunt
             log.warning("AI judge failed on %s: %r", c.url, exc)
             if not self._ai_failed_once:
                 self._ai_failed_once = True
                 self.say(f"The AI didn't answer ({exc}); scoring by keywords until it recovers.", "warn")
-            verdict = await KeywordBrain().judge(s.description, s.keywords, c, image)
+            verdict = await KeywordBrain().judge(self.wanted, self.wanted_keywords, c, image)
             quick = True
         if getattr(self.brain, "thinks", False) and not self._warned_thinking:
             self._warned_thinking = True
             self.say(f"“{self.brain.name}” thinks at length before answering, which makes checking slow. "
                      "An “-instruct” model (e.g. qwen3-vl:8b-instruct) is much faster.", "warn")
-        self._scored(c, verdict.score, verdict.reason, quick=quick or isinstance(brain, KeywordBrain))
+        self._scored(c, verdict.score, verdict.reason, quick=quick or isinstance(brain, KeywordBrain), look=c.look)
 
-    def _scored(self, c: Candidate, score: int, reason: str, quick: bool) -> None:
-        c.score, c.reason, c.quick = score, reason, quick
+    async def _look(self, c: Candidate, image: bytes | None) -> int | None:
+        """0–100: how much the cover looks like your reference videos (or shows your description)."""
+        if self.vision is None or not image:
+            return None
+        try:
+            picture = (await asyncio.to_thread(self.vision.embed_images, [image]))[0]
+        except Exception as exc:  # noqa: BLE001 - an odd cover image: judge without it
+            log.info("Couldn't compare the cover of %s: %s", c.url, exc)
+            return None
+        if self.refs.looks:
+            return self.refs.looks.look(picture)
+        if self._text_vec is not None:
+            return text_score(float(self._text_vec @ picture))
+        return None
+
+    def _blend(self, ai: int, look: int | None) -> int:
+        """The final score: the AI's judgement mixed with how the video looks."""
+        if self.matching_looks:
+            weight = look_weight(self.s.closeness)
+            if isinstance(self.brain, KeywordBrain) and not self.refs.description:
+                weight = max(weight, 0.85)  # keywords alone know little about what the reference shows
+            return round(weight * (look or 0) + (1 - weight) * ai)  # no cover: nothing proves it looks right
+        if look is None:
+            return ai
+        weight = 0.6 if isinstance(self.brain, KeywordBrain) else 0.35  # the picture vs. your words
+        return round(weight * look + (1 - weight) * ai)
+
+    def _scored(self, c: Candidate, ai: int, reason: str, quick: bool, look: int | None = None) -> None:
+        c.ai_score, c.look = ai, look
+        c.score, c.reason, c.quick = self._blend(ai, look), reason, quick
         c.status = "scored"
         self.counts["scored"] += 1
         self._show(c)
@@ -589,8 +695,10 @@ class Hunt:
 
     def ranked(self) -> list[Candidate]:
         """Every checked video that's still in the running, best first."""
+        floor = self.min_look
         pool = [c for c in self.candidates.values()
-                if c.status in ("scored", "picked", "notpicked") and (c.score or 0) >= self.s.min_score]
+                if c.status in ("scored", "picked", "notpicked") and (c.score or 0) >= self.s.min_score
+                and (c.look or 0) >= floor]
         return sorted(pool, key=lambda c: (-(c.score or 0), c.quick, -(c.views or c.likes or 0)))
 
     async def _download_best(self) -> None:
@@ -659,13 +767,29 @@ class Hunt:
             return self._fail(c, f"Couldn't download: {short_error(exc)} — replaced by the next best")
         self.archive.add(c.archive_id)
 
+        if self.matching_looks and c.kind == "video":
+            # The cover can mislead; the video's own frames can't. Compare them with the reference.
+            c.status = "watching"
+            self._show(c)
+            frames = await asyncio.to_thread(self.downloader.extract_frames, path, c.duration, 4)
+            try:
+                if frames:
+                    pictures = await asyncio.to_thread(self.vision.embed_images, frames)
+                    c.frames_look = self.refs.looks.frames_look(pictures)
+            except Exception as exc:  # noqa: BLE001 - keep the video rather than lose it to a glitch
+                log.info("Couldn't compare the frames of %s: %s", c.url, exc)
+            if c.frames_look is not None and c.frames_look < self.min_look:
+                self._discard(c, path)
+                return self._fail(c, f"Doesn't look like your reference once downloaded (frames {c.frames_look}%) "
+                                     "— replaced by the next best")
+
         if s.watch_check and c.kind == "video" and getattr(self.brain, "can_see", False):
             c.status = "watching"
             self._show(c)
             frames = await asyncio.to_thread(self.downloader.extract_frames, path, c.duration)
-            verdict = await self.brain.verify_frames(s.description or s.keywords, frames)
+            verdict = await self.brain.verify_frames(self.wanted, frames)
             if verdict.score < max(s.min_score, 30):
-                path.unlink(missing_ok=True)
+                self._discard(c, path)
                 return self._fail(c, f"Watch-check: {verdict.reason} — replaced by the next best")
             c.reason = f"{c.reason} · Watch-check {verdict.score}: {verdict.reason}"[:300]
 
@@ -675,6 +799,12 @@ class Hunt:
         self._saved_now.append(c)
         self._show(c)
         return True
+
+    def _discard(self, c: Candidate, path: Path) -> None:
+        """Delete a download that turned out not to match, and forget it was downloaded."""
+        path.unlink(missing_ok=True)
+        self.archive.discard(c.archive_id)
+        remove_from_archive(self.archive_path, c.archive_id)
 
     def _fail(self, c: Candidate, reason: str) -> bool:
         c.status = "failed"
