@@ -4,14 +4,17 @@ import asyncio
 import csv
 import re
 
+import numpy as np
 import pytest
 
 import reelfinder.hunt as hunt_mod
 from reelfinder.ai import Verdict
 from reelfinder.config import HuntSettings
-from reelfinder.downloader import LOG_NAME, NotAVideo
+from reelfinder.downloader import ARCHIVE_NAME, LOG_NAME, NotAVideo, read_archive
 from reelfinder.hunt import Hunt, allocate_agents, validate
 from reelfinder.models import Candidate
+from reelfinder.references import ReferenceInfo
+from reelfinder.similarity import ReferenceSet
 
 
 @pytest.fixture(autouse=True)
@@ -51,8 +54,9 @@ class StubBrain:
 
 
 class StubDownloader:
-    def __init__(self, broken=()):
+    def __init__(self, broken=(), frames=None):
         self.broken = set(broken)
+        self.frames = frames or {}  # video id → what its frames look like (for the reference check)
         self.downloaded: list[str] = []
 
     def probe(self, url):
@@ -77,8 +81,9 @@ class StubDownloader:
         self.downloaded.append(c.id)
         return path
 
-    def extract_frames(self, path, duration):
-        return [b"frame"]
+    def extract_frames(self, path, duration, count=3):
+        vid = path.stem.split("_", 1)[1]
+        return self.frames.get(vid, [b"frame"])
 
     def to_jpeg(self, image):
         return image
@@ -118,9 +123,9 @@ class StubScout:
 
 
 def run_hunt(tmp_path, source, *, brain=None, downloader=None, per_query=10, delay=0.0, finish_after=None,
-             stop_after=None, time_limit_s=None, **settings):
-    s = HuntSettings(description="night car drift", platforms=settings.pop("platforms", ["tiktok"]), agents=1,
-                     output_dir=str(tmp_path), **settings)
+             stop_after=None, time_limit_s=None, references=None, vision=None, **settings):
+    s = HuntSettings(description=settings.pop("description", "night car drift"),
+                     platforms=settings.pop("platforms", ["tiktok"]), agents=1, output_dir=str(tmp_path), **settings)
     events = []
     brain = brain or StubBrain()
     downloader = downloader or StubDownloader()
@@ -129,7 +134,8 @@ def run_hunt(tmp_path, source, *, brain=None, downloader=None, per_query=10, del
         return brain, None
 
     hunt = Hunt(s, lambda kind, data: events.append((kind, data)), downloader=downloader,
-                brain_factory=brain_factory, thumbs_dir=tmp_path / "thumbs", time_limit_s=time_limit_s)
+                brain_factory=brain_factory, thumbs_dir=tmp_path / "thumbs", time_limit_s=time_limit_s,
+                references=references, vision=vision)
 
     async def scout_factory(agent_id, platform, queue):
         return StubScout(hunt, queue, source, per_query=per_query, delay=delay)
@@ -324,7 +330,8 @@ def test_crashed_agent_is_reported(tmp_path):
 def test_validate_and_allocate(tmp_path):
     ok = HuntSettings(description="x", output_dir=str(tmp_path))
     assert validate(ok) is None
-    assert "Describe" in validate(HuntSettings(output_dir=str(tmp_path)))
+    assert "reference video" in validate(HuntSettings(output_dir=str(tmp_path)))
+    assert validate(HuntSettings(output_dir=str(tmp_path)), references=1) is None  # a reference is enough
     assert "platform" in validate(HuntSettings(description="x", platforms=[], output_dir=str(tmp_path)))
     assert "longer" in validate(HuntSettings(description="x", min_duration=60, max_duration=30, output_dir=str(tmp_path)))
     blocker = tmp_path / "file"
@@ -335,3 +342,136 @@ def test_validate_and_allocate(tmp_path):
     assert allocate_agents(["instagram"], 6) == {"instagram": 3}
     assert allocate_agents(["pinterest"], 6) == {"pinterest": 3}
     assert allocate_agents(["tiktok"], 5) == {"tiktok": 5}
+
+
+# ---------------------------------------------------------------- reference videos
+
+
+def vec(*xs) -> np.ndarray:
+    v = np.array(xs, dtype=np.float32)
+    return v / np.linalg.norm(v)
+
+
+class FakeVision:
+    """Pictures are "vec:x,y,z" byte strings, so every look score in these tests is exact."""
+
+    error = ""
+    ready = True
+
+    def __init__(self, text=(0, 0, 1)):
+        self.text = vec(*text)
+
+    def load(self):
+        return True
+
+    def embed_images(self, images):
+        out = []
+        for raw in images:
+            if not raw.startswith(b"vec:"):
+                raise ValueError("not an image")
+            out.append(vec(*map(float, raw[4:].decode().split(","))))
+        return np.stack(out)
+
+    def embed_texts(self, texts):
+        return np.stack([self.text for _ in texts])
+
+
+@pytest.fixture
+def covers(monkeypatch):
+    """Each video's cover is whatever its thumbnail URL says ("vec:1,0,0")."""
+    async def fake_fetch(url, referer):
+        return url.encode() if url.startswith("vec:") else None
+
+    monkeypatch.setattr(hunt_mod, "fetch_image", fake_fetch)
+
+
+def looks_feed(items, prefix="v"):
+    """items: (AI score, cover vector) per video."""
+    for i, (ai, cover) in enumerate(items):
+        yield Candidate(platform="tiktok", id=f"{prefix}{i}", url=f"https://t/{prefix}{i}", rich=True,
+                        caption=f"clip #{i} s{ai}", thumbnail_url="vec:" + ",".join(map(str, cover)),
+                        views=1000, duration=12, author="a")
+
+
+def reference(*frames, **extra) -> ReferenceInfo:
+    return ReferenceInfo(looks=ReferenceSet([np.stack([vec(*f) for f in frames])]), count=1, **extra)
+
+
+SAME, OTHER, CLOSE = (1, 0, 0), (0, 1, 0), (0.8, 0.6, 0)  # look 100, 0 and ~71
+
+
+def test_videos_that_look_like_the_reference_win(tmp_path, covers):
+    # The AI likes the captions of v0-v3, but only v4-v7 look like the reference.
+    items = [(90, OTHER)] * 4 + [(20, SAME)] * 4
+    hunt, _, _, dl = run_hunt(tmp_path, looks_feed(items), target_count=3, pool_size=8,
+                              references=reference(SAME), vision=FakeVision())
+    assert len(dl.downloaded) == 3 and set(dl.downloaded) <= {"v4", "v5", "v6", "v7"}
+    best = hunt.candidates["tiktok:v4"]
+    assert (best.look, best.ai_score) == (100, 20) and best.score > hunt.candidates["tiktok:v0"].score
+    rows = list(csv.DictReader((hunt.folder / LOG_NAME).open()))
+    assert all(r["look_match"] == "100%" for r in rows)
+    assert hunt.progress()["matching_looks"] and hunt.progress()["closeness"] == "Same look"
+
+
+def test_nearly_identical_only_saves_close_lookalikes(tmp_path, covers):
+    items = [(90, OTHER)] * 6 + [(50, SAME)] * 2 + [(50, (0.7, 0.71, 0))] * 3  # the last three: look ~43
+    hunt, _, _, dl = run_hunt(tmp_path, looks_feed(items), target_count=5, pool_size=11, closeness=100,
+                              references=reference(SAME), vision=FakeVision())
+    assert sorted(dl.downloaded) == ["v6", "v7"]
+    assert "close enough to your reference" in hunt.finished_reason, hunt.finished_reason
+
+
+def test_same_kind_of_video_always_fills_the_target(tmp_path, covers):
+    items = [(90, OTHER)] * 6 + [(50, SAME)] * 2
+    hunt, *_ = run_hunt(tmp_path, looks_feed(items), target_count=5, pool_size=8, closeness=20,
+                        references=reference(SAME), vision=FakeVision())
+    assert hunt.counts["downloaded"] == 5  # look-alikes first, then the best of the rest
+
+
+def test_downloads_whose_frames_dont_match_are_replaced(tmp_path, covers):
+    items = [(80, SAME)] * 4
+    dl = StubDownloader(frames={"v0": [b"vec:0,1,0", b"vec:0,1,0"], "v1": [b"vec:1,0,0", b"vec:0.95,0.31,0"]})
+    hunt, *_ = run_hunt(tmp_path, looks_feed(items), downloader=dl, target_count=2, pool_size=4,
+                        references=reference(SAME), vision=FakeVision())
+    v0, v1 = hunt.candidates["tiktok:v0"], hunt.candidates["tiktok:v1"]
+    assert v0.status == "failed" and v0.frames_look == 0 and "Doesn't look like your reference" in v0.reason
+    assert v1.status == "downloaded" and v1.frames_look >= 90
+    assert hunt.counts["downloaded"] == 2
+    assert "tiktok v0" not in read_archive(tmp_path / ARCHIVE_NAME)  # thrown away, so a later hunt may retry it
+    assert not (hunt.folder / "tiktok_v0.mp4").exists()
+
+
+def test_the_reference_video_itself_is_never_saved(tmp_path, covers):
+    refs = reference(SAME, urls=["https://www.tiktok.com/@me/video/clip0"])
+    hunt, *_ = run_hunt(tmp_path, looks_feed([(50, SAME)] * 4, prefix="clip"), target_count=2, pool_size=3,
+                        references=refs, vision=FakeVision())
+    assert "tiktok:clip0" not in hunt.candidates and hunt.counts["downloaded"] == 2
+
+
+def test_searches_start_from_the_reference(tmp_path, covers):
+    refs = reference(SAME, descriptions=["A red car drifting at night, low angle, tire smoke"],
+                     queries=["night drift pov", "car drift smoke"], hashtags=["cardrift", "jdm"])
+    hunt, _, brain, _ = run_hunt(tmp_path, looks_feed([(50, SAME)] * 6), target_count=2, pool_size=6,
+                                 description="", references=refs, vision=FakeVision())
+    plan = hunt.plan["tiktok"]
+    assert plan[:4] == ["night drift pov", "car drift smoke", "#cardrift", "#jdm"]
+    assert plan.index("#jdm") < plan.index("tiktok query 0.0")  # before the AI's own ideas
+    assert "red car drifting" in hunt.wanted  # the AI judges against what the reference shows
+    assert hunt.folder.name.endswith("Like night drift pov")
+
+
+def test_text_hunts_also_look_at_the_picture(tmp_path, covers):
+    # Your description, embedded, points at (1,0,0): a cover showing it beats a better caption.
+    items = [(70, OTHER), (50, SAME)]
+    hunt, _, _, dl = run_hunt(tmp_path, looks_feed(items), target_count=1, pool_size=2,
+                              vision=FakeVision(text=SAME))
+    assert dl.downloaded == ["v1"]
+    assert hunt.candidates["tiktok:v1"].look == 100 and hunt.candidates["tiktok:v0"].look == 0
+
+
+def test_reference_without_the_similarity_model_uses_its_description(tmp_path, covers):
+    refs = reference(SAME, descriptions=["night drift with smoke"])
+    hunt, events, *_ = run_hunt(tmp_path, looks_feed([(80, SAME), (40, SAME)]), target_count=1, pool_size=2,
+                                description="", references=refs, vision=None)
+    assert hunt.counts["downloaded"] == 1 and hunt.candidates["tiktok:v0"].look is None
+    assert any(k == "log" and "similarity model isn't available" in d["text"] for k, d in events)

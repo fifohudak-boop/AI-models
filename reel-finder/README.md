@@ -1,10 +1,10 @@
 # 🎬 Reel Finder
 
-Describe the short-form videos you need and say how many you want. Press **Start hunt**.
-AI agents scroll **TikTok**, **Instagram Reels** and **Pinterest** at the same time and
-collect a big pool of videos. A local AI scores every one against your description, and
-the best ones download into the folder you choose. Ask for 20 and you get the best 20
-it found.
+Drop in a **reference video**, one that looks like what you want, or describe the videos
+in words. Say how many you want and press **Start hunt**. AI agents scroll **TikTok**,
+**Instagram Reels** and **Pinterest** at the same time and collect a big pool of videos.
+Every one is scored on how much it looks like your reference, and the best ones download
+into the folder you choose. Ask for 20 and you get the 20 closest it found.
 
 Every file it saves is a real video that plays on any Mac: an H.264 MP4 with picture
 and sound. Music-only files are never kept.
@@ -30,6 +30,7 @@ The installer sets everything up, which takes a few minutes the first time:
 - **A browser for the agents:** your Google Chrome if you have it, otherwise a private Chromium.
 - **The free local AI:** [Ollama](https://ollama.com) and its model, a few GB. If macOS asks
   for your password while Ollama installs, that's expected.
+- **Look-matching:** a small image model (CLIP, about 600 MB) that compares how videos look.
 
 Then the Reel Finder page opens in your browser at **http://127.0.0.1:8765**. A Terminal
 window stays open while Reel Finder runs; closing it quits Reel Finder.
@@ -75,17 +76,27 @@ This copy won't update itself.
    - **AI judge**
 
    Each step shows ✓ (working), **!** (works, with a note) or ✕ (broken, with the reason).
-3. **Describe what you want** in plain words. For example:
-   *"Cinematic slow-motion car drifts at night with smoke, no talking, filmed low to the ground."*
-   You can also add:
-   - must-use keywords or hashtags, such as `#cardrift`
-   - words that mean a video should be skipped, such as `tutorial, giveaway`
+3. **Add a reference video** (best), or describe what you want, or both:
+   - **Drop a video** from your Mac onto **Reference videos**, or click *choose a file*.
+     Pictures work too. You can add up to 5.
+   - Or **paste a link** to a TikTok, Instagram, Pinterest or YouTube video and press **Add**.
+   - Or **describe it** in plain words, for example *"Cinematic slow-motion car drifts at
+     night with smoke, no talking, filmed low to the ground."* With a reference, use this box
+     only for anything extra ("only night shots").
+   - Optionally, add must-use hashtags such as `#cardrift`, and words that mean a video
+     should be skipped, such as `tutorial, giveaway`.
 4. **Pick a folder** with **Browse…**, set **Videos to save**, and press **Start hunt**.
 
 What happens next:
 
-- **Plan:** the AI turns your description into several searches per platform: your exact
-  words first, then variations with keywords and hashtags, in the style each site uses.
+- **The reference is analysed** (once, when you add it, in a few seconds):
+  - 8 frames are taken from across the video.
+  - The look-matching model measures how they look.
+  - The AI describes what's in it (subject, setting, camera work, lighting, editing) and
+    suggests searches.
+  - If it came from a link, its hashtags are used as searches too.
+- **Plan:** the searches start from the reference's searches and hashtags, then your own
+  words, then the AI's variations, in the style each site uses.
 - **Agents collect a pool:** each agent is its own browser window scrolling one search.
   When a search runs dry, the agent moves to the next one. They keep going until they have
   looked at **Videos to look at** (by default 4× what you want to save, at least 40). If
@@ -93,9 +104,14 @@ What happens next:
   on, the windows are tiled so you can watch them.
 - **Quick filters:** videos that break your own limits (length, views, likes, age, or an
   excluded word) are skipped without asking the AI.
-- **The AI scores every video:** it reads the caption and looks at the cover image, then
-  gives a score from 0 to 100 with a one-line reason. Nothing is left unchecked: if time
-  runs short, the rest are scored quickly from their captions.
+- **Every video is scored:**
+  - The look-matching model compares its cover with your reference's frames. The card
+    shows this as *"Looks 82% like your reference"*.
+  - The AI reads the caption and looks at the cover, and gives a 0–100 score with a
+    one-line reason.
+  - The two are combined. The closer you set **How close to the reference**, the more the
+    look counts. Without a reference, the cover is compared with your description instead.
+  - Nothing is left unchecked: if time runs short, the rest are scored quickly.
 - **The best ones are saved:** the top-scoring videos download, best first, until exactly
   the number you asked for is saved. If one can't be downloaded or turns out not to be a
   real video, the next best takes its place. If the pool runs out first, the agents go
@@ -103,13 +119,31 @@ What happens next:
 - **Every file is checked:** after downloading, Reel Finder opens each file with ffmpeg.
   Music-only files and photo slideshows are thrown away and replaced. HEVC, VP9 and other
   formats QuickTime can't always play are converted to H.264.
+- **The frames are checked against the reference:** a cover can mislead, so frames from the
+  downloaded video itself are compared with your reference too. If they don't look close
+  enough for your **How close** setting, the video is deleted and the next best takes its
+  place.
 - **Watch-check (optional):** after downloading, the AI looks at 3 frames from the video
   itself and replaces it if the footage doesn't match.
 - **Finish now** stops the searching and saves the best videos found so far. Press it
   again (**Stop now**) to stop straight away.
 
 Watch the results in the tabs under the progress bar: **Best** (ranked by score),
-**Saved**, **All** and **Skipped**.
+**Saved**, **All** and **Skipped**. Found one that's spot on? Press **More like this** on
+its card to add it as a reference for your next hunt. A few references of the exact look
+you want give the most consistent set of videos.
+
+### How close to the reference
+
+| Setting | What you get |
+|---|---|
+| Same kind of video | Same subject and vibe, any style. Always saves the number you asked for. |
+| Same look (default) | Same subject, setting and style, the closest first. Clearly different videos are left out. |
+| Very close | Only videos that look a lot like it. May save fewer than you asked for. |
+| Nearly identical | Near-copies of the shots in your reference. May save only a few. |
+
+If a hunt saves fewer than you asked for, the headline says how many were left out for
+not looking close enough. Move the slider towards *Same kind of video*, or give it more time.
 
 Each hunt gets its own subfolder, for example `2026-10-01 18.41 Cinematic night car drifts`.
 It contains:
@@ -117,7 +151,8 @@ It contains:
 - the videos, named `tiktok_<creator>_<id>.mp4`, `instagram_<creator>_<code>.mp4` or
   `pinterest_<creator>_<id>.mp4`
 - `reelfinder-log.csv`, listing the saved videos best first: rank, link, caption, creator,
-  views, likes, length, AI score, the AI's reason, and which search found it
+  views, likes, length, score, the AI's reason, which search found it, and how much it
+  looks like your reference (`look_match`)
 
 ### Pinterest pictures
 
@@ -146,6 +181,7 @@ Reel Finder remembers every video it has downloaded to a folder in
 | Min/Max length | In seconds. A max of 0 means no limit. The default max is 180. |
 | Min views / likes | Leave at 0 to ignore. Some Instagram posts hide their counts; those still pass. |
 | Posted within | Only videos posted in the last N days. 0 means any time. |
+| How close to the reference | Shown once you add a reference; see the table above. |
 | Minimum AI score | Off (0) by default, so you always get the number you asked for. Raise it only if you'd rather get fewer videos than weak matches. |
 | Model | Which Ollama model scores the videos. Models marked "sees images" also look at the cover. |
 | Watch-check | Slower but more exact: checks frames of the downloaded video itself. |
@@ -196,8 +232,12 @@ opens the full log in Finder.
 - **Fewer videos saved than you asked for.** The headline says why. Usually every search
   ran out: add more platforms, use broader or plainer words, loosen the length and views
   filters, or give it a longer time limit. Check that **Minimum AI score** is off.
-- **The videos don't match well.** Raise **Videos to look at** so the AI has more to
-  choose from, add a must-use hashtag, and use a model that sees images.
+- **The videos don't match well.** Add a reference video (or two or three of the exact
+  look you want) instead of only describing it, and move **How close** to the right. Raise
+  **Videos to look at** so there's more to choose from, and connect Pinterest: logged out,
+  it only shows the first results of each search.
+- **"Look-matching off" in the top bar.** The image model didn't install or download.
+  Quit and reopen Reel Finder; it tries again. Hunts still work, judged by the AI alone.
 - **A saved file only plays sound.** This shouldn't happen any more: every file is
   checked. If it does, click **Copy report** and send it.
 - **The AI is slow.** Use a smaller model (`gemma3:4b`) or fewer agents. Videos the AI
@@ -215,6 +255,10 @@ Reel Finder ties together open-source tools that are maintained and still worked
   video with sound in one file.
 - [ffmpeg](https://ffmpeg.org) checks every download and converts anything QuickTime
   can't play.
+- [fastembed](https://github.com/qdrant/fastembed) runs CLIP (ViT-B/32) on the CPU to compare
+  how videos look. Its scores are calibrated on real short-form videos: a video's own frames
+  against its cover score 0.83–0.94, the same kind of video 0.75–0.87, unrelated videos about
+  0.50.
 - [Playwright](https://playwright.dev/python/) drives the agents' browser.
 - [Ollama](https://ollama.com) runs the local AI, using structured JSON answers.
 - [FastAPI](https://fastapi.tiangolo.com) and [uv](https://github.com/astral-sh/uv) run the app and manage Python.
@@ -232,7 +276,8 @@ Other projects were looked at and left out:
 
 ```sh
 cd reel-finder
-uv venv --python 3.12 .venv && uv pip install --python .venv/bin/python -r requirements.txt
+uv venv --python 3.12 .venv
+uv pip install --python .venv/bin/python -r requirements.txt -r requirements-similarity.txt
 .venv/bin/python -m reelfinder          # serves http://127.0.0.1:8765
 .venv/bin/python -m pytest              # includes real-browser end-to-end runs
 ```
@@ -251,7 +296,9 @@ How the code is laid out:
 | `reelfinder/hunt.py` | The pipeline: plan → agents fill a pool → filters → AI scores every video → download the best N, replacing failures |
 | `reelfinder/scouts.py` | The agents: scrolling, reading the site's JSON and links, captcha and login detection |
 | `reelfinder/parsing.py` | Finds video objects anywhere in TikTok, Instagram and Pinterest responses |
-| `reelfinder/ai.py` | Ollama planner and scorer, plus the keyword fallback |
+| `reelfinder/ai.py` | Ollama planner and scorer (and reference describer), plus the keyword fallback |
+| `reelfinder/references.py` | Reference videos: storing them, taking frames, analysing them |
+| `reelfinder/similarity.py` | Look-matching: CLIP embeddings and calibrated look scores |
 | `reelfinder/downloader.py` | yt-dlp, the ffmpeg check and H.264 conversion, the download log, frame grabs |
 | `reelfinder/browser.py` | The saved browser profile, logins, cookies handed to yt-dlp |
 | `reelfinder/selftest.py` | The per-platform self-test (one real search, checked step by step) |

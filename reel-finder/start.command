@@ -40,6 +40,9 @@ if [ ! -x .venv/bin/python ]; then
 fi
 say "Checking packages…"
 uv pip install --python .venv/bin/python -q -r requirements.txt || fail "Couldn't install the Python packages."
+# Look-matching (compares how videos look with your reference videos). Optional: Reel Finder runs without it.
+uv pip install --python .venv/bin/python -q -r requirements-similarity.txt \
+  || echo "Couldn't install look-matching right now — Reel Finder will judge videos by the AI alone."
 # TikTok and Instagram change often and yt-dlp ships fixes almost daily, so keep it current.
 uv pip install --python .venv/bin/python -q -U "yt-dlp[default,curl-cffi]" >/dev/null 2>&1 || true
 
@@ -99,6 +102,9 @@ if [ -n "$OLLAMA_BIN" ]; then
   fi
 fi
 
-# 5) Go.
+# 5) The look-matching model (~600 MB, one-time). Skipped quietly if it can't be fetched right now.
+.venv/bin/python -m reelfinder.similarity download || true
+
+# 6) Go.
 say "Starting Reel Finder… keep this window open while you use it (close it to quit)."
 exec .venv/bin/python -m reelfinder

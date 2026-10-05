@@ -32,7 +32,7 @@ ARCHIVE_NAME = ".reelfinder-archive.txt"
 LOG_NAME = "reelfinder-log.csv"
 LOG_FIELDS = [
     "downloaded_at", "rank", "platform", "type", "file", "url", "author", "caption",
-    "views", "likes", "duration", "ai_score", "ai_reason", "query",
+    "views", "likes", "duration", "ai_score", "ai_reason", "query", "look_match",
 ]
 BROWSER_UA = (
     "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 "
@@ -90,6 +90,17 @@ def add_to_archive(path: Path, archive_id: str) -> None:
         fh.write(archive_id + "\n")
 
 
+def remove_from_archive(path: Path, archive_id: str) -> None:
+    """Forget a download that was thrown away, so a later hunt may still pick it."""
+    try:
+        lines = path.read_text(encoding="utf-8").splitlines()
+    except OSError:
+        return
+    kept = [line for line in lines if line.strip() != archive_id]
+    if len(kept) != len(lines):
+        path.write_text("".join(line + "\n" for line in kept), encoding="utf-8")
+
+
 def fill_from_info(c: Candidate, info: dict) -> None:
     """Copy what yt-dlp learned about a video onto the candidate."""
     c.caption = c.caption or info.get("description") or info.get("title") or ""
@@ -105,8 +116,12 @@ def fill_from_info(c: Candidate, info: dict) -> None:
 def append_log(folder: Path, c: Candidate, rank: int | None = None) -> None:
     path = folder / LOG_NAME
     new = not path.exists()
+    fields = LOG_FIELDS
+    if not new:  # keep an older log's columns so its rows stay lined up
+        with path.open(newline="", encoding="utf-8") as fh:
+            fields = next(csv.reader(fh), None) or LOG_FIELDS
     with path.open("a", newline="", encoding="utf-8") as fh:
-        writer = csv.DictWriter(fh, fieldnames=LOG_FIELDS)
+        writer = csv.DictWriter(fh, fieldnames=fields, extrasaction="ignore")
         if new:
             writer.writeheader()
         writer.writerow({
@@ -124,6 +139,7 @@ def append_log(folder: Path, c: Candidate, rank: int | None = None) -> None:
             "ai_score": c.score if c.score is not None else "",
             "ai_reason": c.reason,
             "query": c.query,
+            "look_match": next((f"{v}%" for v in (c.frames_look, c.look) if v is not None), ""),
         })
 
 
@@ -370,7 +386,8 @@ class Downloader:
     def extract_frames(self, video: Path, duration: float | None, count: int = 3) -> list[bytes]:
         if not self.ffmpeg:
             return []
-        length = duration or 6.0
+        # The file's own length: a site's stated length can be off, and seeking past the end gives nothing.
+        length = self.inspect(video).duration or duration or 6.0
         frames = []
         for i in range(count):
             t = length * (0.15 + 0.7 * i / max(count - 1, 1))

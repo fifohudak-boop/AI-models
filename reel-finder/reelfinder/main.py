@@ -16,12 +16,12 @@ from pathlib import Path
 
 import httpx
 from fastapi import FastAPI, HTTPException, Request, WebSocket, WebSocketDisconnect
-from fastapi.responses import JSONResponse, PlainTextResponse
+from fastapi.responses import FileResponse, JSONResponse, PlainTextResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
 from . import __version__
-from .ai import model_installed, ollama_models, sees_images
+from .ai import model_installed, ollama_models, pick_brain, sees_images
 from .browser import LOGIN_URLS, BrowserManager
 from .config import (
     COOKIES_FILE, LOG_DIR, LOG_FILE, OLLAMA_HOST, PLATFORM_LABELS, PLATFORMS, THUMBS_DIR, WEB_DIR,
@@ -32,7 +32,9 @@ from .events import EventBus
 from .hunt import Hunt, short_error, validate
 from .logs import diagnostics, tail
 from .models import Candidate
+from .references import MAX_REFERENCES, MAX_UPLOAD_BYTES, Analyzer, ReferenceStore, reference_summary, valid_id
 from .selftest import SelfTest
+from .similarity import Vision, vision
 
 log = logging.getLogger("reelfinder")
 
@@ -54,6 +56,8 @@ class AppState:
         self.selftests: dict[str, SelfTest] = {}
         self.selftest_task: asyncio.Task | None = None
         self.link_tasks: set[asyncio.Task] = set()
+        self.references = ReferenceStore()
+        self.ref_tasks: set[asyncio.Task] = set()
 
     @property
     def hunting(self) -> bool:
@@ -70,7 +74,13 @@ state = AppState()
 @asynccontextmanager
 async def lifespan(_app: FastAPI):
     THUMBS_DIR.mkdir(parents=True, exist_ok=True)
+    for ref in state.references.all():
+        if ref.status == "analyzing":  # Reel Finder was closed half-way through
+            ref.status, ref.step, ref.error = "failed", "", "Interrupted — remove it and add it again"
+            state.references.save(ref)
     yield
+    for task in list(state.ref_tasks):
+        task.cancel()
     if state.hunt:
         state.hunt.stop("Reel Finder closed")
     if state.hunt_task:
@@ -125,6 +135,12 @@ async def status() -> dict:
             "pulling": state.pull_task is not None and not state.pull_task.done(),
         },
         "ffmpeg": find_ffmpeg() is not None,
+        "similarity": {
+            "installed": Vision.installed(),
+            "ready": vision.ready,
+            "downloaded": vision.downloaded(),
+            "error": vision.error,
+        },
         "logins": await state.browser.logins(),
         "browser_open": state.browser.running,
         "hunting": state.hunting,
@@ -258,7 +274,10 @@ async def start_hunt(body: StartBody) -> dict:
     settings = body.settings
     state.settings = settings
     save_settings(settings)
-    problem = validate(settings)
+    if any(r.status == "analyzing" for r in state.references.all()):
+        raise HTTPException(409, "Wait a moment — a reference video is still being analysed.")
+    references = state.references.info()
+    problem = validate(settings, references.count)
     if problem:
         raise HTTPException(400, problem)
     shutil.rmtree(THUMBS_DIR, ignore_errors=True)
@@ -271,6 +290,8 @@ async def start_hunt(body: StartBody) -> dict:
         thumbs_dir=THUMBS_DIR,
         screen=(max(body.screen_w, 800), max(body.screen_h, 600)),
         site_urls=SITE_OVERRIDES,
+        references=references,
+        vision=vision if Vision.installed() else None,
     )
     state.hunt_task = asyncio.create_task(_run_hunt(state.hunt))
     return {"ok": True, "folder": str(state.hunt.folder)}
@@ -347,6 +368,83 @@ async def _save_link(url: str) -> None:
         state.bus.emit("link", {"url": url, "status": "failed", "error": short_error(exc)})
 
 
+# ---------------------------------------------------------------- reference videos
+
+def _analyze(ref, file: Path | None = None) -> None:
+    analyzer = Analyzer(state.references, Downloader(COOKIES_FILE), vision, pick_brain,
+                        lambda: state.settings.model, state.bus.emit)
+    task = asyncio.create_task(analyzer.run(ref, file))
+    state.ref_tasks.add(task)
+    task.add_done_callback(state.ref_tasks.discard)
+
+
+def _room_for_reference() -> None:
+    if len(state.references.all()) >= MAX_REFERENCES:
+        raise HTTPException(409, f"You can use up to {MAX_REFERENCES} reference videos — remove one first.")
+
+
+@app.get("/api/references")
+async def list_references() -> list[dict]:
+    return [r.model_dump() for r in state.references.all()]
+
+
+@app.post("/api/references/upload")
+async def upload_reference(request: Request, name: str = "video") -> dict:
+    """The file arrives as the raw request body (no form encoding), straight from the page."""
+    _room_for_reference()
+    suffix = Path(name).suffix.lower()
+    suffix = suffix if re.match(r"^\.[a-z0-9]{1,5}$", suffix) else ".bin"
+    ref = state.references.create("file", Path(name).name or "video")
+    target = state.references.folder(ref.id) / f"source{suffix}"
+    size = 0
+    try:
+        with target.open("wb") as fh:
+            async for chunk in request.stream():
+                size += len(chunk)
+                if size > MAX_UPLOAD_BYTES:
+                    raise HTTPException(413, "That file is over 2 GB — trim it to the part you want matched.")
+                fh.write(chunk)
+    except BaseException:
+        state.references.delete(ref.id)
+        raise
+    if size == 0:
+        state.references.delete(ref.id)
+        raise HTTPException(400, "The file was empty.")
+    state.bus.emit("reference", ref.model_dump())
+    _analyze(ref, target)
+    return ref.model_dump()
+
+
+@app.post("/api/references/link")
+async def link_reference(body: LinkBody) -> dict:
+    url = body.url.strip()
+    if not re.match(r"^https?://\S+$", url):
+        raise HTTPException(400, "Paste a full link that starts with https://")
+    _room_for_reference()
+    ref = state.references.create("link", url, url=url)
+    state.bus.emit("reference", ref.model_dump())
+    _analyze(ref)
+    return ref.model_dump()
+
+
+@app.delete("/api/references/{ref_id}")
+async def delete_reference(ref_id: str) -> dict:
+    if not valid_id(ref_id) or not state.references.delete(ref_id):
+        raise HTTPException(404, "No such reference")
+    state.bus.emit("reference_removed", {"id": ref_id})
+    return {"ok": True}
+
+
+@app.get("/references/{ref_id}/frame/{n}.jpg")
+async def reference_frame(ref_id: str, n: int) -> FileResponse:
+    if not valid_id(ref_id) or not 1 <= n <= 50:
+        raise HTTPException(404)
+    path = state.references.frame_file(ref_id, n)
+    if not path.exists():
+        raise HTTPException(404)
+    return FileResponse(path, media_type="image/jpeg")
+
+
 # ---------------------------------------------------------------- self-test & report
 
 class SelfTestBody(BaseModel):
@@ -386,6 +484,13 @@ async def build_report() -> str:
     else:
         lines.append(f"Ollama: running · models: {', '.join(models) or 'none'}")
     lines.append(f"Chosen AI model: {state.settings.model}")
+    if not Vision.installed():
+        lines.append("Similarity model: not installed")
+    else:
+        lines.append(f"Similarity model: {'loaded' if vision.ready else 'downloaded' if vision.downloaded() else 'not downloaded yet'}"
+                     + (f" · error: {vision.error}" if vision.error else ""))
+    refs = state.references.all()
+    lines.append(f"Reference videos: {reference_summary(refs) if refs else 'none'}")
     logins = await state.browser.logins()
     lines.append("Logged in: " + ", ".join(f"{PLATFORM_LABELS[p]} {'yes' if ok else 'no'}" for p, ok in logins.items()))
     lines.append("")

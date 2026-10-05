@@ -37,6 +37,9 @@ class Candidate(BaseModel):
     score: int | None = None
     reason: str = ""
     quick: bool = False  # scored from the caption only (the AI ran out of time)
+    ai_score: int | None = None  # the AI's (or keywords') own score, before blending in the look
+    look: int | None = None  # 0–100: how much the cover looks like your reference (or description)
+    frames_look: int | None = None  # same, measured on the downloaded video's own frames
     thumb: str | None = None  # local thumbnail file name served at /thumbs/
     file: str | None = None
 

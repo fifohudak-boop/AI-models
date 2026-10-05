@@ -73,8 +73,9 @@ deploy.
 ## Also in this repo: Reel Finder
 
 [`reel-finder/`](reel-finder/README.md) is a separate Mac app: AI agents that scroll TikTok,
-Instagram Reels and Pinterest for short-form reference videos matching your description,
-score every one, and download the best ones into a folder you choose. It runs only on your computer and isn't part of the
+Instagram Reels and Pinterest for short-form videos that look like a reference video you
+give it (or match your description), score every one, and download the best ones into a
+folder you choose. It runs only on your computer and isn't part of the
 calendar's Render deploy. To install it on a Mac, paste this into Terminal:
 
 ```

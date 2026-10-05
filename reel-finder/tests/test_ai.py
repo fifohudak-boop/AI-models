@@ -123,3 +123,17 @@ def test_thinking_model_is_flagged_and_empty_answers_raise():
         pass
     assert brain.thinks is True
     assert fake.requests[0]["options"]["num_predict"] > 0  # a rambling model can't stall the hunt
+
+
+def test_ollama_describes_a_reference_from_its_frames():
+    reply = json.dumps({"description": "Red car drifting at night, low angle, smoke.",
+                        "search_queries": ["night drift", "Night Drift", "drift pov"],
+                        "hashtags": ["#cardrift", "night drift", "jdm"]})
+    fake = FakeOllama([reply])
+    brain = OllamaBrain("qwen3-vl:8b", transport=fake.transport())
+    info = run(brain.describe_reference([b"f1", b"f2", b"f3"], caption="Sunday #drift"))
+    assert info == {"description": "Red car drifting at night, low angle, smoke.",
+                    "queries": ["night drift", "drift pov"], "hashtags": ["cardrift", "nightdrift", "jdm"]}
+    sent = fake.requests[0]
+    assert len(sent["messages"][0]["images"]) == 3 and "Sunday #drift" in sent["messages"][0]["content"]
+    assert sent["format"]["required"] == ["description", "search_queries", "hashtags"]
