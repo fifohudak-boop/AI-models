@@ -16,7 +16,7 @@ from pathlib import Path
 
 import httpx
 from fastapi import FastAPI, HTTPException, Request, WebSocket, WebSocketDisconnect
-from fastapi.responses import FileResponse, JSONResponse, PlainTextResponse
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, PlainTextResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
@@ -24,7 +24,7 @@ from . import __version__
 from .ai import model_installed, ollama_models, pick_brain, sees_images
 from .browser import LOGIN_URLS, BrowserManager
 from .config import (
-    COOKIES_FILE, LOG_DIR, LOG_FILE, OLLAMA_HOST, PLATFORM_LABELS, PLATFORMS, THUMBS_DIR, WEB_DIR,
+    APP_DIR, COOKIES_FILE, LOG_DIR, LOG_FILE, OLLAMA_HOST, PLATFORM_LABELS, PLATFORMS, THUMBS_DIR, WEB_DIR,
     HuntSettings, load_settings, save_settings,
 )
 from .downloader import Downloader, NotAVideo, find_ffmpeg, safe_name
@@ -58,6 +58,7 @@ class AppState:
         self.link_tasks: set[asyncio.Task] = set()
         self.references = ReferenceStore()
         self.ref_tasks: set[asyncio.Task] = set()
+        self.update_available = False
 
     @property
     def hunting(self) -> bool:
@@ -70,6 +71,45 @@ class AppState:
 
 state = AppState()
 
+REPO = "fifohudak-boop/AI-models"
+UPDATE_CHECK_EVERY = 6 * 3600
+
+
+def installed_commit() -> str:
+    """The commit this copy was installed from ("" for a developer checkout)."""
+    try:
+        return (APP_DIR / ".installed_commit").read_text().strip()
+    except OSError:
+        return ""
+
+
+def build_id() -> str:
+    return installed_commit()[:7] or "dev"
+
+
+async def _watch_for_updates() -> None:
+    """Notice when a newer version is out, so the page can say "reopen the app to update"."""
+    installed = installed_commit()
+    if not installed:
+        return
+    try:
+        ref = (APP_DIR / ".installed_ref").read_text().strip() or "main"
+    except OSError:
+        ref = "main"
+    while True:
+        try:
+            async with httpx.AsyncClient(timeout=10) as client:
+                resp = await client.get(f"https://api.github.com/repos/{REPO}/commits/{ref}",
+                                        headers={"Accept": "application/vnd.github+json"})
+            latest = resp.json().get("sha", "") if resp.status_code == 200 else ""
+            if latest and latest != installed:
+                state.update_available = True
+                log.info("A newer version (%s) is available; reopen the app to update.", latest[:7])
+                return
+        except (httpx.HTTPError, ValueError):
+            pass  # offline or GitHub busy: try again later
+        await asyncio.sleep(UPDATE_CHECK_EVERY)
+
 
 @asynccontextmanager
 async def lifespan(_app: FastAPI):
@@ -78,7 +118,9 @@ async def lifespan(_app: FastAPI):
         if ref.status == "analyzing":  # Reel Finder was closed half-way through
             ref.status, ref.step, ref.error = "failed", "", "Interrupted — remove it and add it again"
             state.references.save(ref)
+    update_watch = asyncio.create_task(_watch_for_updates())
     yield
+    update_watch.cancel()
     for task in list(state.ref_tasks):
         task.cancel()
     if state.hunt:
@@ -102,7 +144,22 @@ async def local_only(request: Request, call_next):
         return JSONResponse({"error": "Reel Finder only answers on localhost."}, status_code=403)
     if request.method not in ("GET", "HEAD", "OPTIONS") and request.headers.get("x-reel-finder") != "1":
         return JSONResponse({"error": "Missing X-Reel-Finder header."}, status_code=403)
-    return await call_next(request)
+    response = await call_next(request)
+    if not request.url.path.startswith(("/thumbs/", "/references/")):
+        # Always ask this server for the page's files: after an update, a browser must never
+        # keep showing the old page from its cache.
+        response.headers["Cache-Control"] = "no-cache"
+    return response
+
+
+@app.get("/", include_in_schema=False)
+async def page() -> HTMLResponse:
+    """The page, with its script and styles tagged by version so an update always shows."""
+    files = [WEB_DIR / "app.js", WEB_DIR / "style.css"]
+    tag = f"{build_id()}-{int(max(f.stat().st_mtime for f in files))}"
+    html = (WEB_DIR / "index.html").read_text(encoding="utf-8")
+    html = html.replace('src="app.js"', f'src="app.js?v={tag}"').replace('href="style.css"', f'href="style.css?v={tag}"')
+    return HTMLResponse(html)
 
 
 # ---------------------------------------------------------------- settings & status
@@ -125,6 +182,8 @@ async def status() -> dict:
     model = state.settings.model
     return {
         "version": __version__,
+        "build": build_id(),
+        "update_available": state.update_available,
         "os": sys.platform,
         "ollama": {
             "running": models is not None,
@@ -475,7 +534,7 @@ async def _run_selftest(test: SelfTest) -> None:
 
 
 async def build_report() -> str:
-    lines = [f"Reel Finder report — {time.strftime('%Y-%m-%d %H:%M:%S')}", ""]
+    lines = [f"Reel Finder report — {time.strftime('%Y-%m-%d %H:%M:%S')} — build {build_id()}", ""]
     for key, value in diagnostics(state.browser.browser_name).items():
         lines.append(f"{key}: {value}")
     models = await ollama_models()

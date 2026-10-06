@@ -37,9 +37,11 @@ window stays open while Reel Finder runs; closing it quits Reel Finder.
 
 **Next time,** just open the **Reel Finder** app.
 
-**Updates are automatic.** Each time the app opens, it checks for a newer version and
-installs it, keeping your settings, logins and downloads. Running the install line again
-does the same.
+**Updates are automatic.** Each time you open the app, it checks for a newer version and
+installs it, keeping your settings, logins and downloads. That works even while Reel Finder
+is already open: it restarts with the new version, unless a hunt is running. When a new
+version is out, the top bar says **Update ready**. The version you're running is shown next
+to the name at the top of the page.
 
 **To uninstall,** delete these three things:
 
@@ -242,6 +244,9 @@ opens the full log in Finder.
   checked. If it does, click **Copy report** and send it.
 - **The AI is slow.** Use a smaller model (`gemma3:4b`) or fewer agents. Videos the AI
   hasn't reached when time runs short are scored from their captions, so none are skipped.
+- **The page looks like an older version** (no reference box, no Pinterest). Close the
+  Terminal window that's running Reel Finder, then open the Reel Finder app again. Copies
+  installed before October 6 only update when they start fresh.
 - **Start over completely.** Quit Reel Finder and delete the `data` folder inside
   `~/Applications/Reel Finder` (or `reel-finder/data` in a downloaded copy).
   This removes your saved logins and settings; downloaded videos are not affected.

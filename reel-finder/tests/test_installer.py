@@ -170,3 +170,96 @@ def test_no_variable_runs_into_non_ascii_text():
             if pattern.search(line):
                 offenders.append(f"{script}:{n}")
     assert offenders == []
+
+
+# ---------------------------------------------------------------- start.command with Reel Finder already open
+
+FAKE_SERVER = """
+import http.server, json, sys
+hunting = sys.argv[2] == "1"
+class H(http.server.BaseHTTPRequestHandler):
+    def log_message(self, *a): pass
+    def do_GET(self):
+        body = json.dumps({"hunting": hunting}).encode()
+        self.send_response(200); self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(body))); self.end_headers(); self.wfile.write(body)
+http.server.HTTPServer(("127.0.0.1", int(sys.argv[1])), H).serve_forever()
+"""
+
+
+def _free_port() -> int:
+    import socket
+
+    with socket.socket() as s:
+        s.bind(("127.0.0.1", 0))
+        return s.getsockname()[1]
+
+
+@pytest.fixture
+def open_copy(tmp_path):
+    """An installed copy whose Reel Finder is already running (a separate process on its own port)."""
+    import sys
+    import time
+    import urllib.request
+
+    if not shutil.which("lsof"):
+        pytest.skip("needs lsof")
+    app = tmp_path / "Reel Finder"
+    app.mkdir()
+    shutil.copy(ROOT / "start.command", app / "start.command")
+    (app / ".installed_commit").write_text(SHA_A)
+    home = tmp_path / "home"
+    stubs = home / ".local" / "bin"  # first on start.command's PATH
+    stubs.mkdir(parents=True)
+
+    def stub(path: Path, body: str) -> None:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text("#!/bin/bash\n" + body + "\n")
+        path.chmod(0o755)
+
+    real_curl = shutil.which("curl")
+    stub(stubs / "curl", f'case "$*" in *127.0.0.1*) exec {real_curl} "$@";; *) exit 1;; esac')  # no internet
+    stub(stubs / "uv", "exit 0")
+    stub(stubs / "open", 'echo "OPENED $*"')
+    stub(app / ".venv" / "bin" / "python", 'echo "PYTHON $*"')
+    procs = []
+
+    def start(hunting=False, update_exit=10):
+        stub(app / "update.sh", f'echo UPDATE-CHECKED; exit {update_exit}')
+        port = _free_port()
+        server = subprocess.Popen([sys.executable, "-c", FAKE_SERVER, str(port), "1" if hunting else "0"])
+        procs.append(server)
+        for _ in range(50):
+            try:
+                urllib.request.urlopen(f"http://127.0.0.1:{port}/api/status", timeout=1)
+                break
+            except OSError:
+                time.sleep(0.1)
+        result = subprocess.run([BASH, str(app / "start.command")], capture_output=True, text=True, timeout=60,
+                                stdin=subprocess.DEVNULL,
+                                env={**os.environ, "HOME": str(home), "REELFINDER_PORT": str(port)})
+        return result, server
+
+    yield start
+    for p in procs:
+        p.kill()
+
+
+def test_reopening_the_app_installs_an_update_and_restarts(open_copy):
+    result, server = open_copy()
+    out = result.stdout
+    assert "UPDATE-CHECKED" in out and "Restarting Reel Finder with the new version" in out, out + result.stderr
+    assert server.wait(timeout=10) is not None  # the old copy was closed…
+    assert "PYTHON -m reelfinder" in out.splitlines()[-1]  # …and the new one started
+
+
+def test_reopening_during_a_hunt_never_interrupts_it(open_copy):
+    result, server = open_copy(hunting=True)
+    assert "UPDATE-CHECKED" not in result.stdout and "OPENED http://127.0.0.1" in result.stdout
+    assert server.poll() is None  # still running
+
+
+def test_reopening_without_an_update_just_shows_the_page(open_copy):
+    result, server = open_copy(update_exit=0)
+    assert "UPDATE-CHECKED" in result.stdout and "OPENED http://127.0.0.1" in result.stdout
+    assert "Restarting" not in result.stdout and server.poll() is None

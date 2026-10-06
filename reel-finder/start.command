@@ -5,21 +5,49 @@
 cd "$(dirname "$0")" || exit 1
 HERE="$(pwd)"
 export PATH="$HOME/.local/bin:/opt/homebrew/bin:/usr/local/bin:$PATH"
-URL="http://127.0.0.1:8765"
+PORT="${REELFINDER_PORT:-8765}"
+URL="http://127.0.0.1:$PORT"
 
 say() { printf "\n\033[1m%s\033[0m\n" "$1"; }
 fail() { printf "\n\033[31m%s\033[0m\n" "$1"; echo "Press Enter to close."; read -r _; exit 1; }
+running() { curl -s -o /dev/null --max-time 3 "$URL/api/status"; }
+can_update() { [ "${1:-}" != "--no-update" ] && [ -f .installed_commit ] && [ -f update.sh ]; }
+
+# Quit the copy of Reel Finder that's already running (its Terminal window closes).
+stop_running_copy() {
+  local pids
+  pids="$(lsof -ti "tcp:$PORT" -sTCP:LISTEN 2>/dev/null)"
+  [ -n "$pids" ] || return 0
+  # shellcheck disable=SC2086 # one PID per word
+  kill $pids 2>/dev/null
+  for _ in $(seq 1 30); do
+    running || return 0
+    sleep 0.5
+  done
+  # shellcheck disable=SC2086
+  kill -9 $pids 2>/dev/null
+  sleep 1
+}
 
 printf "\n🎬  Reel Finder\n"
 
-# Already running? Just open the page.
-if curl -s -o /dev/null "$URL/api/status"; then
+# Already running? Update it first if there's a new version (unless a hunt is under way), else
+# just open the page. Before, an open copy kept running the old version for as long as it was open.
+if running; then
+  if can_update "${1:-}" && ! curl -s --max-time 3 "$URL/api/status" | grep -q '"hunting": *true'; then
+    bash ./update.sh
+    if [ $? -eq 10 ]; then
+      say "Restarting Reel Finder with the new version…"
+      stop_running_copy
+      cd "$HERE" && exec "$HERE/start.command" --no-update
+    fi
+  fi
   open "$URL"
   exit 0
 fi
 
 # 0) Installed with the one-line installer? Then fetch any newer version first (keeps your data).
-if [ "${1:-}" != "--no-update" ] && [ -f .installed_commit ] && [ -f update.sh ]; then
+if can_update "${1:-}"; then
   bash ./update.sh
   if [ $? -eq 10 ]; then
     cd "$HERE" && exec "$HERE/start.command" --no-update

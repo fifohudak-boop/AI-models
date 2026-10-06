@@ -61,6 +61,7 @@ body {
 
 h1, h2 { margin: 0; letter-spacing: -0.01em; }
 .muted { color: var(--muted); }
+.build { font-size: 11px; opacity: .75; white-space: nowrap; }
 [hidden] { display: none !important; }
 
 /* ---------------- top bar ---------------- */
