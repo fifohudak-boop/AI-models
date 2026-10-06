@@ -220,3 +220,14 @@ def test_reference_upload_analyse_and_remove(tmp_path):
             assert c.delete(f"/api/references/{ref['id']}", headers=H).json() == {"ok": True}
         assert c.get("/api/references").json() == []
         assert c.delete(f"/api/references/{ref_id}", headers=H).status_code == 404
+
+
+def test_the_page_is_never_stale_after_an_update():
+    with client() as c:
+        page = c.get("/")
+        assert page.headers["cache-control"] == "no-cache"
+        assert 'src="app.js?v=dev-' in page.text and 'href="style.css?v=dev-' in page.text
+        js = c.get("/app.js?v=whatever")
+        assert js.status_code == 200 and js.headers["cache-control"] == "no-cache"
+        st = c.get("/api/status").json()
+        assert st["build"] == "dev" and st["update_available"] is False  # a developer checkout never self-updates

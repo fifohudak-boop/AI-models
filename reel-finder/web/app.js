@@ -216,6 +216,11 @@ function renderStatus() {
   if (!status) return;
   const pills = $("#pills");
   pills.replaceChildren();
+  $("#build").textContent = status.build ? `· version ${status.build}` : "";
+  if (status.update_available) {
+    pills.append(pill("Update ready — quit and reopen the app", "warn",
+      "A newer version is out. Open the Reel Finder app again (or close this Terminal window first) to install it."));
+  }
   const o = status.ollama;
   if (!o.running) pills.append(pill("AI off — keyword mode", "warn", "Start Ollama to let the AI judge videos"));
   else if (!o.installed) pills.append(pill(`AI model missing`, "warn", `Download ${o.model} (left side)`));
