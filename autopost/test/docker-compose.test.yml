@@ -1,0 +1,19 @@
+# End-to-end test setup: the real stack plus a fake Mastodon server.
+# See test/README.md. Never use this for your real install.
+services:
+  mock-mastodon:
+    image: node:22-alpine
+    command: ['node', '/mock/mock-mastodon.mjs']
+    volumes:
+      - ./test/mock-mastodon.mjs:/mock/mock-mastodon.mjs:ro
+    ports:
+      - '127.0.0.1:4100:4100'
+
+  postiz:
+    environment: &mastodon
+      MASTODON_URL: http://mock-mastodon:4100
+      MASTODON_CLIENT_ID: mock-client-id
+      MASTODON_CLIENT_SECRET: mock-client-secret
+
+  dashboard:
+    environment: *mastodon

@@ -1,0 +1,25 @@
+# Automatic HTTPS (free Let's Encrypt certificates) for both sites.
+# Used only when you start with: docker compose --profile https up -d
+# Both domains must already point at this server's public IP.
+
+{$POSTIZ_DOMAIN} {
+	# Site-verification files (TikTok's URL-prefix signature file, ...) are
+	# uploaded in Fifofarm and served by the dashboard.
+	@verification path /*.txt
+	handle @verification {
+		reverse_proxy dashboard:3000
+	}
+
+	handle {
+		reverse_proxy postiz:5000 {
+			# Postiz sets its login cookie for the whole parent domain (e.g.
+			# ".duckdns.org"). Browsers refuse that on shared domains, which made
+			# the Postiz login loop. A cookie for this exact host works everywhere.
+			header_down Set-Cookie "(?i); *domain=[^;]*" "; Path=/"
+		}
+	}
+}
+
+{$DASHBOARD_DOMAIN} {
+	reverse_proxy dashboard:3000
+}
