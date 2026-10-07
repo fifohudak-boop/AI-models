@@ -1,4 +1,4 @@
-# 🎬 Reel Finder
+# <img src="web/logo.svg" width="40" alt="" align="top"> Reel Finder
 
 Drop in a **reference video**, one that looks like what you want, or describe the videos
 in words. Say how many you want and press **Start hunt**. AI agents scroll **TikTok**,

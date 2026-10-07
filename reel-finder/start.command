@@ -29,6 +29,7 @@ stop_running_copy() {
   sleep 1
 }
 
+printf '\033]0;Reel Finder\007'  # name the Terminal window (it's what you see in the Dock)
 printf "\n🎬  Reel Finder\n"
 
 # Already running? Update it first if there's a new version (unless a hunt is under way), else

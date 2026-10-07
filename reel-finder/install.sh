@@ -74,8 +74,10 @@ main() {
   printf "%s\n" "$ref" > "$home_dir/.installed_ref"
 
   # 4. A double-clickable app (built here, so macOS doesn't block it) + a Desktop shortcut.
-  if [ -z "${REELFINDER_NO_SHORTCUTS:-}" ]; then
-    mkdir -p "$app_dir/Contents/MacOS"
+  #    Updates refresh an app that's already there (its icon too), but never re-add a shortcut you removed.
+  if [ -z "${REELFINDER_NO_SHORTCUTS:-}" ] || [ -d "$app_dir" ]; then
+    mkdir -p "$app_dir/Contents/MacOS" "$app_dir/Contents/Resources"
+    cp "$home_dir/assets/AppIcon.icns" "$app_dir/Contents/Resources/AppIcon.icns" 2>/dev/null || true
     cat > "$app_dir/Contents/Info.plist" <<'PLIST'
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -86,7 +88,8 @@ main() {
   <key>CFBundleIdentifier</key><string>com.reelfinder.launcher</string>
   <key>CFBundleExecutable</key><string>reel-finder</string>
   <key>CFBundlePackageType</key><string>APPL</string>
-  <key>CFBundleVersion</key><string>1</string>
+  <key>CFBundleIconFile</key><string>AppIcon</string>
+  <key>CFBundleVersion</key><string>2</string>
   <key>LSMinimumSystemVersion</key><string>10.13</string>
 </dict>
 </plist>
@@ -94,11 +97,16 @@ PLIST
     # Opens Terminal so you can see what it's doing; closing that window quits Reel Finder.
     printf '#!/bin/bash\nexec open -a Terminal %q\n' "$home_dir/start.command" > "$app_dir/Contents/MacOS/reel-finder"
     chmod +x "$app_dir/Contents/MacOS/reel-finder"
-    touch "$app_dir"
-    if [ -d "$HOME/Desktop" ]; then
-      ln -sfn "$app_dir" "$HOME/Desktop/Reel Finder.app" 2>/dev/null || true
+    # Tell Finder, the Dock and Launchpad the app changed, so they show the new icon.
+    touch "$app_dir" "$app_dir/Contents/Info.plist"
+    local lsregister="/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister"
+    [ -x "$lsregister" ] && "$lsregister" -f "$app_dir" >/dev/null 2>&1
+    if [ -z "${REELFINDER_NO_SHORTCUTS:-}" ]; then
+      if [ -d "$HOME/Desktop" ]; then
+        ln -sfn "$app_dir" "$HOME/Desktop/Reel Finder.app" 2>/dev/null || true
+      fi
+      echo "Added the Reel Finder app to $(dirname "$app_dir") and a shortcut on your Desktop."
     fi
-    echo "Added the Reel Finder app to $(dirname "$app_dir") and a shortcut on your Desktop."
   fi
 
   bold "Reel Finder is installed${sha:+ (version ${sha:0:7})}."

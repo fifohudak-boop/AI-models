@@ -1,0 +1,15 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 824 824">
+  <!-- Reel Finder: a magnifying glass with a play button in it, on the app's pink-red. -->
+  <defs>
+    <linearGradient id="rf-bg" x1="0" y1="0" x2="0.35" y2="1">
+      <stop offset="0" stop-color="#ff6584"/>
+      <stop offset="1" stop-color="#d3134a"/>
+    </linearGradient>
+  </defs>
+  <rect width="824" height="824" rx="185" fill="url(#rf-bg)"/>
+  <g fill="none" stroke="#fff" stroke-linecap="round">
+    <circle cx="362" cy="362" r="200" stroke-width="64"/>
+    <line x1="520" y1="520" x2="662" y2="662" stroke-width="92"/>
+  </g>
+  <path d="M312 276 L312 448 L458 362 Z" fill="#fff" stroke="#fff" stroke-width="26" stroke-linejoin="round"/>
+</svg>

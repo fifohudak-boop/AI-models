@@ -81,6 +81,9 @@ def test_install_then_update_keeps_your_data(setup):
     assert "open -a Terminal" in launcher.read_text()
     assert subprocess.run(["bash", "-n", str(launcher)]).returncode == 0
     assert (home / "Desktop" / "Reel Finder.app").resolve() == app.resolve()
+    icon = app / "Contents" / "Resources" / "AppIcon.icns"
+    assert icon.read_bytes()[:4] == b"icns"  # the Reel Finder logo
+    assert "<key>CFBundleIconFile</key><string>AppIcon</string>" in (app / "Contents" / "Info.plist").read_text()
 
     # Your settings, logins and Python setup must survive an update.
     (install_dir / "data").mkdir()
@@ -263,3 +266,20 @@ def test_reopening_without_an_update_just_shows_the_page(open_copy):
     result, server = open_copy(update_exit=0)
     assert "UPDATE-CHECKED" in result.stdout and "OPENED http://127.0.0.1" in result.stdout
     assert "Restarting" not in result.stdout and server.poll() is None
+
+
+def test_updates_give_an_existing_app_its_icon_but_never_add_shortcuts(setup):
+    tmp, home, install_dir, env = setup
+    tar_a = make_tarball(tmp, "a", "only_in_a.txt")
+    quiet = {**env, "REELFINDER_TARBALL": str(tar_a), "REELFINDER_SHA": SHA_A, "REELFINDER_NO_SHORTCUTS": "1"}
+    app = home / "Applications" / "Reel Finder.app"
+
+    assert run(ROOT / "install.sh", quiet).returncode == 0
+    assert not app.exists()  # an update never creates an app you didn't have
+
+    (app / "Contents" / "MacOS").mkdir(parents=True)  # an app from before there was an icon
+    (app / "Contents" / "Info.plist").write_text("<plist>old</plist>")
+    assert run(ROOT / "install.sh", quiet).returncode == 0
+    assert (app / "Contents" / "Resources" / "AppIcon.icns").read_bytes()[:4] == b"icns"
+    assert "CFBundleIconFile" in (app / "Contents" / "Info.plist").read_text()
+    assert not (home / "Desktop" / "Reel Finder.app").exists()  # you removed it? it stays removed
