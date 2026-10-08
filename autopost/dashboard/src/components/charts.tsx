@@ -21,8 +21,15 @@ function useWidth<T extends HTMLElement>() {
 function niceMax(value: number) {
   if (!(value > 0)) return 1;
   const pow = 10 ** Math.floor(Math.log10(value));
-  for (const m of [1, 2, 2.5, 5, 10]) if (value <= m * pow) return m * pow;
+  // 2.5 only from 250 up, so small counts never get a 1.25-style middle line.
+  for (const m of pow >= 100 ? [1, 2, 2.5, 5, 10] : [1, 2, 5, 10]) if (value <= m * pow) return m * pow;
   return 10 * pow;
+}
+
+// 0, the middle and the top — the middle only when it's a whole number
+// (views can't be 0.5).
+function ticksFor(max: number) {
+  return [0, max / 2, max].filter((t, i) => i !== 1 || Number.isInteger(t));
 }
 
 // Column with a 4px rounded top and a square foot on the baseline.
@@ -100,7 +107,7 @@ export function ColumnChart({
     >
       {width > 0 && (
         <svg width={width} height={height} role="img" aria-label={ariaLabel}>
-          {[0, max / 2, max].map((t) => (
+          {ticksFor(max).map((t) => (
             <g key={t}>
               <line className="chart-grid" x1={PAD.left} x2={width - PAD.right} y1={y(t)} y2={y(t)} />
               <text className="chart-tick" x={PAD.left - 8} y={y(t)} dy="0.32em" textAnchor="end">
@@ -204,7 +211,7 @@ export function LineChart({
     >
       {width > 0 && points.length > 0 && (
         <svg width={width} height={height} role="img" aria-label={ariaLabel}>
-          {[0, max / 2, max].map((t) => (
+          {ticksFor(max).map((t) => (
             <g key={t}>
               <line className="chart-grid" x1={PAD.left} x2={width - PAD.right} y1={y(t)} y2={y(t)} />
               <text className="chart-tick" x={PAD.left - 8} y={y(t)} dy="0.32em" textAnchor="end">
