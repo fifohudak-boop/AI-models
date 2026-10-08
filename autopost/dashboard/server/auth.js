@@ -1,18 +1,29 @@
-// One password protects the dashboard (shared by you and your team). Sessions
-// are signed cookies, so there is nothing to store and nothing to clean up.
-// Changing the password in Settings signs out every other browser.
-import { createHmac, randomBytes, scryptSync, timingSafeEqual } from 'node:crypto';
-import { DASHBOARD_PASSWORD, DASHBOARD_URL, SESSION_SECRET, getSettings, saveSettings } from './config.js';
+// Sign-in for the owner and the team. Sessions are signed cookies that name
+// the person and their "session version": changing a password bumps the
+// version, which signs that person out of every other browser.
+import { createHmac, timingSafeEqual } from 'node:crypto';
+import { DASHBOARD_URL, SESSION_SECRET } from './config.js';
+import { burnPasswordCheck, verifyPasswordHash } from './passwords.js';
+import {
+  createUser,
+  findUserByEmail,
+  getUser,
+  ownerUser,
+  setPassword,
+  signupsOpen,
+  touchLogin,
+} from './users.js';
 
 // Internal cookie name, kept from the AutoPost days so nobody gets logged out.
 const COOKIE = 'autopost_session';
 const SESSION_MAX_AGE_SECONDS = 60 * 60 * 24 * 30; // 30 days
 const MAX_FAILURES = 10;
 const FAILURE_WINDOW_MS = 15 * 60 * 1000;
-const SCRYPT = { N: 16384, r: 8, p: 1 };
-export const MIN_PASSWORD_LENGTH = 8;
+const MAX_SIGNUPS_PER_HOUR = 5;
+const TOO_MANY = 'Too many wrong passwords. Wait 15 minutes and try again.';
 
 const failures = new Map();
+const signups = new Map();
 
 function sign(value) {
   return createHmac('sha256', SESSION_SECRET).update(value).digest('base64url');
@@ -39,16 +50,22 @@ export function parseCookies(header) {
   return out;
 }
 
-function passwordVersion() {
-  return getSettings().passwordVersion;
-}
-
-// Token: "<expires>.<passwordVersion>.<mac>". Tokens from before password
-// versions existed ("<expires>.<mac>") count as version 0.
-export function isLoggedIn(req) {
+// Token: "u.<userId>.<expires>.<sessionVersion>.<mac>". Tokens from before
+// team accounts ("<expires>.<mac>" or "<expires>.<version>.<mac>") belong to
+// the owner, so the owner stays signed in through the update.
+export function userFromRequest(req) {
   const token = parseCookies(req.headers.cookie)[COOKIE];
-  if (!token) return false;
+  if (!token) return null;
   const parts = token.split('.');
+  const now = Date.now() / 1000;
+  if (parts[0] === 'u') {
+    if (parts.length !== 5) return null;
+    const [, id, expires, version, mac] = parts;
+    if (!mac || !safeEqual(mac, sign(`u.${id}.${expires}.${version}`))) return null;
+    if (!(Number(expires) > now)) return null;
+    const user = getUser(id);
+    return user && user.session_version === Number(version) ? user : null;
+  }
   let payload;
   let version;
   if (parts.length === 2) {
@@ -58,12 +75,13 @@ export function isLoggedIn(req) {
     payload = `${parts[0]}.${parts[1]}`;
     version = Number(parts[1]);
   } else {
-    return false;
+    return null;
   }
   const mac = parts[parts.length - 1];
-  if (!parts[0] || !mac || !safeEqual(mac, sign(payload))) return false;
-  if (version !== passwordVersion()) return false;
-  return Number(parts[0]) > Date.now() / 1000;
+  if (!parts[0] || !mac || !safeEqual(mac, sign(payload))) return null;
+  if (!(Number(parts[0]) > now)) return null;
+  const owner = ownerUser();
+  return owner && owner.session_version === version ? owner : null;
 }
 
 function cookieFlags() {
@@ -71,34 +89,14 @@ function cookieFlags() {
   return `Path=/; HttpOnly; SameSite=Lax${secure}`;
 }
 
-export function sessionCookie() {
+export function sessionCookie(user) {
   const expires = String(Math.floor(Date.now() / 1000) + SESSION_MAX_AGE_SECONDS);
-  const payload = `${expires}.${passwordVersion()}`;
+  const payload = `u.${user.id}.${expires}.${user.session_version}`;
   return `${COOKIE}=${payload}.${sign(payload)}; Max-Age=${SESSION_MAX_AGE_SECONDS}; ${cookieFlags()}`;
 }
 
 export function clearSessionCookie() {
   return `${COOKIE}=; Max-Age=0; ${cookieFlags()}`;
-}
-
-export function hashPassword(password, salt = randomBytes(16)) {
-  const hash = scryptSync(password, salt, 32, SCRYPT);
-  return `scrypt$${salt.toString('base64')}$${hash.toString('base64')}`;
-}
-
-export function verifyPasswordHash(password, stored) {
-  const [alg, saltB64, hashB64] = String(stored).split('$');
-  if (alg !== 'scrypt' || !saltB64 || !hashB64) return false;
-  const expected = Buffer.from(hashB64, 'base64');
-  const actual = scryptSync(password, Buffer.from(saltB64, 'base64'), expected.length, SCRYPT);
-  return actual.length === expected.length && timingSafeEqual(actual, expected);
-}
-
-function passwordMatches(password) {
-  if (typeof password !== 'string' || password === '') return false;
-  const { passwordHash } = getSettings();
-  if (passwordHash) return verifyPasswordHash(password, passwordHash);
-  return DASHBOARD_PASSWORD !== '' && safeEqual(sign(`pw:${password}`), sign(`pw:${DASHBOARD_PASSWORD}`));
 }
 
 export function tooManyFailures(ip) {
@@ -113,31 +111,63 @@ function recordFailure(ip) {
   else entry.count += 1;
 }
 
-export function checkPassword(ip, password) {
-  if (passwordMatches(password)) {
-    failures.delete(ip);
-    return true;
-  }
-  recordFailure(ip);
-  return false;
+// The owner may sign in with just the password until they've added an email.
+export function ownerNeedsEmail() {
+  const owner = ownerUser();
+  return !!owner && !owner.email;
 }
 
-export function changePassword(ip, current, next) {
-  if (tooManyFailures(ip)) return { status: 429, error: 'Too many wrong passwords. Wait 15 minutes and try again.' };
-  if (!passwordMatches(current)) {
+export function login(ip, email, password) {
+  if (tooManyFailures(ip)) return { status: 429, error: TOO_MANY };
+  const typed = typeof email === 'string' ? email.trim() : '';
+  const user = typed ? findUserByEmail(typed) : ownerNeedsEmail() ? ownerUser() : null;
+  const pw = typeof password === 'string' ? password : '';
+  const ok = user && pw !== '' ? verifyPasswordHash(pw, user.password_hash) : burnPasswordCheck(pw);
+  if (!ok) {
+    recordFailure(ip);
+    if (!typed && !ownerNeedsEmail()) return { status: 400, error: 'Enter your email and password.' };
+    return { status: 401, error: typed ? 'Wrong email or password.' : 'Wrong password.' };
+  }
+  failures.delete(ip);
+  touchLogin(user.id);
+  return { user: getUser(user.id) };
+}
+
+export function signup(ip, { name, email, password }) {
+  if (!signupsOpen()) return { status: 403, error: 'Sign-up is closed. Ask the owner of this Fifofarm to open it.' };
+  const entry = signups.get(ip);
+  const recent = entry && Date.now() - entry.first < 60 * 60 * 1000 ? entry : null;
+  if (recent && recent.count >= MAX_SIGNUPS_PER_HOUR) {
+    return { status: 429, error: 'Too many new accounts from here. Try again in an hour.' };
+  }
+  const result = createUser({ name, email, password, role: 'member' });
+  if (result.error) return { status: 400, error: result.error };
+  if (recent) recent.count += 1;
+  else signups.set(ip, { first: Date.now(), count: 1 });
+  touchLogin(result.user.id);
+  return { user: getUser(result.user.id) };
+}
+
+export function changePassword(ip, user, current, next) {
+  if (tooManyFailures(ip)) return { status: 429, error: TOO_MANY };
+  if (typeof current !== 'string' || !current || !verifyPasswordHash(current, user.password_hash)) {
     recordFailure(ip);
     return { status: 400, error: 'Your current password is not correct.' };
   }
-  if (typeof next !== 'string' || next.length < MIN_PASSWORD_LENGTH) {
-    return { status: 400, error: `The new password needs at least ${MIN_PASSWORD_LENGTH} characters.` };
-  }
-  if (next.length > 200) return { status: 400, error: 'That password is too long.' };
-  saveSettings({ passwordHash: hashPassword(next), passwordVersion: passwordVersion() + 1 });
-  return { ok: true };
+  const result = setPassword(user.id, next);
+  if (result.error) return { status: 400, error: result.error };
+  return { user: result.user };
 }
 
 export function requireLogin(req, res, next) {
-  if (!isLoggedIn(req)) return res.status(401).json({ error: 'Please sign in.' });
+  const user = userFromRequest(req);
+  if (!user) return res.status(401).json({ error: 'Please sign in.' });
+  req.user = user;
+  next();
+}
+
+export function requireOwner(req, res, next) {
+  if (req.user?.role !== 'owner') return res.status(403).json({ error: 'Only the owner of this Fifofarm can do that.' });
   next();
 }
 

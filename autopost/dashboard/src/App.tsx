@@ -1,19 +1,21 @@
 import { useCallback, useEffect, useState } from 'react';
-import type { Status } from './types';
+import type { Session, Status } from './types';
 import { api, setUnauthorizedHandler } from './api';
 import { LoginPage } from './pages/LoginPage';
 import { SetupPage } from './pages/SetupPage';
 import { ComposePage } from './pages/ComposePage';
 import { AccountsPage } from './pages/AccountsPage';
 import { HistoryPage } from './pages/HistoryPage';
+import { AnalyticsPage } from './pages/AnalyticsPage';
 import { SettingsPage } from './pages/SettingsPage';
 import { BRAND } from './brand';
 
-type Tab = 'post' | 'accounts' | 'history' | 'settings';
+type Tab = 'post' | 'accounts' | 'history' | 'analytics' | 'settings';
 const TABS: { id: Tab; label: string }[] = [
   { id: 'post', label: 'Post' },
   { id: 'accounts', label: 'Accounts' },
   { id: 'history', label: 'History' },
+  { id: 'analytics', label: 'Analytics' },
   { id: 'settings', label: 'Settings' },
 ];
 
@@ -23,7 +25,8 @@ function tabFromHash(): Tab {
 }
 
 export function App() {
-  const [session, setSession] = useState<'unknown' | 'out' | 'in'>('unknown');
+  // undefined = still asking the server
+  const [session, setSession] = useState<Session | null | undefined>(undefined);
   const [status, setStatus] = useState<Status | null>(null);
   const [tab, setTab] = useState<Tab>(tabFromHash);
   const [toastMessage, setToastMessage] = useState<string | null>(null);
@@ -34,6 +37,14 @@ export function App() {
   const toast = useCallback((message: string) => {
     setToastMessage(message);
     setTimeout(() => setToastMessage((current) => (current === message ? null : current)), 3000);
+  }, []);
+
+  const loadSession = useCallback(async () => {
+    try {
+      setSession(await api.session());
+    } catch {
+      setSession(null);
+    }
   }, []);
 
   const loadStatus = useCallback(async () => {
@@ -47,30 +58,33 @@ export function App() {
   }, []);
 
   useEffect(() => {
-    setUnauthorizedHandler(() => setSession('out'));
-    api
-      .session()
-      .then((s) => setSession(s.loggedIn ? 'in' : 'out'))
-      .catch(() => setSession('out'));
+    setUnauthorizedHandler(() => {
+      setSession((s) => (s ? { ...s, loggedIn: false, user: null } : s));
+      loadSession();
+    });
+    loadSession();
     const onHash = () => setTab(tabFromHash());
     window.addEventListener('hashchange', onHash);
     return () => window.removeEventListener('hashchange', onHash);
-  }, []);
+  }, [loadSession]);
+
+  const user = session?.loggedIn ? session.user : null;
 
   useEffect(() => {
-    if (session !== 'in') return;
+    if (!user) return;
     loadStatus();
     const handle = setInterval(loadStatus, 30_000);
     return () => clearInterval(handle);
-  }, [session, loadStatus]);
+  }, [user, loadStatus]);
 
-  if (session === 'unknown') return null;
-  if (session === 'out') return <LoginPage onLoggedIn={() => setSession('in')} />;
+  if (session === undefined) return null;
+  if (!user || !session) return <LoginPage session={session} onLoggedIn={setSession} />;
   if (!status) return <div className="center-page muted">Loading…</div>;
+  const isOwner = user.role === 'owner';
   const brand = status.brand || BRAND.name;
   if (document.title !== brand) document.title = brand;
   const blip = everConnected && status.postiz === 'unreachable';
-  if (status.postiz !== 'ok' && !blip) return <SetupPage status={status} onDone={loadStatus} />;
+  if (status.postiz !== 'ok' && !blip) return <SetupPage status={status} isOwner={isOwner} onDone={loadStatus} />;
   const engineDown = blip || status.worker === 'down';
 
   const go = (next: Tab) => {
@@ -105,16 +119,26 @@ export function App() {
             anything you post meanwhile waits safely in the queue and goes out once it's back.
           </div>
         )}
+        {isOwner && !user.email && tab !== 'settings' && (
+          <div className="notice info small" style={{ marginBottom: 16 }}>
+            {brand} now has team accounts. <a href="#/settings">Add your email</a> so you can sign in with it, then share
+            the sign-up link with your team.
+          </div>
+        )}
         {tab === 'post' && <ComposePage onGoAccounts={() => go('accounts')} />}
-        {tab === 'accounts' && <AccountsPage postizUrl={status.postizUrl} toast={toast} />}
-        {tab === 'history' && <HistoryPage />}
+        {tab === 'accounts' && <AccountsPage postizUrl={status.postizUrl} toast={toast} user={user} />}
+        {tab === 'history' && <HistoryPage user={user} />}
+        {tab === 'analytics' && <AnalyticsPage user={user} />}
         {tab === 'settings' && (
           <SettingsPage
             status={status}
+            session={session}
             toast={toast}
+            onSession={setSession}
             onLogout={async () => {
               await api.logout().catch(() => {});
-              setSession('out');
+              window.location.hash = '/post';
+              loadSession();
             }}
           />
         )}

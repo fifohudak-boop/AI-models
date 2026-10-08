@@ -1,5 +1,32 @@
 export type PostizState = 'ok' | 'no-key' | 'bad-key' | 'unreachable';
 
+export interface User {
+  id: string;
+  email: string | null;
+  name: string;
+  role: 'owner' | 'member';
+  createdAt: string;
+  lastLoginAt: string | null;
+}
+
+export interface Session {
+  loggedIn: boolean;
+  user: User | null;
+  signupsOpen: boolean;
+  ownerNeedsEmail: boolean;
+  brand: string;
+}
+
+export interface TeamUser extends User {
+  accounts: number;
+  posts: number;
+}
+
+export interface TeamInfo {
+  signupsOpen: boolean;
+  users: TeamUser[];
+}
+
 export interface Status {
   brand: string;
   postiz: PostizState;
@@ -90,6 +117,8 @@ export interface Account {
   platform: string;
   supported: boolean;
   maxLength: number;
+  ownerId: string | null;
+  ownerName: string | null;
 }
 
 export interface Platform {
@@ -166,4 +195,94 @@ export interface Batch {
   media: MediaResult | null;
   items: BatchItem[];
   counts: Partial<Record<ItemState, number>>;
+  userId?: string;
+  userName?: string;
+}
+
+// ---- Analytics ----
+
+export type VideoStatus = 'ok' | 'waiting' | 'no-data' | 'unsupported' | 'unavailable' | 'failed' | 'gone' | 'error';
+
+export interface AnalyticsVideo {
+  postId: string;
+  batchId: string;
+  accountId: string;
+  accountName: string;
+  identifier: string;
+  platform: string;
+  picture: string | null;
+  caption: string;
+  title: string;
+  previewUrl: string | null;
+  kind: 'video' | 'images' | null;
+  postedAt: string | null;
+  published: boolean;
+  url: string | null;
+  views: number | null;
+  likes: number | null;
+  comments: number | null;
+  shares: number | null;
+  saves: number | null;
+  reach: number | null;
+  status: VideoStatus;
+  error: string | null;
+  fetchedAt: string | null;
+}
+
+export interface NetworkMetric {
+  key: string;
+  label: string;
+  kind: 'daily' | 'total';
+  value: number;
+  change: number | null;
+  points: { day: string; value: number }[];
+}
+
+export interface AnalyticsAccount {
+  id: string;
+  name: string;
+  identifier: string;
+  platform: string;
+  picture: string | null;
+  profile: string | null;
+  ownerId: string | null;
+  ownerName: string | null;
+  supported: boolean;
+  videos: number;
+  views: number;
+  likes: number;
+  comments: number;
+  shares: number;
+  saves: number;
+  avgViews: number;
+  bestPostId: string | null;
+  network: NetworkMetric[];
+  networkCheckedAt: string | null;
+  networkError: string | null;
+}
+
+export interface AnalyticsTotals {
+  videos: number;
+  views: number;
+  likes: number;
+  comments: number;
+  shares: number;
+  saves: number;
+}
+
+export interface AnalyticsOverview {
+  days: number;
+  generatedAt: string;
+  lastCheckedAt: string | null;
+  totals: AnalyticsTotals;
+  daily: { day: string; views: number }[];
+  accounts: AnalyticsAccount[];
+  videos: AnalyticsVideo[];
+}
+
+export interface VideoDetail {
+  video: AnalyticsVideo;
+  metrics: { label: string; value: number }[];
+  history: { day: string; views: number | null; likes: number | null; comments: number | null; shares: number | null; saves: number | null; reach: number | null }[];
+  siblings: AnalyticsVideo[];
 }

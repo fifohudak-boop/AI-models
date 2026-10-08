@@ -4,7 +4,7 @@ import { api } from '../api';
 
 // Shown until the posting engine (Postiz) is connected. On a fresh install
 // Fifofarm creates the Postiz account and key by itself; this page just waits.
-export function SetupPage({ status, onDone }: { status: Status; onDone: () => void }) {
+export function SetupPage({ status, isOwner, onDone }: { status: Status; isOwner: boolean; onDone: () => void }) {
   const [key, setKey] = useState('');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -33,6 +33,17 @@ export function SetupPage({ status, onDone }: { status: Status; onDone: () => vo
           <div className="progress indeterminate">
             <div />
           </div>
+        </div>
+      </div>
+    );
+  }
+
+  if (!isOwner) {
+    return (
+      <div className="center-page">
+        <div className="card stack">
+          <h1>{status.brand} isn't ready yet</h1>
+          <p>The owner of this {status.brand} still has to finish connecting the posting engine. Try again a bit later.</p>
         </div>
       </div>
     );

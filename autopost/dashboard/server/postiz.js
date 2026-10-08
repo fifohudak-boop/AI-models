@@ -185,6 +185,18 @@ export const postiz = {
     return res?.notifications ?? (Array.isArray(res) ? res : []);
   },
 
+  // How one published post is doing: [{ label: 'Views', data: [{ total, date }] }, ...]
+  // or { missing: true } when the network never told Postiz the post's id.
+  postAnalytics(postId, days = 30) {
+    return call(`/analytics/post/${encodeURIComponent(postId)}?date=${days}`, { timeoutMs: 45_000 });
+  },
+
+  // Account-level numbers (followers, reach, ...), same shape.
+  async accountAnalytics(integrationId, days = 30) {
+    const res = await call(`/analytics/${encodeURIComponent(integrationId)}?date=${days}`, { timeoutMs: 45_000 });
+    return Array.isArray(res) ? res : [];
+  },
+
   // Is Postiz's background worker actually picking up jobs? Postiz can look
   // healthy while its worker silently isn't running; Temporal knows the truth.
   async workerState() {

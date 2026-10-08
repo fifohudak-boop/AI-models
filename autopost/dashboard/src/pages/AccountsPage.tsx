@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import type { Account, NetworksInfo, Platform, Preferences } from '../types';
+import type { Account, NetworksInfo, Platform, Preferences, TeamUser, User } from '../types';
 import { api } from '../api';
 import { AccountAvatar, PlatformBadge } from '../components/AccountAvatar';
 import { CopyField } from '../components/CopyField';
@@ -83,8 +83,8 @@ function BlueskyForm({ onConnected }: { onConnected: () => void }) {
 }
 
 // What to do before adding another Instagram account (Meta's rule while the
-// app hasn't passed App Review).
-function InstagramExtraHelp() {
+// app hasn't passed App Review). Only the owner can add testers to the app.
+function InstagramExtraHelp({ isOwner }: { isOwner: boolean }) {
   return (
     <div className="notice info small stack">
       <strong>Adding another Instagram account</strong>
@@ -93,13 +93,20 @@ function InstagramExtraHelp() {
           The account must be a Professional account (Creator or Business). Switch for free in the Instagram app: Settings
           → Account type and tools.
         </li>
-        <li>
-          In{' '}
-          <a href="https://developers.facebook.com/apps/" target="_blank" rel="noreferrer">
-            Meta for Developers
-          </a>{' '}
-          open your app → App roles → Roles → Add People → <strong>Instagram Tester</strong> → type its username.
-        </li>
+        {isOwner ? (
+          <li>
+            In{' '}
+            <a href="https://developers.facebook.com/apps/" target="_blank" rel="noreferrer">
+              Meta for Developers
+            </a>{' '}
+            open your app → App roles → Roles → Add People → <strong>Instagram Tester</strong> → type its username.
+          </li>
+        ) : (
+          <li>
+            Send the account's username to the owner of this Fifofarm: they add it as an <strong>Instagram Tester</strong>{' '}
+            (needed until Meta approves the app).
+          </li>
+        )}
         <li>
           Logged in as that account, accept the invite:{' '}
           <a href="https://www.instagram.com/accounts/manage_access/" target="_blank" rel="noreferrer">
@@ -116,7 +123,38 @@ function InstagramExtraHelp() {
   );
 }
 
-export function AccountsPage({ postizUrl, toast }: { postizUrl: string; toast: (msg: string) => void }) {
+// Owner only: who owns this account, and a way to hand it to someone else.
+function OwnerPicker({ account, team, onMoved }: { account: Account; team: TeamUser[]; onMoved: (list: Account[]) => void }) {
+  const [busy, setBusy] = useState(false);
+  if (team.length < 2) return null;
+  return (
+    <label className="owner-picker small">
+      <span className="muted">Belongs to</span>
+      <select
+        value={account.ownerId ?? ''}
+        disabled={busy}
+        onChange={async (e) => {
+          setBusy(true);
+          try {
+            onMoved(await api.moveAccount(account.id, e.target.value));
+          } finally {
+            setBusy(false);
+          }
+        }}
+      >
+        {team.map((u) => (
+          <option key={u.id} value={u.id}>
+            {u.role === 'owner' ? `${u.name} (you)` : u.name}
+          </option>
+        ))}
+      </select>
+    </label>
+  );
+}
+
+export function AccountsPage({ postizUrl, toast, user }: { postizUrl: string; toast: (msg: string) => void; user: User }) {
+  const isOwner = user.role === 'owner';
+  const [team, setTeam] = useState<TeamUser[]>([]);
   const [accounts, setAccounts] = useState<Account[] | null>(null);
   const [platforms, setPlatforms] = useState<Platform[]>([]);
   const [networks, setNetworks] = useState<NetworksInfo | null>(null);
@@ -154,10 +192,15 @@ export function AccountsPage({ postizUrl, toast }: { postizUrl: string; toast: (
     refresh();
     loadPlatforms();
     api.preferences().then(setPrefs).catch(() => {});
+    if (isOwner)
+      api
+        .team()
+        .then((t) => setTeam(t.users))
+        .catch(() => {});
     return () => {
       if (pollRef.current) clearInterval(pollRef.current);
     };
-  }, [refresh, loadPlatforms]);
+  }, [refresh, loadPlatforms, isOwner]);
 
   // While saved keys are being applied, keep checking until they're live.
   const helperOn = networks?.autoApply ?? true;
@@ -340,7 +383,7 @@ export function AccountsPage({ postizUrl, toast }: { postizUrl: string; toast: (
                       </button>
                     )}
                   </div>
-                  {identifier === 'instagram-standalone' && showIgHelp && <InstagramExtraHelp />}
+                  {identifier === 'instagram-standalone' && showIgHelp && <InstagramExtraHelp isOwner={isOwner} />}
                   <div className="account-list">
                     {list.map((a) => (
                       <div className="account" key={a.id}>
@@ -353,6 +396,7 @@ export function AccountsPage({ postizUrl, toast }: { postizUrl: string; toast: (
                             {a.disabled && ' · disabled'}
                             {!a.supported && ' · post to this one from Postiz'}
                           </div>
+                          {isOwner && <OwnerPicker account={a} team={team} onMoved={setAccounts} />}
                           {a.identifier === 'pinterest' && prefs && (
                             <PinterestBoardPicker account={a} prefs={prefs} onSaved={setPrefs} />
                           )}
@@ -372,10 +416,17 @@ export function AccountsPage({ postizUrl, toast }: { postizUrl: string; toast: (
 
       <section className="card">
         <h2>Add a network</h2>
-        <p className="muted small">
-          <strong>Connect</strong> opens the network's sign-in window; approve there and the account shows up above. Networks
-          marked <strong>Set up</strong> need a one-time developer app first — Fifofarm walks you through it.
-        </p>
+        {isOwner ? (
+          <p className="muted small">
+            <strong>Connect</strong> opens the network's sign-in window; approve there and the account shows up above.
+            Networks marked <strong>Set up</strong> need a one-time developer app first — Fifofarm walks you through it.
+          </p>
+        ) : (
+          <p className="muted small">
+            <strong>Connect</strong> opens the network's sign-in window; approve there and the account shows up above — only
+            you (and the owner) see it. Networks that aren't set up yet need the owner to do a one-time setup first.
+          </p>
+        )}
         {connecting && (
           <div className="notice info" style={{ marginBottom: 10 }}>
             Waiting for you to finish in the sign-in window… (close it to cancel)
@@ -415,7 +466,7 @@ export function AccountsPage({ postizUrl, toast }: { postizUrl: string; toast: (
                     <button className="btn small" onClick={() => sendLink(p)}>
                       Send link
                     </button>
-                    {setup && (
+                    {setup && isOwner && (
                       <button
                         className="btn link small"
                         onClick={() => setOpenSetup(openSetup === p.identifier ? null : p.identifier)}
@@ -424,6 +475,8 @@ export function AccountsPage({ postizUrl, toast }: { postizUrl: string; toast: (
                       </button>
                     )}
                   </div>
+                ) : !isOwner ? (
+                  <div className="muted small">Not set up yet — ask the owner.</div>
                 ) : setup ? (
                   <button className="btn small" onClick={() => setOpenSetup(openSetup === p.identifier ? null : p.identifier)}>
                     {openSetup === p.identifier ? 'Hide' : 'Set up'}
@@ -431,7 +484,7 @@ export function AccountsPage({ postizUrl, toast }: { postizUrl: string; toast: (
                 ) : (
                   <div className="muted small">Needs developer keys first.</div>
                 )}
-                {setup && openSetup === p.identifier && networks && (
+                {isOwner && setup && openSetup === p.identifier && networks && (
                   <NetworkSetupPanel
                     setup={setup}
                     verificationFiles={networks.verificationFiles}
@@ -448,13 +501,15 @@ export function AccountsPage({ postizUrl, toast }: { postizUrl: string; toast: (
             );
           })}
         </div>
-        <p className="muted small" style={{ marginTop: 12 }}>
-          Other networks (Reddit, Discord, Telegram, Google Business…) can be connected in the{' '}
-          <a href={`${postizUrl}/launches`} target="_blank" rel="noreferrer">
-            posting engine (Postiz)
-          </a>
-          .
-        </p>
+        {isOwner && (
+          <p className="muted small" style={{ marginTop: 12 }}>
+            Other networks (Reddit, Discord, Telegram, Google Business…) can be connected in the{' '}
+            <a href={`${postizUrl}/launches`} target="_blank" rel="noreferrer">
+              posting engine (Postiz)
+            </a>
+            .
+          </p>
+        )}
       </section>
     </div>
   );
