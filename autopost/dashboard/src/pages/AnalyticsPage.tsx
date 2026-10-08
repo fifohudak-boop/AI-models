@@ -29,11 +29,11 @@ const STATUS_TEXT: Record<VideoStatus, string> = {
 };
 
 const METRIC_LABELS: ['views' | 'likes' | 'comments' | 'shares' | 'saves', string][] = [
-  ['views', 'views'],
-  ['likes', 'likes'],
-  ['comments', 'comments'],
-  ['shares', 'shares'],
-  ['saves', 'saves'],
+  ['views', 'view'],
+  ['likes', 'like'],
+  ['comments', 'comment'],
+  ['shares', 'share'],
+  ['saves', 'save'],
 ];
 
 function plural(n: number, word: string) {
@@ -41,6 +41,10 @@ function plural(n: number, word: string) {
 }
 
 // Networks name their account numbers in their own way; these read better.
+// Account-wide totals some networks report: they include posts made outside
+// Fifofarm, so they're labelled that way (and kept out of the summary line,
+// next to the views of Fifofarm's own posts).
+const WHOLE_ACCOUNT = new Set(['views', 'likes', 'comments', 'shares', 'saves', 'replies', 'impressions']);
 const FRIENDLY: Record<string, string> = {
   followers: 'Followers',
   follower_count: 'New followers',
@@ -52,12 +56,15 @@ const FRIENDLY: Record<string, string> = {
   average_view_duration: 'Avg. seconds watched',
   average_view_percentage: 'Avg. % watched',
 };
-const FIRST = ['followers', 'follower_count', 'subscribers_gained', 'reach', 'views', 'impressions', 'total_likes', 'likes'];
+const FIRST = ['followers', 'follower_count', 'subscribers_gained', 'reach', 'total_likes', 'videos'];
 const rank = (key: string) => (FIRST.includes(key) ? FIRST.indexOf(key) : FIRST.length);
 
 function friendlyMetrics(list: NetworkMetric[]) {
   return [...list]
-    .map((m) => ({ ...m, label: FRIENDLY[m.key] ?? m.label }))
+    .map((m) => ({
+      ...m,
+      label: FRIENDLY[m.key] ?? (WHOLE_ACCOUNT.has(m.key) ? `${m.label} (whole account)` : m.label),
+    }))
     .sort((a, b) => rank(a.key) - rank(b.key));
 }
 
@@ -100,7 +107,7 @@ function NetworkTile({ metric, days }: { metric: NetworkMetric; days: number }) 
 
 function numbersLine(v: AnalyticsVideo) {
   return METRIC_LABELS.filter(([key]) => v[key] !== null)
-    .map(([key, word]) => `${formatCount(v[key] as number)} ${word}`)
+    .map(([key, word]) => plural(v[key] as number, word))
     .join(' · ');
 }
 
@@ -219,7 +226,7 @@ function AccountCard({
   const [open, setOpen] = useState(false);
   const best = videos.find((v) => v.postId === account.bestPostId);
   const network = friendlyMetrics(account.network);
-  const headline = network.slice(0, 2);
+  const headline = network.filter((m) => !WHOLE_ACCOUNT.has(m.key)).slice(0, 2);
   return (
     <div className={`analytics-account${open ? ' open' : ''}`}>
       <button className="video-summary" onClick={() => setOpen((v) => !v)} aria-expanded={open}>
