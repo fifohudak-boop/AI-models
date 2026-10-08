@@ -6,7 +6,7 @@ import { randomUUID } from 'node:crypto';
 import { DATA_DIR, readJson, writeJsonAtomic } from './config.js';
 
 const FILE = path.join(DATA_DIR, 'batches.json');
-const MAX_BATCHES = 500;
+const MAX_BATCHES = 2000;
 const DAY = 24 * 60 * 60 * 1000;
 
 let cache = null;
@@ -31,8 +31,20 @@ export function getBatch(id) {
   return load().find((b) => b.id === id) ?? null;
 }
 
-export function listBatches(limit = 50) {
-  return load().slice(0, limit);
+// `userId` limits the list to what that person posted. Posts from before team
+// accounts have no userId; they count as the owner's (`ownerId`).
+export function listBatches(limit = 50, { userId = null, ownerId = null } = {}) {
+  const all = load();
+  if (!userId) return all.slice(0, limit);
+  return all.filter((b) => (b.userId ?? ownerId) === userId).slice(0, limit);
+}
+
+export function allBatches() {
+  return load();
+}
+
+export function batchOwner(batch, ownerId) {
+  return batch.userId ?? ownerId;
 }
 
 export function updateBatch(id, mutate) {

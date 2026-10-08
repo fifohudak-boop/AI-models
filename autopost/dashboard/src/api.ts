@@ -1,13 +1,17 @@
 import type {
   Account,
   AccountPreview,
+  AnalyticsOverview,
   Batch,
   MediaJob,
   NetworksInfo,
   Platform,
   Preferences,
+  Session,
   Status,
   SystemInfo,
+  TeamInfo,
+  VideoDetail,
 } from './types';
 
 export class ApiError extends Error {
@@ -44,10 +48,33 @@ async function request<T>(path: string, options: { method?: string; body?: unkno
   return data as T;
 }
 
+function analyticsQuery(days: number, member: string) {
+  const qs = new URLSearchParams({ days: String(days) });
+  if (member) qs.set('member', member);
+  return qs.toString();
+}
+
 export const api = {
-  session: () => request<{ loggedIn: boolean }>('/api/session'),
-  login: (password: string) => request<{ loggedIn: boolean }>('/api/login', { method: 'POST', body: { password } }),
+  session: () => request<Session>('/api/session'),
+  login: (email: string, password: string) =>
+    request<Session>('/api/login', { method: 'POST', body: { email, password } }),
+  signup: (name: string, email: string, password: string) =>
+    request<Session>('/api/signup', { method: 'POST', body: { name, email, password } }),
   logout: () => request<{ loggedIn: boolean }>('/api/logout', { method: 'POST' }),
+  updateMe: (patch: { name?: string; email?: string }) => request<Session>('/api/me', { method: 'PUT', body: patch }),
+
+  team: () => request<TeamInfo>('/api/team'),
+  setSignups: (open: boolean) => request<{ signupsOpen: boolean }>('/api/team/signups', { method: 'PUT', body: { open } }),
+  resetMemberPassword: (id: string) =>
+    request<{ password: string }>(`/api/team/${encodeURIComponent(id)}/reset-password`, { method: 'POST' }),
+  removeMember: (id: string) => request<{ ok: true }>(`/api/team/${encodeURIComponent(id)}`, { method: 'DELETE' }),
+  moveAccount: (accountId: string, userId: string) =>
+    request<Account[]>(`/api/accounts/${encodeURIComponent(accountId)}/owner`, { method: 'PUT', body: { userId } }),
+
+  analytics: (days: number, member = '') => request<AnalyticsOverview>(`/api/analytics?${analyticsQuery(days, member)}`),
+  refreshAnalytics: (days: number, member = '') =>
+    request<AnalyticsOverview>(`/api/analytics/refresh?${analyticsQuery(days, member)}`, { method: 'POST' }),
+  analyticsVideo: (postId: string) => request<VideoDetail>(`/api/analytics/videos/${encodeURIComponent(postId)}`),
 
   status: () => request<Status>('/api/status'),
   saveApiKey: (apiKey: string) => request<{ ok: true }>('/api/settings/api-key', { method: 'PUT', body: { apiKey } }),
@@ -103,7 +130,7 @@ export const api = {
     captions: Record<string, string>;
   }) => request<Batch>('/api/posts', { method: 'POST', body }),
 
-  batches: () => request<Batch[]>('/api/batches'),
+  batches: (user = '') => request<Batch[]>(`/api/batches${user ? `?user=${encodeURIComponent(user)}` : ''}`),
   batch: (id: string) => request<Batch>(`/api/batches/${encodeURIComponent(id)}`),
   retry: (id: string) => request<Batch>(`/api/batches/${encodeURIComponent(id)}/retry`, { method: 'POST' }),
   deleteBatch: (id: string) => request<{ ok: true }>(`/api/batches/${encodeURIComponent(id)}`, { method: 'DELETE' }),

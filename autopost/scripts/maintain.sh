@@ -21,6 +21,7 @@ export PATH
 now() { date -u +%Y-%m-%dT%H:%M:%SZ; }
 log() { printf '%s %s\n' "$(now)" "$*"; }
 # Safe inside a JSON string: no quotes, backslashes or control characters.
+# shellcheck disable=SC1003
 clean() { printf '%s' "$1" | tr -d '"\\' | tr '\n\r\t' '   ' | cut -c1-300; }
 env_value() { sed -n "s/^$1=//p" "$ENV_FILE" 2>/dev/null | tail -n 1; }
 
@@ -176,7 +177,7 @@ update_code() { # force (1 = check now)
     set_state failed "Couldn't switch to the new version. Details: autopost/runtime/compose.log"
     return 0
   fi
-  if compose up -d --build --remove-orphans; then
+  if compose up -d --build --remove-orphans && dashboard_healthy; then
     # Bind-mounted files are only re-read when their container is recreated.
     if printf '%s\n' "$changed" | grep -q '^autopost/Caddyfile$'; then
       compose up -d --force-recreate caddy || true
@@ -190,10 +191,32 @@ update_code() { # force (1 = check now)
     set_state ok "Updated."
     log "update: done"
   else
+    # Didn't build or didn't start: put the version that worked back.
+    log "update: $new failed, going back to $built"
     printf '%s' "$new" >"$RUNTIME/.failed-commit"
-    set_state failed "The new version didn't start, so the previous one keeps running. Details: autopost/runtime/compose.log"
-    log "update: failed"
+    git -C "$REPO_DIR" checkout -q -f -B "$BRANCH" "$built" >>"$RUNTIME/compose.log" 2>&1
+    if compose up -d --build --remove-orphans && dashboard_healthy; then
+      set_state failed "The new version didn't start, so Fifofarm went back to the previous one. Details: autopost/runtime/compose.log"
+    else
+      log "update: the previous version doesn't start either"
+      set_state failed "An update failed and Fifofarm couldn't start the previous version either. Details: autopost/runtime/compose.log"
+    fi
   fi
+}
+
+# After an update: is the dashboard answering? (It starts in seconds; it
+# doesn't wait for Postiz.)
+dashboard_healthy() {
+  tries=0
+  while [ "$tries" -lt "${FIFOFARM_HEALTH_TRIES:-30}" ]; do
+    if (cd "$APP_DIR" && docker_cmd compose exec -T dashboard wget -T 5 -qO- http://localhost:3000/api/health) >/dev/null 2>&1; then
+      return 0
+    fi
+    tries=$((tries + 1))
+    sleep "${FIFOFARM_HEALTH_WAIT:-3}"
+  done
+  log "update: the dashboard didn't answer after the update"
+  return 1
 }
 
 trim_log() {

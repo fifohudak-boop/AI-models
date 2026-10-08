@@ -51,10 +51,12 @@ function ItemRow({ item }: { item: BatchItem }) {
 
 export function BatchCard({
   batch,
+  author = null,
   onChange,
   onDeleted,
 }: {
   batch: Batch;
+  author?: string | null;
   onChange: (b: Batch) => void;
   onDeleted: (id: string) => void;
 }) {
@@ -99,7 +101,8 @@ export function BatchCard({
         {batch.media?.previewUrl && <img src={batch.media.previewUrl} alt="" />}
         <div style={{ flex: 1, minWidth: 0 }}>
           <div className="muted small">
-            {when} · {summarize(batch)}
+            {when}
+            {author && ` by ${author}`} · {summarize(batch)}
           </div>
           {batch.title && <strong>{batch.title}</strong>}
           <div className="batch-caption">{batch.caption || <span className="muted">(no caption)</span>}</div>

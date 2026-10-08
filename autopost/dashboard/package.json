@@ -5,11 +5,11 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
-    "server": "node server/index.js",
+    "server": "node --disable-warning=ExperimentalWarning server/index.js",
     "build": "tsc -b && vite build",
-    "start": "node server/index.js",
+    "start": "node --disable-warning=ExperimentalWarning server/index.js",
     "lint": "eslint .",
-    "test": "node --test test/*.test.js"
+    "test": "node --disable-warning=ExperimentalWarning --test test/*.test.js"
   },
   "dependencies": {
     "express": "^5.2.1",

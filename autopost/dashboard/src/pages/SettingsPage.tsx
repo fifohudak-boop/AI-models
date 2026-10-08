@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useState } from 'react';
-import type { Preferences, Status, SystemInfo } from '../types';
+import type { Preferences, Session, Status, SystemInfo, TeamInfo, User } from '../types';
 import { api } from '../api';
 import { CopyField } from '../components/CopyField';
+import { formatWhen } from '../format';
 
 function when(iso: string | undefined) {
   if (!iso) return '—';
@@ -63,6 +64,170 @@ function SystemCard({ system, onReload, toast }: { system: SystemInfo; onReload:
   );
 }
 
+function ProfileCard({ user, onSession, toast }: { user: User; onSession: (s: Session) => void; toast: (m: string) => void }) {
+  const [name, setName] = useState(user.name);
+  const [email, setEmail] = useState(user.email ?? '');
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const changed = name.trim() !== user.name || email.trim() !== (user.email ?? '');
+  return (
+    <section className="card">
+      <form
+        className="stack"
+        onSubmit={async (e) => {
+          e.preventDefault();
+          setBusy(true);
+          setError(null);
+          try {
+            onSession(await api.updateMe({ name, ...(email.trim() ? { email } : {}) }));
+            toast('Saved');
+          } catch (err) {
+            setError((err as Error).message);
+          } finally {
+            setBusy(false);
+          }
+        }}
+      >
+        <div className="card-head" style={{ marginBottom: 0 }}>
+          <h2>Your account</h2>
+          <span className={`chip ${user.role === 'owner' ? 'published' : ''}`}>{user.role === 'owner' ? 'owner' : 'team member'}</span>
+        </div>
+        {!user.email && (
+          <div className="notice info small">Add your email: from then on you sign in with your email and password.</div>
+        )}
+        <label className="field">
+          <span>Name</span>
+          <input type="text" autoComplete="name" value={name} onChange={(e) => setName(e.target.value)} />
+        </label>
+        <label className="field">
+          <span>Email (you sign in with it)</span>
+          <input type="email" autoComplete="email" value={email} onChange={(e) => setEmail(e.target.value)} />
+        </label>
+        {error && <div className="notice error small">{error}</div>}
+        <div className="row">
+          <button className="btn primary small" disabled={busy || !changed || !name.trim()}>
+            {busy ? 'Saving…' : 'Save'}
+          </button>
+        </div>
+      </form>
+    </section>
+  );
+}
+
+function TeamCard({ me, toast }: { me: User; toast: (m: string) => void }) {
+  const [team, setTeam] = useState<TeamInfo | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [reset, setReset] = useState<{ name: string; password: string } | null>(null);
+  const signupLink = `${window.location.origin}/#/signup`;
+
+  const load = useCallback(() => {
+    api
+      .team()
+      .then(setTeam)
+      .catch((err) => setError(err.message));
+  }, []);
+  useEffect(load, [load]);
+
+  if (!team) return <section className="card muted">{error ?? 'Loading team…'}</section>;
+  const members = team.users.filter((u) => u.id !== me.id);
+
+  return (
+    <section className="card stack">
+      <h2>Team</h2>
+      <p className="muted small">
+        Everyone signs in with their own email and password. Team members see and post to only the accounts they
+        connected (and their own History and Analytics); you see everything and can move an account to someone on the
+        Accounts page.
+      </p>
+      <label className="check">
+        <input
+          type="checkbox"
+          checked={team.signupsOpen}
+          onChange={async (e) => {
+            try {
+              const res = await api.setSignups(e.target.checked);
+              setTeam({ ...team, signupsOpen: res.signupsOpen });
+              toast(res.signupsOpen ? 'Sign-up is open' : 'Sign-up is closed');
+            } catch (err) {
+              setError((err as Error).message);
+            }
+          }}
+        />
+        <span>
+          Anyone with the link can create an account
+          <span className="muted small" style={{ display: 'block' }}>
+            Turn this off once your team has joined, so strangers can't sign up.
+          </span>
+        </span>
+      </label>
+      {team.signupsOpen && <CopyField label="Sign-up link to send your team" value={signupLink} />}
+      {error && <div className="notice error small">{error}</div>}
+      {reset && (
+        <div className="notice ok small stack">
+          <span>
+            New password for {reset.name} — send it to them; they can change it in Settings after signing in.
+          </span>
+          <CopyField value={reset.password} />
+          <button className="btn link small" onClick={() => setReset(null)}>
+            Hide
+          </button>
+        </div>
+      )}
+      {members.length === 0 ? (
+        <p className="muted small">Nobody else has joined yet.</p>
+      ) : (
+        <div className="account-list">
+          {members.map((u) => (
+            <div className="account" key={u.id}>
+              <div className="avatar">
+                <span className="initials">{u.name.slice(0, 2).toUpperCase()}</span>
+              </div>
+              <div className="account-main">
+                <div className="account-name">{u.name}</div>
+                <div className="account-meta">
+                  {u.email} · {u.accounts} account{u.accounts === 1 ? '' : 's'} · {u.posts} post{u.posts === 1 ? '' : 's'}
+                  {u.lastLoginAt && ` · last signed in ${formatWhen(u.lastLoginAt)}`}
+                </div>
+              </div>
+              <div className="row">
+                <button
+                  className="btn small"
+                  onClick={async () => {
+                    if (!window.confirm(`Give ${u.name} a new password? Their current one stops working.`)) return;
+                    try {
+                      const res = await api.resetMemberPassword(u.id);
+                      setReset({ name: u.name, password: res.password });
+                    } catch (err) {
+                      setError((err as Error).message);
+                    }
+                  }}
+                >
+                  New password
+                </button>
+                <button
+                  className="btn danger small"
+                  onClick={async () => {
+                    if (!window.confirm(`Remove ${u.name}? Their connected accounts move to you; nothing is disconnected.`)) return;
+                    try {
+                      await api.removeMember(u.id);
+                      toast(`Removed ${u.name}`);
+                      load();
+                    } catch (err) {
+                      setError((err as Error).message);
+                    }
+                  }}
+                >
+                  Remove
+                </button>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+    </section>
+  );
+}
+
 function PasswordCard({ toast }: { toast: (m: string) => void }) {
   const [current, setCurrent] = useState('');
   const [next, setNext] = useState('');
@@ -80,7 +245,7 @@ function PasswordCard({ toast }: { toast: (m: string) => void }) {
             await api.changePassword(current, next);
             setCurrent('');
             setNext('');
-            toast('Password changed — other browsers have to sign in again');
+            toast('Password changed — your other browsers have to sign in again');
           } catch (err) {
             setError((err as Error).message);
           } finally {
@@ -89,7 +254,7 @@ function PasswordCard({ toast }: { toast: (m: string) => void }) {
         }}
       >
         <h2>Password</h2>
-        <p className="muted small">One password for you and your team. Changing it signs everyone else out.</p>
+        <p className="muted small">Changing it signs you out of your other browsers and devices.</p>
         <label className="field">
           <span>Current password</span>
           <input type="password" autoComplete="current-password" value={current} onChange={(e) => setCurrent(e.target.value)} />
@@ -202,7 +367,21 @@ function EngineCard({ system, status }: { system: SystemInfo; status: Status }) 
   );
 }
 
-export function SettingsPage({ status, onLogout, toast }: { status: Status; onLogout: () => void; toast: (m: string) => void }) {
+export function SettingsPage({
+  status,
+  session,
+  onSession,
+  onLogout,
+  toast,
+}: {
+  status: Status;
+  session: Session;
+  onSession: (s: Session) => void;
+  onLogout: () => void;
+  toast: (m: string) => void;
+}) {
+  const user = session.user!;
+  const isOwner = user.role === 'owner';
   const [prefs, setPrefs] = useState<Preferences | null>(null);
   const [system, setSystem] = useState<SystemInfo | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -215,12 +394,13 @@ export function SettingsPage({ status, onLogout, toast }: { status: Status; onLo
   }, []);
 
   useEffect(() => {
+    if (!isOwner) return;
     api
       .preferences()
       .then(setPrefs)
       .catch((err) => setError(err.message));
     loadSystem();
-  }, [loadSystem]);
+  }, [loadSystem, isOwner]);
 
   async function save(patch: Partial<Preferences>) {
     setPrefs((p) => (p ? { ...p, ...patch } : p));
@@ -232,6 +412,35 @@ export function SettingsPage({ status, onLogout, toast }: { status: Status; onLo
     }
   }
 
+  const signOut = (
+    <section className="card">
+      <div className="row">
+        <span className="muted small">Signed in as {user.email || user.name}</span>
+        <span className="spacer" />
+        <button className="btn" onClick={onLogout}>
+          Sign out
+        </button>
+      </div>
+    </section>
+  );
+
+  if (!isOwner) {
+    return (
+      <div>
+        <h1>Settings</h1>
+        <ProfileCard user={user} onSession={onSession} toast={toast} />
+        <PasswordCard toast={toast} />
+        <section className="card">
+          <p className="muted small" style={{ margin: 0 }}>
+            Posting settings (caption shortening, YouTube visibility, TikTok privacy, who can reply on X) are the same for
+            the whole team and are set by the owner of this {status.brand}.
+          </p>
+        </section>
+        {signOut}
+      </div>
+    );
+  }
+
   if (!prefs) return <p className="muted">{error ?? 'Loading…'}</p>;
 
   return (
@@ -239,8 +448,10 @@ export function SettingsPage({ status, onLogout, toast }: { status: Status; onLo
       <h1>Settings</h1>
       {error && <div className="notice error">{error}</div>}
 
-      {system && <SystemCard system={system} onReload={loadSystem} toast={toast} />}
+      <ProfileCard user={user} onSession={onSession} toast={toast} />
       <PasswordCard toast={toast} />
+      <TeamCard me={user} toast={toast} />
+      {system && <SystemCard system={system} onReload={loadSystem} toast={toast} />}
       {system && <DomainCard system={system} />}
 
       <section className="card stack">
@@ -337,13 +548,7 @@ export function SettingsPage({ status, onLogout, toast }: { status: Status; onLo
 
       {system && <EngineCard system={system} status={status} />}
 
-      <section className="card">
-        <div className="row">
-          <button className="btn" onClick={onLogout}>
-            Sign out
-          </button>
-        </div>
-      </section>
+      {signOut}
     </div>
   );
 }

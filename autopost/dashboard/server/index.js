@@ -1,5 +1,6 @@
 import express from 'express';
 import multer from 'multer';
+import { randomInt } from 'node:crypto';
 import dns from 'node:dns';
 import fs from 'node:fs';
 import path from 'node:path';
@@ -7,7 +8,6 @@ import { fileURLToPath } from 'node:url';
 import {
   BRAND_NAME,
   DASHBOARD_DOMAIN,
-  DASHBOARD_PASSWORD,
   DASHBOARD_URL,
   PORT,
   POSTIZ_DOMAIN,
@@ -21,14 +21,38 @@ import {
 } from './config.js';
 import {
   changePassword,
-  checkPassword,
   clearSessionCookie,
-  isLoggedIn,
+  login,
+  ownerNeedsEmail,
   requireLogin,
+  requireOwner,
   sameOriginOnly,
   sessionCookie,
-  tooManyFailures,
+  signup,
+  userFromRequest,
 } from './auth.js';
+import {
+  ensureOwner,
+  getUser,
+  listUsers,
+  ownerUser,
+  publicUser,
+  removeUser,
+  setPassword,
+  setSignupsOpen,
+  signupsOpen,
+  updateProfile,
+} from './users.js';
+import {
+  assignAccount,
+  canUseAccount,
+  claimNewAccounts,
+  forgetAccount,
+  ownerMap,
+  recordPendingConnect,
+  visibleAccounts,
+} from './ownership.js';
+import { markDue, overview, runAnalytics, startAnalyticsLoop, videoDetail } from './analytics.js';
 import {
   VERIFICATION_NAME_PATTERN,
   setupCatalog,
@@ -50,6 +74,7 @@ import {
 } from './platforms.js';
 import { getMediaJob, getMediaResult, startMediaJob } from './media.js';
 import {
+  batchOwner,
   createBatch,
   getBatch,
   listBatches,
@@ -59,7 +84,9 @@ import {
   withStatus,
 } from './batches.js';
 
-if (!DASHBOARD_PASSWORD && !getSettings().passwordHash) {
+// The person who installed Fifofarm is the owner (their DASHBOARD_PASSWORD,
+// or the password they set in Settings, keeps working).
+if (!ensureOwner()) {
   console.error('DASHBOARD_PASSWORD is not set. Run ./install.sh or add it to .env, then restart.');
   process.exit(1);
 }
@@ -118,21 +145,39 @@ app.get(
   })
 );
 
-// ---- Session ----
+// ---- Session & sign-up ----
+
+function sessionInfo(user) {
+  return {
+    loggedIn: !!user,
+    user: publicUser(user),
+    signupsOpen: signupsOpen(),
+    // Until the owner adds an email, they sign in with just their password.
+    ownerNeedsEmail: ownerNeedsEmail(),
+    brand: BRAND_NAME,
+  };
+}
 
 app.get('/api/session', (req, res) => {
-  res.json({ loggedIn: isLoggedIn(req) });
+  res.json(sessionInfo(userFromRequest(req)));
 });
 
 app.post('/api/login', (req, res) => {
-  if (tooManyFailures(req.ip)) {
-    return res.status(429).json({ error: 'Too many wrong passwords. Wait 15 minutes and try again.' });
-  }
-  if (!checkPassword(req.ip, req.body?.password)) {
-    return res.status(401).json({ error: 'Wrong password.' });
-  }
-  res.setHeader('Set-Cookie', sessionCookie());
-  res.json({ loggedIn: true });
+  const result = login(req.ip, req.body?.email, req.body?.password);
+  if (result.error) return res.status(result.status).json({ error: result.error });
+  res.setHeader('Set-Cookie', sessionCookie(result.user));
+  res.json(sessionInfo(result.user));
+});
+
+app.post('/api/signup', (req, res) => {
+  const result = signup(req.ip, {
+    name: req.body?.name,
+    email: req.body?.email,
+    password: req.body?.password,
+  });
+  if (result.error) return res.status(result.status).json({ error: result.error });
+  res.setHeader('Set-Cookie', sessionCookie(result.user));
+  res.status(201).json(sessionInfo(result.user));
 });
 
 app.post('/api/logout', (_req, res) => {
@@ -141,6 +186,8 @@ app.post('/api/logout', (_req, res) => {
 });
 
 app.use('/api', requireLogin);
+
+const isOwner = (req) => req.user.role === 'owner';
 
 // ---- Setup & settings ----
 
@@ -166,6 +213,7 @@ app.get(
 
 app.put(
   '/api/settings/api-key',
+  requireOwner,
   asyncRoute(async (req, res) => {
     if (apiKeyFromEnv()) {
       return res.status(409).json({ error: 'The API key is set in .env — change it there.' });
@@ -189,17 +237,71 @@ app.put(
 // in the background while Postiz starts).
 app.post(
   '/api/setup/auto',
+  requireOwner,
   asyncRoute(async (_req, res) => {
     const phase = await trySetupOnce();
     res.json({ phase, detail: autoSetupState().detail });
   })
 );
 
+// ---- Your account ----
+
 app.put('/api/settings/password', (req, res) => {
-  const result = changePassword(req.ip, req.body?.current, req.body?.next);
-  if (!result.ok) return res.status(result.status).json({ error: result.error });
+  const result = changePassword(req.ip, req.user, req.body?.current, req.body?.next);
+  if (result.error) return res.status(result.status).json({ error: result.error });
   // This browser stays signed in; every other one has to sign in again.
-  res.setHeader('Set-Cookie', sessionCookie());
+  res.setHeader('Set-Cookie', sessionCookie(result.user));
+  res.json({ ok: true });
+});
+
+app.put('/api/me', (req, res) => {
+  const result = updateProfile(req.user.id, { name: req.body?.name, email: req.body?.email });
+  if (result.error) return res.status(400).json({ error: result.error });
+  res.json(sessionInfo(result.user));
+});
+
+// ---- Team (owner) ----
+
+function userCounts() {
+  const owner = ownerUser();
+  const accounts = new Map();
+  for (const userId of ownerMap().values()) accounts.set(userId, (accounts.get(userId) ?? 0) + 1);
+  const posts = new Map();
+  for (const b of listBatches(Infinity)) {
+    const id = batchOwner(b, owner.id);
+    posts.set(id, (posts.get(id) ?? 0) + 1);
+  }
+  return { accounts, posts };
+}
+
+app.get('/api/team', requireOwner, (_req, res) => {
+  const { accounts, posts } = userCounts();
+  res.json({
+    signupsOpen: signupsOpen(),
+    users: listUsers().map((u) => ({ ...publicUser(u), accounts: accounts.get(u.id) ?? 0, posts: posts.get(u.id) ?? 0 })),
+  });
+});
+
+app.put('/api/team/signups', requireOwner, (req, res) => {
+  if (typeof req.body?.open !== 'boolean') return res.status(400).json({ error: 'Say open: true or false.' });
+  setSignupsOpen(req.body.open);
+  res.json({ signupsOpen: signupsOpen() });
+});
+
+const TEMP_PASSWORD_CHARS = 'abcdefghijkmnpqrstuvwxyzABCDEFGHJKLMNPQRSTUVWXYZ23456789';
+
+app.post('/api/team/:id/reset-password', requireOwner, (req, res) => {
+  const user = getUser(req.params.id);
+  if (!user) return res.status(404).json({ error: 'Account not found.' });
+  if (user.id === req.user.id) return res.status(400).json({ error: 'Change your own password under Your account.' });
+  const password = Array.from({ length: 12 }, () => TEMP_PASSWORD_CHARS[randomInt(TEMP_PASSWORD_CHARS.length)]).join('');
+  setPassword(user.id, password);
+  res.json({ password });
+});
+
+app.delete('/api/team/:id', requireOwner, (req, res) => {
+  const result = removeUser(req.params.id);
+  if (result.error) return res.status(400).json({ error: result.error });
   res.json({ ok: true });
 });
 
@@ -215,7 +317,7 @@ function serverDomains() {
   };
 }
 
-app.get('/api/system', (_req, res) => {
+app.get('/api/system', requireOwner, (_req, res) => {
   const { postizLogin } = getSettings();
   res.json({
     brand: BRAND_NAME,
@@ -225,7 +327,7 @@ app.get('/api/system', (_req, res) => {
   });
 });
 
-app.post('/api/system/check-updates', (_req, res) => {
+app.post('/api/system/check-updates', requireOwner, (_req, res) => {
   try {
     requestUpdateCheck();
   } catch (err) {
@@ -246,6 +348,7 @@ async function ipv4(host) {
 
 app.put(
   '/api/settings/domain',
+  requireOwner,
   asyncRoute(async (req, res) => {
     if (!DASHBOARD_DOMAIN) {
       return res.status(409).json({ error: 'Changing the domain needs server mode (install.sh → option 2).' });
@@ -307,7 +410,7 @@ app.get('/api/networks', (_req, res) => {
   });
 });
 
-app.put('/api/networks/:id', (req, res) => {
+app.put('/api/networks/:id', requireOwner, (req, res) => {
   const { changes, error } = validateSetupValues(req.params.id, req.body?.values);
   if (error) return res.status(400).json({ error });
   try {
@@ -319,7 +422,7 @@ app.put('/api/networks/:id', (req, res) => {
   res.json({ ok: true, autoApply: host.helperActive, keys: Object.keys(changes) });
 });
 
-app.put('/api/verification', (req, res) => {
+app.put('/api/verification', requireOwner, (req, res) => {
   const { name, content, error } = validateVerificationFile(
     String(req.body?.name ?? '').trim(),
     String(req.body?.content ?? '')
@@ -329,7 +432,7 @@ app.put('/api/verification', (req, res) => {
   res.json({ ok: true, files: verificationFiles() });
 });
 
-app.delete('/api/verification/:name', (req, res) => {
+app.delete('/api/verification/:name', requireOwner, (req, res) => {
   if (!VERIFICATION_NAME_PATTERN.test(req.params.name)) return res.status(400).json({ error: 'Bad name.' });
   fs.rmSync(path.join(VERIFICATION_DIR, req.params.name), { force: true });
   res.json({ ok: true, files: verificationFiles() });
@@ -348,22 +451,41 @@ const PREFERENCE_RULES = {
     v && typeof v === 'object' && Object.values(v).every((id) => typeof id === 'string' && /^\d*$/.test(id)),
 };
 
-app.get('/api/preferences', (_req, res) => {
-  res.json(getSettings().preferences);
+// Members only see the Pinterest boards of their own accounts.
+function preferencesFor(req, prefs = getSettings().preferences) {
+  if (isOwner(req)) return prefs;
+  const owners = ownerMap();
+  const boards = Object.fromEntries(
+    Object.entries(prefs.pinterestBoards).filter(([id]) => canUseAccount(req.user, id, owners))
+  );
+  return { ...prefs, pinterestBoards: boards };
+}
+
+app.get('/api/preferences', (req, res) => {
+  res.json(preferencesFor(req));
 });
 
+// Posting defaults are shared by the whole team, so only the owner changes
+// them. Anyone may pick the Pinterest board of their own accounts.
 app.put('/api/preferences', (req, res) => {
   const patch = {};
+  const owners = ownerMap();
   for (const [key, value] of Object.entries(req.body ?? {})) {
     const rule = PREFERENCE_RULES[key];
     if (!rule) return res.status(400).json({ error: `Unknown setting: ${key}` });
     if (!rule(value)) return res.status(400).json({ error: `Invalid value for ${key}` });
+    if (!isOwner(req)) {
+      if (key !== 'pinterestBoards') return res.status(403).json({ error: 'Only the owner can change posting defaults.' });
+      if (!Object.keys(value).every((id) => canUseAccount(req.user, id, owners))) {
+        return res.status(403).json({ error: "That isn't one of your accounts." });
+      }
+    }
     patch[key] = value;
   }
   if (patch.pinterestBoards) {
     patch.pinterestBoards = { ...getSettings().preferences.pinterestBoards, ...patch.pinterestBoards };
   }
-  res.json(saveSettings({ preferences: patch }).preferences);
+  res.json(preferencesFor(req, saveSettings({ preferences: patch }).preferences));
 });
 
 // ---- Accounts ----
@@ -395,6 +517,8 @@ async function loadAccounts({ fresh = false } = {}) {
 
 async function fetchAccounts() {
   const list = await postiz.listIntegrations();
+  // New accounts belong to whoever just connected them (see ownership.js).
+  claimNewAccounts(list);
   return Promise.all(
     list.map(async (a) => ({
       id: a.id,
@@ -410,12 +534,61 @@ async function fetchAccounts() {
   );
 }
 
+function userNames() {
+  return new Map(listUsers().map((u) => [u.id, u.name]));
+}
+
+// The accounts this person may see and post to; each says who owns it.
+async function accountsFor(user, options) {
+  const names = userNames();
+  return visibleAccounts(user, await loadAccounts(options)).map((a) => ({
+    ...a,
+    ownerName: names.get(a.ownerId) ?? null,
+  }));
+}
+
 app.get(
   '/api/accounts',
-  asyncRoute(async (_req, res) => {
-    res.json(await loadAccounts({ fresh: true }));
+  asyncRoute(async (req, res) => {
+    res.json(await accountsFor(req.user, { fresh: true }));
   })
 );
+
+// Owner: give an account to someone on the team (they then post to it and see
+// its analytics; it disappears from everyone else's list except the owner's).
+app.put(
+  '/api/accounts/:id/owner',
+  requireOwner,
+  asyncRoute(async (req, res) => {
+    const user = getUser(req.body?.userId);
+    if (!user) return res.status(400).json({ error: 'Choose someone on your team.' });
+    const accounts = await loadAccounts();
+    if (!accounts.some((a) => a.id === req.params.id)) return res.status(404).json({ error: 'Account not found.' });
+    assignAccount(req.params.id, user.id);
+    res.json(await accountsFor(req.user));
+  })
+);
+
+// Rejects accounts this person may not use (members: only their own).
+async function requireAccount(req, res, id) {
+  const accounts = await loadAccounts();
+  const account = accounts.find((a) => a.id === id);
+  if (!account || !canUseAccount(req.user, id)) {
+    res.status(404).json({ error: 'Account not found.' });
+    return null;
+  }
+  return account;
+}
+
+// Remember who is connecting which network, so the new account becomes theirs.
+async function startConnect(req, provider) {
+  const all = await loadAccounts({ fresh: true });
+  recordPendingConnect(
+    req.user.id,
+    provider,
+    all.map((a) => a.id)
+  );
+}
 
 function connectableEntry(provider, res) {
   const entry = platformCatalog(process.env).find((p) => p.identifier === provider);
@@ -437,6 +610,7 @@ app.post(
   asyncRoute(async (req, res) => {
     const provider = req.body?.provider;
     if (!connectableEntry(provider, res)) return;
+    await startConnect(req, provider);
     const url = await postiz.connectUrl(provider);
     res.json({ url: req.body?.another ? withAccountChooser(provider, url) : url });
   })
@@ -449,6 +623,7 @@ app.post(
   asyncRoute(async (req, res) => {
     const provider = req.body?.provider;
     if (!connectableEntry(provider, res)) return;
+    await startConnect(req, provider);
     const url = withAccountChooser(provider, await postiz.connectUrl(provider));
     res.json({ url, expiresAt: new Date(Date.now() + 55 * 60 * 1000).toISOString() });
   })
@@ -462,6 +637,7 @@ app.post(
     if (!isNonEmptyString(handle) || !isNonEmptyString(appPassword)) {
       return res.status(400).json({ error: 'Enter your Bluesky handle and an app password.' });
     }
+    await startConnect(req, 'bluesky');
     try {
       await postiz.connectWithFields('bluesky', {
         service,
@@ -474,7 +650,8 @@ app.post(
       }
       throw err;
     }
-    forgetAccounts();
+    // Fetch now so the new account is attributed while the connect is fresh.
+    await loadAccounts({ fresh: true });
     res.json({ ok: true });
   })
 );
@@ -482,8 +659,10 @@ app.post(
 app.delete(
   '/api/accounts/:id',
   asyncRoute(async (req, res) => {
+    if (!(await requireAccount(req, res, req.params.id))) return;
     await postiz.deleteIntegration(req.params.id);
     maxLengthCache.delete(req.params.id);
+    forgetAccount(req.params.id);
     forgetAccounts();
     res.json({ ok: true });
   })
@@ -492,6 +671,7 @@ app.delete(
 app.get(
   '/api/accounts/:id/boards',
   asyncRoute(async (req, res) => {
+    if (!(await requireAccount(req, res, req.params.id))) return;
     res.json(await postiz.pinterestBoards(req.params.id));
   })
 );
@@ -534,7 +714,7 @@ app.post(
     const captions = readCaptions(req.body?.captions);
     const media = req.body?.mediaId ? getMediaResult(req.body.mediaId) : null;
     const prefs = getSettings().preferences;
-    const accounts = await loadAccounts();
+    const accounts = await accountsFor(req.user);
     const out = {};
     for (const account of accounts) {
       const text = captions[account.id] ?? caption;
@@ -612,7 +792,7 @@ app.post(
     }
     if (!media && !caption.trim()) return res.status(400).json({ error: 'Add a video or write a caption.' });
 
-    const accounts = await loadAccounts();
+    const accounts = await accountsFor(req.user);
     const chosen = accountIds.map((id) => accounts.find((a) => a.id === id)).filter(Boolean);
     if (chosen.length !== accountIds.length) {
       return res.status(400).json({ error: 'Some accounts no longer exist — refresh the page.' });
@@ -623,6 +803,7 @@ app.post(
     const items = await Promise.all(chosen.map((account) => sendToAccount(account, input, prefs)));
 
     const batch = createBatch({
+      userId: req.user.id,
       caption,
       title,
       captions,
@@ -630,6 +811,8 @@ app.post(
       scheduleAt: schedule.value,
       items,
     });
+    // Start following its numbers for Analytics.
+    runAnalytics().catch(() => {});
     res.status(201).json(withStatus(batch, null, []));
   })
 );
@@ -641,22 +824,41 @@ async function liveStatus(batches) {
   const byId = new Map(posts.map((p) => [p.id, p]));
   const anyError = batches.some((b) => b.items.some((i) => byId.get(i.postId)?.state === 'ERROR'));
   const notifications = anyError ? await postiz.notifications().catch(() => []) : [];
-  return batches.map((b) => withStatus(b, byId, notifications));
+  const names = userNames();
+  const ownerId = ownerUser().id;
+  return batches.map((b) => {
+    const withLive = withStatus(b, byId, notifications);
+    const by = batchOwner(b, ownerId);
+    return { ...withLive, userId: by, userName: names.get(by) ?? 'Removed person' };
+  });
+}
+
+// Members see what they posted; the owner sees everyone's posts.
+function batchFor(req, res) {
+  const batch = getBatch(req.params.id);
+  if (!batch || (!isOwner(req) && batchOwner(batch, ownerUser().id) !== req.user.id)) {
+    res.status(404).json({ error: 'Not found.' });
+    return null;
+  }
+  return batch;
 }
 
 app.get(
   '/api/batches',
   asyncRoute(async (req, res) => {
     const limit = Math.min(Number(req.query.limit) || 30, 200);
-    res.json(await liveStatus(listBatches(limit)));
+    const filter = isOwner(req)
+      ? { userId: typeof req.query.user === 'string' && req.query.user ? req.query.user : null }
+      : { userId: req.user.id };
+    res.json(await liveStatus(listBatches(limit, { ...filter, ownerId: ownerUser().id })));
   })
 );
 
 app.get(
   '/api/batches/:id',
   asyncRoute(async (req, res) => {
-    const batch = getBatch(req.params.id);
-    if (!batch) return res.status(404).json({ error: 'Not found.' });
+    const batch = batchFor(req, res);
+    if (!batch) return;
     const [withLive] = await liveStatus([batch]);
     res.json(withLive);
   })
@@ -668,24 +870,24 @@ const retrying = new Set();
 app.post(
   '/api/batches/:id/retry',
   asyncRoute(async (req, res) => {
-    const batch = getBatch(req.params.id);
-    if (!batch) return res.status(404).json({ error: 'Not found.' });
+    const batch = batchFor(req, res);
+    if (!batch) return;
     if (retrying.has(batch.id)) return res.status(409).json({ error: 'Already retrying this post.' });
     retrying.add(batch.id);
     try {
-      await retryBatch(batch, res);
+      await retryBatch(req, batch, res);
     } finally {
       retrying.delete(batch.id);
     }
   })
 );
 
-async function retryBatch(batch, res) {
+async function retryBatch(req, batch, res) {
   const [current] = await liveStatus([batch]);
   const failed = current.items.filter((i) => i.state === 'failed');
   if (failed.length === 0) return res.json(current);
 
-  const accounts = await loadAccounts();
+  const accounts = await accountsFor(req.user);
   const prefs = getSettings().preferences;
   const scheduleAt = batch.scheduleAt && Date.parse(batch.scheduleAt) > Date.now() ? batch.scheduleAt : null;
   const input = { ...batch, mediaName: batch.media?.name, scheduleAt };
@@ -703,19 +905,65 @@ async function retryBatch(batch, res) {
     b.items = b.items.map((item) => retried.find((r) => r.accountId === item.accountId) ?? item);
   });
   const [updated] = await liveStatus([getBatch(batch.id)]);
+  runAnalytics().catch(() => {});
   res.json(updated);
 }
 
 app.delete(
   '/api/batches/:id',
   asyncRoute(async (req, res) => {
-    const batch = getBatch(req.params.id);
-    if (!batch) return res.status(404).json({ error: 'Not found.' });
+    const batch = batchFor(req, res);
+    if (!batch) return;
     await Promise.all(
       batch.items.filter((i) => i.postId).map((i) => postiz.deletePost(i.postId).catch(() => {}))
     );
     removeBatch(batch.id);
     res.json({ ok: true });
+  })
+);
+
+// ---- Analytics ----
+
+const PERIODS = new Set([7, 30, 90]);
+const periodOf = (req) => (PERIODS.has(Number(req.query.days)) ? Number(req.query.days) : 30);
+
+// Members: their own accounts. Owner: everyone's, or one person's (?member=id).
+async function analyticsAccounts(req) {
+  const accounts = await accountsFor(req.user);
+  const member = typeof req.query.member === 'string' ? req.query.member : '';
+  return isOwner(req) && member ? accounts.filter((a) => a.ownerId === member) : accounts;
+}
+
+app.get(
+  '/api/analytics',
+  asyncRoute(async (req, res) => {
+    res.json(overview({ accounts: await analyticsAccounts(req), days: periodOf(req), ownerNames: userNames() }));
+  })
+);
+
+app.get(
+  '/api/analytics/videos/:postId',
+  asyncRoute(async (req, res) => {
+    const detail = videoDetail(req.params.postId, { accounts: await accountsFor(req.user) });
+    if (!detail) return res.status(404).json({ error: 'Not found.' });
+    res.json(detail);
+  })
+);
+
+// "Refresh now": fetch fresh numbers for these accounts (at most once a
+// minute per person), wait up to ~25 s for them, then answer.
+const lastRefresh = new Map();
+app.post(
+  '/api/analytics/refresh',
+  asyncRoute(async (req, res) => {
+    const accounts = await analyticsAccounts(req);
+    if (Date.now() - (lastRefresh.get(req.user.id) ?? 0) > 60_000) {
+      lastRefresh.set(req.user.id, Date.now());
+      markDue(accounts.map((a) => a.id));
+    }
+    const all = await loadAccounts();
+    await Promise.race([runAnalytics({ accounts: all }), new Promise((r) => setTimeout(r, 25_000))]).catch(() => {});
+    res.json(overview({ accounts, days: periodOf(req), ownerNames: userNames() }));
   })
 );
 
@@ -746,4 +994,5 @@ app.get(/^(?!\/api\/).*/, (_req, res) => {
 app.listen(PORT, () => {
   console.log(`${BRAND_NAME} dashboard on http://localhost:${PORT} (Postiz: ${POSTIZ_PUBLIC_URL})`);
   startAutoSetup();
+  if (process.env.ANALYTICS_LOOP !== 'off') startAnalyticsLoop();
 });

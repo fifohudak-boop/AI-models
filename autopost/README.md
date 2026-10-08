@@ -3,8 +3,9 @@
 Drop a video into Fifofarm, write one caption, press **Post**. It goes out to
 every account you've connected: YouTube, TikTok, Instagram, Facebook, Threads,
 X, LinkedIn, Pinterest, Bluesky, Mastodon, as many accounts per network as you
-like. Post now or schedule it, and watch each account turn green as it
-publishes.
+like. Post now or schedule it, watch each account turn green as it publishes,
+and see how every video does in **Analytics**. Your team signs up with their
+own email and password and works with their own accounts.
 
 Everything is open source and self-hosted. There are no subscriptions and no
 post limits. The only costs are a server (free or ~€5.50/month, see
@@ -34,6 +35,13 @@ post limits. The only costs are a server (free or ~€5.50/month, see
     wrong
   - walks you through each network's developer app and applies the keys
     itself — no `.env` editing, no terminal
+  - **team accounts:** everyone signs in with their own email and password.
+    Members see and post to only the accounts they connected (and their own
+    History and Analytics); the owner sees everything, can move an account to
+    someone, reset passwords, remove people and close sign-up
+  - **analytics:** views, likes, comments, shares, saves and reach for every
+    post (checked hourly while new, then less often), views per day, account
+    numbers from each network (followers, reach…) and the best hour to post
 - **[Postiz](https://github.com/gitroomhq/postiz-app)** (open source) is the
   engine. It does the actual talking to each network: sign-in (OAuth), token
   refresh, uploads, retries, and checking that the post went live. Fifofarm
@@ -43,7 +51,8 @@ post limits. The only costs are a server (free or ~€5.50/month, see
   automatically. Anything queued meanwhile still goes out.
 - **Server helper** (`scripts/maintain.sh`, cron, every minute): applies
   network keys and domain changes saved in Fifofarm, and installs new versions
-  of the tracked branch (`main`) by itself within 5 minutes.
+  of the tracked branch (`main`) by itself within 5 minutes. If a new version
+  doesn't start, it puts the previous one back by itself.
 
 ## Quick start
 
@@ -71,6 +80,9 @@ Then, in Fifofarm:
    which account to use) or **Send link** (open it on the phone where that
    account is logged in, or send it to whoever owns the account).
 3. **Post** page → drop video → caption → **Post to N accounts**.
+4. **Your team:** Settings → Your account → add your email (from then on you
+   sign in with it). Settings → Team shows the sign-up link to send your team;
+   turn sign-up off once everyone has joined.
 
 **On a Mac with Claude Cowork?** See [docs/mac-with-cowork.md](docs/mac-with-cowork.md).
 
@@ -115,9 +127,15 @@ Developer apps ask for a Terms of Service and Privacy Policy address: use
   post. **Retry failed** re-sends only to the accounts that failed.
   **Delete** cancels anything not yet published.
 - **Accounts:** connect, add more, send connect links, disconnect, choose a
-  Pinterest board, set up new networks.
-- **Settings:** version and automatic updates, password, domain, YouTube
-  visibility, TikTok privacy, who can reply on X, caption shortening.
+  Pinterest board, set up new networks, and (owner) choose who an account
+  belongs to.
+- **Analytics:** totals for 7/30/90 days, views per day, every account (click
+  it for followers, reach and more) and every post (click it for its growth
+  and the same post on your other accounts), best time to post. **Refresh now**
+  fetches fresh numbers; otherwise they update by themselves.
+- **Settings:** your name, email and password; (owner) the team, version and
+  automatic updates, domain, YouTube visibility, TikTok privacy, who can reply
+  on X, caption shortening.
 
 ## Running it
 
@@ -145,7 +163,8 @@ each network's developer app (Accounts → network → Setup shows them).
 docker compose exec -T postgres pg_dumpall -U postiz > backup.sql
 ```
 
-Your uploaded media is in the `autopost_postiz-uploads` volume.
+Your uploaded media is in the `autopost_postiz-uploads` volume; Fifofarm's own
+data (team accounts, post history, analytics) is in `autopost_dashboard-data`.
 
 ## Troubleshooting
 
@@ -159,7 +178,9 @@ Your uploaded media is in the `autopost_postiz-uploads` volume.
 | TikTok fails with "privacy level" or "unaudited" | Settings → TikTok → *Only me*, and set your TikTok account to private, until TikTok approves your app. |
 | YouTube videos are private | Expected until Google's API audit passes, see above. |
 | An account fails with "reconnect" | Its login expired; click **+ Add another** for that network and log in to it again. |
-| Forgot the password | On the server: `docker compose exec dashboard node server/reset-password.js` prints a new one. |
+| A team member forgot their password | Settings → Team → **New password**, then send it to them. |
+| The owner forgot the password | On the server: `docker compose exec dashboard node server/reset-password.js` prints a new one (add someone's email to reset theirs). |
+| Analytics says "No numbers yet" | Networks take up to an hour to report numbers for a new post. Bluesky, Mastodon and LinkedIn profiles don't share numbers with apps. |
 
 ## What's in this folder
 
@@ -179,8 +200,9 @@ test/                    end-to-end and outage tests (see test/README.md)
 ## Tests
 
 - **Unit + server tests:** `cd dashboard && npm test` (includes the whole
-  server against a fake Postiz: automatic setup, network keys, add-another
-  links, verification files, password changes).
+  server against a fake Postiz: automatic setup, the owner staying signed in
+  through updates, sign-up, who sees which account, network keys, add-another
+  links, verification files, password changes, analytics).
 - **End-to-end:** `test/run-e2e.sh`. It starts the real stack plus a fake
   Mastodon server, drives Fifofarm in a real browser, and checks what
   "Mastodon" received.
