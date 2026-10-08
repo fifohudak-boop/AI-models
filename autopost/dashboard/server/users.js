@@ -43,15 +43,30 @@ export function listUsers() {
 // person who installed Fifofarm becomes the owner and keeps the password they
 // already use (and stays signed in).
 export function ensureOwner() {
-  const existing = ownerUser();
-  if (existing) return existing;
   const settings = getSettings();
+  const existing = ownerUser();
+  if (existing) {
+    // A version from before team accounts ran meanwhile (e.g. an update was
+    // rolled back) and the password was changed there: take that one, as long
+    // as the owner hasn't changed it here since.
+    const imported = Number(kvGet('owner_imported_version', '-1'));
+    if (settings.passwordHash && settings.passwordVersion > imported && existing.session_version === imported) {
+      db.prepare('UPDATE users SET password_hash = ?, session_version = ? WHERE id = ?').run(
+        settings.passwordHash,
+        settings.passwordVersion,
+        existing.id
+      );
+      kvSet('owner_imported_version', settings.passwordVersion);
+    }
+    return ownerUser();
+  }
   const hash = settings.passwordHash || (DASHBOARD_PASSWORD ? hashPassword(DASHBOARD_PASSWORD) : '');
   if (!hash) return null;
   db.prepare(
     `INSERT INTO users (id, email, name, role, password_hash, session_version, created_at)
      VALUES (?, NULL, 'Owner', 'owner', ?, ?, ?)`
   ).run(randomUUID(), hash, settings.passwordVersion, new Date().toISOString());
+  kvSet('owner_imported_version', settings.passwordVersion);
   return ownerUser();
 }
 

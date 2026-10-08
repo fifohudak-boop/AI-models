@@ -195,8 +195,12 @@ update_code() { # force (1 = check now)
     log "update: $new failed, going back to $built"
     printf '%s' "$new" >"$RUNTIME/.failed-commit"
     git -C "$REPO_DIR" checkout -q -f -B "$BRANCH" "$built" >>"$RUNTIME/compose.log" 2>&1
-    compose up -d --build --remove-orphans
-    set_state failed "The new version didn't start, so Fifofarm went back to the previous one. Details: autopost/runtime/compose.log"
+    if compose up -d --build --remove-orphans && dashboard_healthy; then
+      set_state failed "The new version didn't start, so Fifofarm went back to the previous one. Details: autopost/runtime/compose.log"
+    else
+      log "update: the previous version doesn't start either"
+      set_state failed "An update failed and Fifofarm couldn't start the previous version either. Details: autopost/runtime/compose.log"
+    fi
   fi
 }
 
@@ -205,7 +209,7 @@ update_code() { # force (1 = check now)
 dashboard_healthy() {
   tries=0
   while [ "$tries" -lt "${FIFOFARM_HEALTH_TRIES:-30}" ]; do
-    if (cd "$APP_DIR" && docker_cmd compose exec -T dashboard wget -qO- http://localhost:3000/api/health) >/dev/null 2>&1; then
+    if (cd "$APP_DIR" && docker_cmd compose exec -T dashboard wget -T 5 -qO- http://localhost:3000/api/health) >/dev/null 2>&1; then
       return 0
     fi
     tries=$((tries + 1))

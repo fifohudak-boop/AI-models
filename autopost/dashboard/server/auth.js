@@ -19,7 +19,7 @@ const COOKIE = 'autopost_session';
 const SESSION_MAX_AGE_SECONDS = 60 * 60 * 24 * 30; // 30 days
 const MAX_FAILURES = 10;
 const FAILURE_WINDOW_MS = 15 * 60 * 1000;
-const MAX_SIGNUPS_PER_HOUR = 5;
+const MAX_SIGNUP_ATTEMPTS_PER_HOUR = 10;
 const TOO_MANY = 'Too many wrong passwords. Wait 15 minutes and try again.';
 
 const failures = new Map();
@@ -133,17 +133,19 @@ export function login(ip, email, password) {
   return { user: getUser(user.id) };
 }
 
+// Every attempt counts toward the hourly limit (so nobody can test which
+// emails already have an account, or fill the team with fake people).
 export function signup(ip, { name, email, password }) {
   if (!signupsOpen()) return { status: 403, error: 'Sign-up is closed. Ask the owner of this Fifofarm to open it.' };
   const entry = signups.get(ip);
   const recent = entry && Date.now() - entry.first < 60 * 60 * 1000 ? entry : null;
-  if (recent && recent.count >= MAX_SIGNUPS_PER_HOUR) {
-    return { status: 429, error: 'Too many new accounts from here. Try again in an hour.' };
+  if (recent && recent.count >= MAX_SIGNUP_ATTEMPTS_PER_HOUR) {
+    return { status: 429, error: 'Too many sign-up attempts from here. Try again in an hour.' };
   }
-  const result = createUser({ name, email, password, role: 'member' });
-  if (result.error) return { status: 400, error: result.error };
   if (recent) recent.count += 1;
   else signups.set(ip, { first: Date.now(), count: 1 });
+  const result = createUser({ name, email, password, role: 'member' });
+  if (result.error) return { status: 400, error: result.error };
   touchLogin(result.user.id);
   return { user: getUser(result.user.id) };
 }

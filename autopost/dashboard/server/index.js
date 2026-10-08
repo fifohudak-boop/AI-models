@@ -451,15 +451,18 @@ const PREFERENCE_RULES = {
     v && typeof v === 'object' && Object.values(v).every((id) => typeof id === 'string' && /^\d*$/.test(id)),
 };
 
-app.get('/api/preferences', (req, res) => {
-  const prefs = getSettings().preferences;
-  if (isOwner(req)) return res.json(prefs);
-  // Members only see the Pinterest boards of their own accounts.
+// Members only see the Pinterest boards of their own accounts.
+function preferencesFor(req, prefs = getSettings().preferences) {
+  if (isOwner(req)) return prefs;
   const owners = ownerMap();
   const boards = Object.fromEntries(
     Object.entries(prefs.pinterestBoards).filter(([id]) => canUseAccount(req.user, id, owners))
   );
-  res.json({ ...prefs, pinterestBoards: boards });
+  return { ...prefs, pinterestBoards: boards };
+}
+
+app.get('/api/preferences', (req, res) => {
+  res.json(preferencesFor(req));
 });
 
 // Posting defaults are shared by the whole team, so only the owner changes
@@ -482,7 +485,7 @@ app.put('/api/preferences', (req, res) => {
   if (patch.pinterestBoards) {
     patch.pinterestBoards = { ...getSettings().preferences.pinterestBoards, ...patch.pinterestBoards };
   }
-  res.json(saveSettings({ preferences: patch }).preferences);
+  res.json(preferencesFor(req, saveSettings({ preferences: patch }).preferences));
 });
 
 // ---- Accounts ----

@@ -6,6 +6,7 @@ import { db, tx } from './db.js';
 import { postiz } from './postiz.js';
 import { allBatches } from './batches.js';
 import { platformName } from './platforms.js';
+import { claimNewAccounts } from './ownership.js';
 
 const MINUTE = 60 * 1000;
 const HOUR = 60 * MINUTE;
@@ -92,22 +93,25 @@ export function refreshDelay(publishedMs, now) {
   return null;
 }
 
-// Keep one row per posted item (from History) of the last 90 days; drop rows
-// whose post was removed from History or replaced by a retry.
+// Start following every posted item in History from the last 90 days (counted
+// from when it was posted or scheduled for). Rows whose post was removed from
+// History or replaced by a retry are dropped; older posts keep their numbers.
 export function syncTrackedPosts(now = Date.now(), batches = allBatches()) {
   const since = now - TRACK_DAYS * DAY;
   const wanted = new Map();
+  const inHistory = new Set();
   for (const b of batches) {
-    if (!(Date.parse(b.createdAt) >= since)) continue;
+    const latest = Math.max(Date.parse(b.createdAt) || 0, Date.parse(b.scheduleAt ?? '') || 0);
     const firstCheck = b.scheduleAt ? Math.max(Date.parse(b.scheduleAt) || now, now) : now;
     for (const item of b.items) {
       if (!item.postId || item.rejected) continue;
-      wanted.set(item.postId, { batchId: b.id, accountId: item.accountId, identifier: item.identifier, firstCheck });
+      inHistory.add(item.postId);
+      if (latest >= since) {
+        wanted.set(item.postId, { batchId: b.id, accountId: item.accountId, identifier: item.identifier, firstCheck });
+      }
     }
   }
-  const inHistory = new Set(batches.flatMap((b) => b.items.map((i) => i.postId).filter(Boolean)));
-  const existing = db.prepare('SELECT post_id, published_at FROM post_metrics').all();
-  const known = new Set(existing.map((r) => r.post_id));
+  const known = new Set(db.prepare('SELECT post_id FROM post_metrics').all().map((r) => r.post_id));
   tx(() => {
     const insert = db.prepare(
       `INSERT INTO post_metrics (post_id, batch_id, account_id, identifier, status, next_fetch_at)
@@ -118,13 +122,10 @@ export function syncTrackedPosts(now = Date.now(), batches = allBatches()) {
     }
     const remove = db.prepare('DELETE FROM post_metrics WHERE post_id = ?');
     const removeDaily = db.prepare('DELETE FROM post_daily WHERE post_id = ?');
-    for (const row of existing) {
-      if (wanted.has(row.post_id)) continue;
-      // Still in History but older than 90 days: keep its last numbers.
-      const old = inHistory.has(row.post_id) && row.published_at && Date.parse(row.published_at) < since;
-      if (!old) {
-        remove.run(row.post_id);
-        removeDaily.run(row.post_id);
+    for (const postId of known) {
+      if (!inHistory.has(postId)) {
+        remove.run(postId);
+        removeDaily.run(postId);
       }
     }
   });
@@ -190,6 +191,7 @@ async function refreshPosts(now, maxCalls) {
   const byId = new Map(posts.map((p) => [p.id, p]));
 
   let calls = 0;
+  let unreachableInARow = 0;
   for (const row of due) {
     const post = byId.get(row.post_id);
     if (!post) {
@@ -216,13 +218,21 @@ async function refreshPosts(now, maxCalls) {
       continue;
     }
 
+    // Not again for a while, even if this call hangs or fails, so one bad post
+    // can't keep the others waiting.
+    const later = refreshDelay(now - age, now);
+    const retryAt = later === null ? null : now + Math.max(later, 6 * HOUR);
+    db.prepare('UPDATE post_metrics SET next_fetch_at = ? WHERE post_id = ?').run(now + HOUR, row.post_id);
+
     let result;
     calls += 1;
     try {
       result = await postiz.postAnalytics(row.post_id, 30);
+      unreachableInARow = 0;
     } catch (err) {
-      if (err.status === 503) throw err; // Postiz is down: try everything again next run
-      setStatus(row.post_id, 'error', err.message, now + 6 * HOUR, facts);
+      setStatus(row.post_id, row.fetched_at === null ? 'error' : 'ok', err.message, err.status === 503 ? now + HOUR : retryAt, facts);
+      // Postiz itself is unreachable: stop here and try again next run.
+      if (err.status === 503 && ++unreachableInARow >= 3) throw err;
       continue;
     }
     if (result && !Array.isArray(result) && result.missing) {
@@ -231,8 +241,14 @@ async function refreshPosts(now, maxCalls) {
     }
     const metrics = parseMetrics(result);
     if (Object.keys(metrics).length === 0) {
+      if (row.fetched_at !== null) {
+        // Had numbers before (the post may have been deleted on the network):
+        // keep them and look again less and less often.
+        setStatus(row.post_id, 'ok', null, retryAt, facts);
+        continue;
+      }
       // Networks take a little while before they report numbers for a new post.
-      const giveUp = age > 7 * DAY && row.fetched_at === null;
+      const giveUp = age > 7 * DAY;
       setStatus(row.post_id, giveUp ? 'unavailable' : 'no-data', null, giveUp ? null : now + (age < DAY ? HOUR : 6 * HOUR), facts);
       continue;
     }
@@ -267,7 +283,12 @@ function saveAccountStats(accountId, list, now) {
 }
 
 async function refreshAccounts(now, accounts, maxCalls) {
-  const list = accounts ?? (await postiz.listIntegrations());
+  let list = accounts;
+  if (!list) {
+    list = await postiz.listIntegrations();
+    // Also attributes accounts that were connected while nobody had a page open.
+    claimNewAccounts(list, now);
+  }
   const fetched = new Map(db.prepare('SELECT account_id, fetched_at FROM account_stats_fetch').all().map((r) => [r.account_id, r.fetched_at]));
   let calls = 0;
   for (const a of list) {
@@ -296,8 +317,18 @@ export function runAnalytics({ now = Date.now(), accounts, maxPostCalls = MAX_PO
   if (!running) {
     running = (async () => {
       syncTrackedPosts(now);
-      await refreshPosts(now, maxPostCalls);
-      await refreshAccounts(now, accounts, MAX_ACCOUNT_CALLS_PER_RUN);
+      let failure = null;
+      try {
+        await refreshPosts(now, maxPostCalls);
+      } catch (err) {
+        failure = err;
+      }
+      try {
+        await refreshAccounts(now, accounts, MAX_ACCOUNT_CALLS_PER_RUN);
+      } catch (err) {
+        failure ??= err;
+      }
+      if (failure) throw failure;
     })().finally(() => {
       running = null;
     });
