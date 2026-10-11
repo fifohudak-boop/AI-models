@@ -3,6 +3,7 @@ import type { Preferences, Session, Status, SystemInfo, TeamInfo, User } from '.
 import { api } from '../api';
 import { CopyField } from '../components/CopyField';
 import { formatWhen } from '../format';
+import { signupLink } from '../links';
 
 function when(iso: string | undefined) {
   if (!iso) return '—';
@@ -90,7 +91,7 @@ function ProfileCard({ user, onSession, toast }: { user: User; onSession: (s: Se
       >
         <div className="card-head" style={{ marginBottom: 0 }}>
           <h2>Your account</h2>
-          <span className={`chip ${user.role === 'owner' ? 'published' : ''}`}>{user.role === 'owner' ? 'owner' : 'team member'}</span>
+          <span className={`chip ${user.role === 'owner' ? 'published' : 'member'}`}>{user.role === 'owner' ? 'owner' : 'team member'}</span>
         </div>
         {!user.email && (
           <div className="notice info small">Add your email: from then on you sign in with your email and password.</div>
@@ -118,7 +119,6 @@ function TeamCard({ me, toast }: { me: User; toast: (m: string) => void }) {
   const [team, setTeam] = useState<TeamInfo | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [reset, setReset] = useState<{ name: string; password: string } | null>(null);
-  const signupLink = `${window.location.origin}/#/signup`;
 
   const load = useCallback(() => {
     api
@@ -160,7 +160,15 @@ function TeamCard({ me, toast }: { me: User; toast: (m: string) => void }) {
           </span>
         </span>
       </label>
-      {team.signupsOpen && <CopyField label="Sign-up link to send your team" value={signupLink} />}
+      {team.signupsOpen && (
+        <>
+          <CopyField label="Sign-up link to send your team" value={signupLink()} />
+          <p className="muted small" style={{ margin: 0 }}>
+            Each person who opens it creates their own, separate account. If it's opened in a browser where someone is
+            already signed in, it asks them to sign out first.
+          </p>
+        </>
+      )}
       {error && <div className="notice error small">{error}</div>}
       {reset && (
         <div className="notice ok small stack">

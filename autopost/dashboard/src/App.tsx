@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import type { Session, Status } from './types';
 import { api, setUnauthorizedHandler } from './api';
-import { LoginPage } from './pages/LoginPage';
+import { AlreadySignedIn, LoginPage } from './pages/LoginPage';
 import { SetupPage } from './pages/SetupPage';
 import { ComposePage } from './pages/ComposePage';
 import { AccountsPage } from './pages/AccountsPage';
@@ -9,6 +9,8 @@ import { HistoryPage } from './pages/HistoryPage';
 import { AnalyticsPage } from './pages/AnalyticsPage';
 import { SettingsPage } from './pages/SettingsPage';
 import { BRAND } from './brand';
+import { AccountMenu } from './components/AccountMenu';
+import { SIGNUP_HASH, isSignupLink } from './links';
 
 type Tab = 'post' | 'accounts' | 'history' | 'analytics' | 'settings';
 const TABS: { id: Tab; label: string }[] = [
@@ -29,6 +31,7 @@ export function App() {
   const [session, setSession] = useState<Session | null | undefined>(undefined);
   const [status, setStatus] = useState<Status | null>(null);
   const [tab, setTab] = useState<Tab>(tabFromHash);
+  const [onSignupLink, setOnSignupLink] = useState(isSignupLink);
   const [toastMessage, setToastMessage] = useState<string | null>(null);
   // Once Postiz has worked, a blip (e.g. a restart) shows a banner instead of
   // throwing you out to the setup screen and losing what you were writing.
@@ -63,12 +66,24 @@ export function App() {
       loadSession();
     });
     loadSession();
-    const onHash = () => setTab(tabFromHash());
+    const onHash = () => {
+      setTab(tabFromHash());
+      setOnSignupLink(isSignupLink());
+    };
     window.addEventListener('hashchange', onHash);
     return () => window.removeEventListener('hashchange', onHash);
   }, [loadSession]);
 
   const user = session?.loggedIn ? session.user : null;
+
+  const logout = useCallback(
+    async (next = '/post') => {
+      await api.logout().catch(() => {});
+      window.location.hash = next;
+      await loadSession();
+    },
+    [loadSession]
+  );
 
   useEffect(() => {
     if (!user) return;
@@ -78,7 +93,30 @@ export function App() {
   }, [user, loadStatus]);
 
   if (session === undefined) return null;
-  if (!user || !session) return <LoginPage session={session} onLoggedIn={setSession} />;
+  if (!user || !session) {
+    return (
+      <LoginPage
+        session={session}
+        onLoggedIn={(next) => {
+          // The sign-up form has just moved on from "#/signup": don't show the
+          // "already signed in" screen to the person who just signed up.
+          setOnSignupLink(isSignupLink());
+          setSession(next);
+        }}
+      />
+    );
+  }
+  if (onSignupLink) {
+    return (
+      <AlreadySignedIn
+        session={session}
+        onSignOut={() => logout(SIGNUP_HASH)}
+        onContinue={() => {
+          window.location.hash = '/post';
+        }}
+      />
+    );
+  }
   if (!status) return <div className="center-page muted">Loading…</div>;
   const isOwner = user.role === 'owner';
   const brand = status.brand || BRAND.name;
@@ -110,6 +148,7 @@ export function App() {
               </a>
             ))}
           </nav>
+          <AccountMenu user={user} onLogout={() => logout()} />
         </div>
       </header>
       <main>
@@ -125,8 +164,10 @@ export function App() {
             the sign-up link with your team.
           </div>
         )}
-        {tab === 'post' && <ComposePage onGoAccounts={() => go('accounts')} />}
-        {tab === 'accounts' && <AccountsPage postizUrl={status.postizUrl} toast={toast} user={user} />}
+        {tab === 'post' && <ComposePage user={user} brand={brand} onGoAccounts={() => go('accounts')} />}
+        {tab === 'accounts' && (
+          <AccountsPage postizUrl={status.postizUrl} toast={toast} user={user} signupsOpen={session.signupsOpen} />
+        )}
         {tab === 'history' && <HistoryPage user={user} />}
         {tab === 'analytics' && <AnalyticsPage user={user} />}
         {tab === 'settings' && (
@@ -135,11 +176,7 @@ export function App() {
             session={session}
             toast={toast}
             onSession={setSession}
-            onLogout={async () => {
-              await api.logout().catch(() => {});
-              window.location.hash = '/post';
-              loadSession();
-            }}
+            onLogout={() => logout()}
           />
         )}
       </main>

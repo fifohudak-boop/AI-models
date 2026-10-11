@@ -278,6 +278,21 @@ test('a member sees only the accounts they connected; the owner sees all', async
   assert.equal(post.status, 400);
 });
 
+test('everyone who signs up through the link gets their own account; answers are never cached', async () => {
+  const cy = await api('/api/signup', { method: 'POST', body: { name: 'Cy', email: 'cy@example.com', password: 'cy-password' } });
+  assert.equal(cy.status, 201);
+  const cyCookie = cookieFrom(cy.res);
+  assert.notEqual(cyCookie, ana);
+  const cySession = await api('/api/session', { cookie: cyCookie });
+  assert.equal(cySession.json.user.name, 'Cy');
+  assert.equal((await api('/api/session', { cookie: ana })).json.user.name, 'Ana');
+  assert.deepEqual((await api('/api/accounts', { cookie: cyCookie })).json, []); // not Ana's
+  for (const r of [cySession, await api('/api/accounts', { cookie: cyCookie })]) {
+    assert.equal(r.res.headers.get('cache-control'), 'no-store');
+    assert.match(r.res.headers.get('vary') ?? '', /Cookie/i);
+  }
+});
+
 test('the owner can move an account to someone else', async () => {
   const team = (await api('/api/team', { cookie: owner })).json;
   const ownerId = team.users.find((u) => u.role === 'owner').id;

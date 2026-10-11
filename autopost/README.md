@@ -82,7 +82,12 @@ Then, in Fifofarm:
 3. **Post** page → drop video → caption → **Post to N accounts**.
 4. **Your team:** Settings → Your account → add your email (from then on you
    sign in with it). Settings → Team shows the sign-up link to send your team;
-   turn sign-up off once everyone has joined.
+   turn sign-up off once everyone has joined. Everyone who signs up gets their
+   own account (their name is shown top right). **Send link** on the Accounts
+   page is different: it adds someone's social account to *your* list. If the
+   sign-up link is opened in a browser where someone is already signed in,
+   Fifofarm asks them to sign out first instead of letting them use that
+   person's account.
 
 **On a Mac with Claude Cowork?** See [docs/mac-with-cowork.md](docs/mac-with-cowork.md).
 

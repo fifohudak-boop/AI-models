@@ -100,6 +100,13 @@ app.set('trust proxy', 'loopback, uniquelocal');
 app.disable('x-powered-by');
 app.use(express.json({ limit: '1mb' }));
 app.use('/api', sameOriginOnly);
+// Every answer depends on who is signed in: no browser or proxy may keep one
+// and hand it to someone else.
+app.use('/api', (_req, res, next) => {
+  res.set('Cache-Control', 'no-store');
+  res.vary('Cookie');
+  next();
+});
 
 const asyncRoute = (fn) => (req, res, next) => Promise.resolve(fn(req, res, next)).catch(next);
 

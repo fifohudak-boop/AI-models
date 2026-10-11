@@ -17,6 +17,7 @@
   --radius: 12px;
   --shadow: 0 1px 2px rgba(16, 24, 40, 0.06), 0 1px 3px rgba(16, 24, 40, 0.08);
   --chart-1: #4f46e5;
+  --popover-shadow: 0 8px 24px rgba(16, 24, 40, 0.14), 0 2px 6px rgba(16, 24, 40, 0.08);
   color-scheme: light;
 }
 
@@ -39,6 +40,7 @@
     --bad-soft: #3a1717;
     --shadow: none;
     --chart-1: #7f78fb;
+    --popover-shadow: 0 8px 24px rgba(0, 0, 0, 0.45);
     color-scheme: dark;
   }
 }
@@ -247,6 +249,10 @@ main {
 .btn.small {
   padding: 4px 10px;
   font-size: 13px;
+}
+.btn.block {
+  width: 100%;
+  justify-content: center;
 }
 .btn.link {
   border: none;
@@ -534,6 +540,10 @@ textarea:focus,
   background: var(--ok-soft);
   color: var(--ok);
 }
+.chip.member {
+  background: var(--accent-soft);
+  color: var(--accent);
+}
 .chip.posting,
 .chip.scheduled,
 .chip.draft {
@@ -606,7 +616,13 @@ textarea:focus,
 }
 
 @media (max-width: 560px) {
+  /* Brand and the signed-in person on the first row, tabs on the second. */
+  .account-menu {
+    order: 2;
+    margin-left: auto;
+  }
   .tabs {
+    order: 3;
     margin-left: 0;
     width: 100%;
   }
@@ -981,3 +997,87 @@ textarea:focus,
 .metric strong {
   font-variant-numeric: tabular-nums;
 }
+
+/* ---- Who is signed in ---- */
+
+.account-menu {
+  position: relative;
+  flex: none;
+}
+.account-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  max-width: 200px;
+  padding: 3px 12px 3px 3px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--surface);
+  font-weight: 600;
+  font-size: 14px;
+  cursor: pointer;
+}
+.account-chip:hover {
+  background: var(--surface-2);
+}
+.account-chip:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+.account-chip-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.me-avatar {
+  width: 28px;
+  height: 28px;
+  flex: none;
+  display: grid;
+  place-items: center;
+  border-radius: 50%;
+  background: var(--accent-soft);
+  color: var(--accent);
+  font-weight: 700;
+  font-size: 12px;
+  letter-spacing: 0.02em;
+}
+.me-avatar.big {
+  width: 40px;
+  height: 40px;
+  font-size: 15px;
+}
+.account-popover {
+  position: absolute;
+  top: calc(100% + 8px);
+  right: 0;
+  z-index: 30;
+  width: 290px;
+  max-width: calc(100vw - 32px);
+  padding: 14px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  box-shadow: var(--popover-shadow);
+}
+.account-popover-name {
+  font-weight: 700;
+}
+.account-popover-email {
+  overflow-wrap: anywhere;
+}
+
+.welcome {
+  padding: 18px;
+  margin-bottom: 16px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--accent-soft);
+}
+.welcome h2 {
+  margin-bottom: 6px;
+}
+.welcome p {
+  max-width: 60ch;
+}
+

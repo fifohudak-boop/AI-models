@@ -5,6 +5,7 @@ import { AccountAvatar, PlatformBadge } from '../components/AccountAvatar';
 import { CopyField } from '../components/CopyField';
 import { copyText } from '../clipboard';
 import { NetworkSetupPanel } from '../components/NetworkSetupPanel';
+import { signupLink } from '../links';
 
 // After signing in, these networks ask you to pick a page/channel inside the
 // sign-in window, so we must not close it automatically.
@@ -84,10 +85,10 @@ function BlueskyForm({ onConnected }: { onConnected: () => void }) {
 
 // What to do before adding another Instagram account (Meta's rule while the
 // app hasn't passed App Review). Only the owner can add testers to the app.
-function InstagramExtraHelp({ isOwner }: { isOwner: boolean }) {
+function InstagramExtraHelp({ isOwner, first }: { isOwner: boolean; first: boolean }) {
   return (
     <div className="notice info small stack">
-      <strong>Adding another Instagram account</strong>
+      <strong>{first ? 'Connecting an Instagram account' : 'Adding another Instagram account'}</strong>
       <ol className="setup-steps">
         <li>
           The account must be a Professional account (Creator or Business). Switch for free in the Instagram app: Settings
@@ -115,8 +116,8 @@ function InstagramExtraHelp({ isOwner }: { isOwner: boolean }) {
           .
         </li>
         <li>
-          Click <strong>+ Add another</strong> here and log in with that account (or use <strong>Send link</strong> and open
-          it where that account is logged in, e.g. on a phone).
+          Click <strong>{first ? 'Connect' : '+ Add another'}</strong> here and log in with that account (or use{' '}
+          <strong>Send link</strong> and open it where that account is logged in, e.g. on a phone).
         </li>
       </ol>
     </div>
@@ -152,7 +153,17 @@ function OwnerPicker({ account, team, onMoved }: { account: Account; team: TeamU
   );
 }
 
-export function AccountsPage({ postizUrl, toast, user }: { postizUrl: string; toast: (msg: string) => void; user: User }) {
+export function AccountsPage({
+  postizUrl,
+  toast,
+  user,
+  signupsOpen,
+}: {
+  postizUrl: string;
+  toast: (msg: string) => void;
+  user: User;
+  signupsOpen: boolean;
+}) {
   const isOwner = user.role === 'owner';
   const [team, setTeam] = useState<TeamUser[]>([]);
   const [accounts, setAccounts] = useState<Account[] | null>(null);
@@ -164,6 +175,7 @@ export function AccountsPage({ postizUrl, toast, user }: { postizUrl: string; to
   const [showBluesky, setShowBluesky] = useState(false);
   const [openSetup, setOpenSetup] = useState<string | null>(null);
   const [showIgHelp, setShowIgHelp] = useState(false);
+  const [openTileHelp, setOpenTileHelp] = useState<string | null>(null);
   const [shareLink, setShareLink] = useState<{ platform: string; url: string } | null>(null);
   const [applyNotice, setApplyNotice] = useState<string | null>(null);
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
@@ -336,9 +348,16 @@ export function AccountsPage({ postizUrl, toast, user }: { postizUrl: string; to
           <div className="notice info stack" style={{ marginBottom: 10 }}>
             <span>
               Send this link to whoever owns the {shareLink.platform} account, or open it on a phone where that account is
-              logged in. After they approve, the account appears here. Valid for 1 hour.
+              logged in. After they approve, the account is added to <strong>your</strong> list ({user.name}). Valid for
+              1 hour.
             </span>
             <CopyField value={shareLink.url} />
+            {signupsOpen && (
+              <CopyField
+                label="Want a teammate to have their own account here instead? Don't send the link above — send them the sign-up link:"
+                value={signupLink()}
+              />
+            )}
             <button className="btn link small" onClick={() => setShareLink(null)}>
               Hide
             </button>
@@ -347,7 +366,10 @@ export function AccountsPage({ postizUrl, toast, user }: { postizUrl: string; to
         {accounts === null ? (
           <p className="muted">Loading…</p>
         ) : accounts.length === 0 ? (
-          <p className="muted">Nothing connected yet — pick a network below.</p>
+          <p className="muted">
+            Nothing connected yet — pick a network below.
+            {!isOwner && ' What you connect is yours: other people on the team don\'t see it.'}
+          </p>
         ) : (
           <div className="stack">
             {[...groups.entries()].map(([identifier, list]) => {
@@ -383,7 +405,7 @@ export function AccountsPage({ postizUrl, toast, user }: { postizUrl: string; to
                       </button>
                     )}
                   </div>
-                  {identifier === 'instagram-standalone' && showIgHelp && <InstagramExtraHelp isOwner={isOwner} />}
+                  {identifier === 'instagram-standalone' && showIgHelp && <InstagramExtraHelp isOwner={isOwner} first={false} />}
                   <div className="account-list">
                     {list.map((a) => (
                       <div className="account" key={a.id}>
@@ -447,13 +469,21 @@ export function AccountsPage({ postizUrl, toast, user }: { postizUrl: string; to
           {platforms.map((p) => {
             const setup = setupFor(p.identifier);
             const count = groups.get(p.identifier)?.length ?? 0;
+            const igHelp = p.identifier === 'instagram-standalone' && p.configured;
+            const tileHelpOpen = igHelp && openTileHelp === p.identifier;
             return (
-              <div className={`platform-tile${openSetup === p.identifier ? ' wide' : ''}`} key={p.identifier}>
+              <div
+                className={`platform-tile${openSetup === p.identifier || tileHelpOpen ? ' wide' : ''}`}
+                key={p.identifier}
+              >
                 <div className="row">
                   <PlatformBadge identifier={p.identifier} />
                   <strong>{p.name}</strong>
                   {count > 0 && <span className="chip published">{count} connected</span>}
                 </div>
+                {igHelp && !isOwner && count === 0 && !tileHelpOpen && (
+                  <div className="muted small">First ask the owner to add your Instagram username as a tester.</div>
+                )}
                 {p.connect === 'credentials' ? (
                   <button className="btn small" onClick={() => setShowBluesky(true)}>
                     Connect
@@ -466,6 +496,15 @@ export function AccountsPage({ postizUrl, toast, user }: { postizUrl: string; to
                     <button className="btn small" onClick={() => sendLink(p)}>
                       Send link
                     </button>
+                    {igHelp && (
+                      <button
+                        className="btn link small"
+                        aria-expanded={tileHelpOpen}
+                        onClick={() => setOpenTileHelp(tileHelpOpen ? null : p.identifier)}
+                      >
+                        {tileHelpOpen ? 'Hide help' : 'How?'}
+                      </button>
+                    )}
                     {setup && isOwner && (
                       <button
                         className="btn link small"
@@ -484,6 +523,7 @@ export function AccountsPage({ postizUrl, toast, user }: { postizUrl: string; to
                 ) : (
                   <div className="muted small">Needs developer keys first.</div>
                 )}
+                {tileHelpOpen && <InstagramExtraHelp isOwner={isOwner} first={count === 0} />}
                 {isOwner && setup && openSetup === p.identifier && networks && (
                   <NetworkSetupPanel
                     setup={setup}

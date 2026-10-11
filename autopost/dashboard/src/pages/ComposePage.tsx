@@ -1,13 +1,18 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import type { Account, AccountPreview, Batch, MediaJob } from '../types';
+import type { Account, AccountPreview, Batch, MediaJob, User } from '../types';
 import { api, uploadMedia } from '../api';
 import { AccountAvatar } from '../components/AccountAvatar';
 import { BatchCard } from '../components/BatchCard';
 import { isActive } from '../batchStatus';
 import { formatBytes, formatDuration, toLocalInputValue } from '../format';
 
-const DRAFT_KEY = 'autopost.draft';
-const SELECTION_KEY = 'autopost.unselected';
+// Drafts and ticked accounts are remembered per person, so whoever signs in
+// next on the same computer doesn't see your caption.
+const draftKey = (userId: string) => `fifofarm.draft.${userId}`;
+const selectionKey = (userId: string) => `fifofarm.unselected.${userId}`;
+// From before team accounts (one shared login = the owner's).
+const LEGACY_DRAFT_KEY = 'autopost.draft';
+const LEGACY_SELECTION_KEY = 'autopost.unselected';
 const TITLE_PLATFORMS = new Set(['youtube', 'pinterest', 'facebook']);
 
 type MediaState =
@@ -34,12 +39,36 @@ function writeStorage(key: string, value: unknown) {
   }
 }
 
-export function ComposePage({ onGoAccounts }: { onGoAccounts: () => void }) {
-  const draft = readStorage(DRAFT_KEY, { caption: '', title: '' });
+// The owner keeps the draft they had before the update; nobody else gets it.
+function takeLegacy(user: User) {
+  try {
+    if (user.role === 'owner') {
+      for (const [from, to] of [
+        [LEGACY_DRAFT_KEY, draftKey(user.id)],
+        [LEGACY_SELECTION_KEY, selectionKey(user.id)],
+      ]) {
+        const old = localStorage.getItem(from);
+        if (old !== null && localStorage.getItem(to) === null) localStorage.setItem(to, old);
+      }
+    }
+    localStorage.removeItem(LEGACY_DRAFT_KEY);
+    localStorage.removeItem(LEGACY_SELECTION_KEY);
+  } catch {
+    // storage unavailable
+  }
+}
+
+export function ComposePage({ user, brand, onGoAccounts }: { user: User; brand: string; onGoAccounts: () => void }) {
+  const [draft] = useState(() => {
+    takeLegacy(user);
+    return readStorage(draftKey(user.id), { caption: '', title: '' });
+  });
   const [accounts, setAccounts] = useState<Account[] | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
   // Remember who you *unticked*, so newly connected accounts start ticked.
-  const [unselected, setUnselected] = useState<Set<string>>(() => new Set(readStorage<string[]>(SELECTION_KEY, [])));
+  const [unselected, setUnselected] = useState<Set<string>>(
+    () => new Set(readStorage<string[]>(selectionKey(user.id), []))
+  );
   const [caption, setCaption] = useState<string>(draft.caption);
   const [title, setTitle] = useState<string>(draft.title);
   const [overrides, setOverrides] = useState<Record<string, string>>({});
@@ -61,8 +90,8 @@ export function ComposePage({ onGoAccounts }: { onGoAccounts: () => void }) {
       .catch((err) => setLoadError(err.message));
   }, []);
 
-  useEffect(() => writeStorage(DRAFT_KEY, { caption, title }), [caption, title]);
-  useEffect(() => writeStorage(SELECTION_KEY, [...unselected]), [unselected]);
+  useEffect(() => writeStorage(draftKey(user.id), { caption, title }), [user.id, caption, title]);
+  useEffect(() => writeStorage(selectionKey(user.id), [...unselected]), [user.id, unselected]);
 
   const mediaId = media.phase === 'ready' ? media.job.id : null;
   const mediaResult = media.phase === 'ready' ? media.job.result : null;
@@ -207,6 +236,18 @@ export function ComposePage({ onGoAccounts }: { onGoAccounts: () => void }) {
 
   return (
     <div>
+      {accounts?.length === 0 && user.role === 'member' && (
+        <section className="welcome">
+          <h2>Welcome, {user.name.split(/\s+/)[0]}</h2>
+          <p className="small">
+            This is <strong>your own</strong> {brand} account. The Instagram, TikTok and other accounts you connect here,
+            and the videos you post, are yours: other people on the team don't see them (the owner of this {brand} can).
+          </p>
+          <button className="btn primary" onClick={onGoAccounts}>
+            Connect your first account
+          </button>
+        </section>
+      )}
       <section className="card">
         <h2>1. Video</h2>
         {media.phase === 'empty' || media.phase === 'failed' ? (
