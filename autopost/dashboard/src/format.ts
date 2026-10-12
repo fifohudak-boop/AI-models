@@ -61,3 +61,16 @@ export function toLocalInputValue(date: Date) {
     date.getMinutes()
   )}`;
 }
+
+// "Ana Maria" → "AM", "jawad" → "J"
+export function initialsOf(name: string) {
+  return (
+    name
+      .split(/\s+/)
+      .filter(Boolean)
+      .map((part) => part[0])
+      .join('')
+      .slice(0, 2)
+      .toUpperCase() || '?'
+  );
+}
