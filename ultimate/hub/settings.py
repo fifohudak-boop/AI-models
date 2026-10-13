@@ -1,0 +1,107 @@
+"""App-wide settings: the posting engine connection, AI Studio keys and posting defaults.
+
+Kept in data/settings.json, readable only by you (it holds API keys).
+"""
+
+from __future__ import annotations
+
+import json
+import os
+import threading
+from copy import deepcopy
+from typing import Any
+
+from .config import SETTINGS_FILE
+
+DEFAULT_PREFERENCES: dict[str, Any] = {
+    "youtubeVisibility": "public",  # public | unlisted | private
+    "tiktokPrivacy": "PUBLIC_TO_EVERYONE",  # SELF_ONLY until TikTok approves your app
+    "tiktokAllowComments": True,
+    "tiktokAllowDuet": False,
+    "tiktokAllowStitch": False,
+    "tiktokMode": "DIRECT_POST",  # DIRECT_POST publishes; UPLOAD sends to the TikTok inbox as a draft
+    "xWhoCanReply": "everyone",
+    "autoShorten": True,
+    "pinterestBoards": {},  # accountId -> numeric board id
+}
+
+PREFERENCE_RULES = {
+    "youtubeVisibility": lambda v: v in ("public", "unlisted", "private"),
+    "tiktokPrivacy": lambda v: v in ("PUBLIC_TO_EVERYONE", "MUTUAL_FOLLOW_FRIENDS", "FOLLOWER_OF_CREATOR", "SELF_ONLY"),
+    "tiktokAllowComments": lambda v: isinstance(v, bool),
+    "tiktokAllowDuet": lambda v: isinstance(v, bool),
+    "tiktokAllowStitch": lambda v: isinstance(v, bool),
+    "tiktokMode": lambda v: v in ("DIRECT_POST", "UPLOAD"),
+    "xWhoCanReply": lambda v: v in ("everyone", "following", "mentionedUsers", "subscribers", "verified"),
+    "autoShorten": lambda v: isinstance(v, bool),
+    "pinterestBoards": lambda v: isinstance(v, dict)
+    and all(isinstance(x, str) and (x == "" or x.isdigit()) for x in v.values()),
+}
+
+DEFAULTS: dict[str, Any] = {
+    # The posting engine (Postiz) your Fifofarm server runs, e.g. https://postiz.example.duckdns.org
+    "engineUrl": "",
+    "engineApiKey": "",
+    # AI Studio (Alibaba Cloud Model Studio, the Wan video models)
+    "alibabaApiKey": "",
+    "alibabaRegion": "intl",  # intl (Singapore) | cn (Beijing) | us | eu | jp | hk — see studio.REGIONS
+    "alibabaWorkspace": "",  # Model Studio workspace ID (its own address); needed outside Singapore/Beijing
+    "preferences": DEFAULT_PREFERENCES,
+    "activeModel": "",
+}
+
+_lock = threading.RLock()
+_cache: dict[str, Any] | None = None
+
+
+def _read() -> dict[str, Any]:
+    try:
+        raw = json.loads(SETTINGS_FILE.read_text())
+        return raw if isinstance(raw, dict) else {}
+    except (OSError, ValueError):
+        return {}
+
+
+def get() -> dict[str, Any]:
+    global _cache
+    with _lock:
+        if _cache is None:
+            raw = _read()
+            merged = deepcopy(DEFAULTS)
+            merged.update({k: v for k, v in raw.items() if k in DEFAULTS})
+            merged["preferences"] = {**DEFAULT_PREFERENCES, **(raw.get("preferences") or {})}
+            _cache = merged
+        return deepcopy(_cache)
+
+
+def save(patch: dict[str, Any]) -> dict[str, Any]:
+    global _cache
+    with _lock:
+        current = get()
+        for key, value in patch.items():
+            if key not in DEFAULTS:
+                continue
+            if key == "preferences":
+                current["preferences"] = {**current["preferences"], **value}
+            else:
+                current[key] = value
+        SETTINGS_FILE.parent.mkdir(parents=True, exist_ok=True)
+        tmp = SETTINGS_FILE.with_suffix(".tmp")
+        tmp.write_text(json.dumps(current, indent=2))
+        os.chmod(tmp, 0o600)
+        tmp.replace(SETTINGS_FILE)
+        _cache = current
+        return deepcopy(current)
+
+
+def reset_cache() -> None:
+    global _cache
+    with _lock:
+        _cache = None
+
+
+def mask(secret: str) -> str:
+    """Show that a key is saved without showing it."""
+    if not secret:
+        return ""
+    return f"{secret[:3]}…{secret[-3:]}" if len(secret) > 10 else "saved"

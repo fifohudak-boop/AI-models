@@ -1,0 +1,42 @@
+{
+ "data": {
+  "hashtag": {
+   "edge_hashtag_to_media": {
+    "edges": [
+     {
+      "node": {
+       "__typename": "GraphVideo",
+       "shortcode": "C4Graph123",
+       "is_video": true,
+       "edge_media_to_caption": {
+        "edges": [
+         {
+          "node": {
+           "text": "graph caption"
+          }
+         }
+        ]
+       },
+       "video_view_count": 777,
+       "edge_liked_by": {
+        "count": 55
+       },
+       "thumbnail_src": "https://ig.example/g.jpg",
+       "owner": {
+        "username": "graphuser"
+       },
+       "taken_at_timestamp": 1725000000
+      }
+     },
+     {
+      "node": {
+       "__typename": "GraphImage",
+       "shortcode": "C5Image123",
+       "is_video": false
+      }
+     }
+    ]
+   }
+  }
+ }
+}

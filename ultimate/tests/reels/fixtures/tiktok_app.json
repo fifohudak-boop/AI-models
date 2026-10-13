@@ -1,0 +1,24 @@
+{
+ "aweme_list": [
+  {
+   "aweme_id": "7412345678901234570",
+   "desc": "app shape video",
+   "create_time": 1725000200,
+   "author": {
+    "unique_id": "appuser"
+   },
+   "statistics": {
+    "play_count": 999,
+    "digg_count": 10
+   },
+   "video": {
+    "duration": 15200,
+    "cover": {
+     "url_list": [
+      "https://p16.example/app.jpeg"
+     ]
+    }
+   }
+  }
+ ]
+}
