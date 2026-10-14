@@ -46,6 +46,14 @@ DEFAULTS: dict[str, Any] = {
     "alibabaApiKey": "",
     "alibabaRegion": "intl",  # intl (Singapore) | cn (Beijing) | us | eu | jp | hk — see studio.REGIONS
     "alibabaWorkspace": "",  # Model Studio workspace ID (its own address); needed outside Singapore/Beijing
+    # What Wan charges, per second of finished video, by model and resolution. Editable in Settings
+    # (Alibaba's prices change and depend on your discounts); used for the cost shown before Generate
+    # and for the Spending page. Seeded from Alibaba's published Wan 3.0 list prices (USD).
+    "studioCurrency": "USD",
+    "studioRates": {
+        "wan3.0-video": {"480P": 0.0294, "720P": 0.0588, "1080P": 0.1176},
+        "wan3.0-video-prime": {"480P": 0.063, "720P": 0.126, "1080P": 0.252},
+    },
     "preferences": DEFAULT_PREFERENCES,
     "activeModel": "",
 }

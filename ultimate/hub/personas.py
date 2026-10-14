@@ -27,8 +27,9 @@ FOLDER_KINDS: dict[str, str] = {
     "photos": "Model photos",
     "found": "Found videos",
     "generated": "AI Studio",
+    "edited": "Edited reels",
 }
-DEFAULT_FOLDERS = ("found", "generated")  # created for you; the others are yours to connect
+DEFAULT_FOLDERS = ("found", "generated", "edited")  # created for you; the others are yours to connect
 
 COLORS = ["#4f46e5", "#db2777", "#059669", "#d97706", "#0891b2", "#7c3aed", "#dc2626", "#65a30d"]
 _ID = re.compile(r"^[0-9a-f]{12}$")

@@ -3,7 +3,9 @@ import type { AppStatus, Model, ReelsStatus } from './types';
 import { api } from './api';
 import { BRAND } from './brand';
 import { connectLive, useLive } from './live';
+import { SYSTEMS, ALL_TABS } from './systems';
 import { ModelSwitcher } from './components/ModelSwitcher';
+import { SystemNav } from './components/SystemNav';
 import { EngineSetup } from './components/EngineSetup';
 import { ComposePage } from './pages/ComposePage';
 import { AccountsPage } from './pages/AccountsPage';
@@ -11,30 +13,34 @@ import { HistoryPage } from './pages/HistoryPage';
 import { AnalyticsPage } from './pages/AnalyticsPage';
 import { ReelFinderPage } from './pages/ReelFinderPage';
 import { StudioPage } from './pages/StudioPage';
+import { SpendingPage } from './pages/SpendingPage';
+import { EditPage } from './pages/EditPage';
+import { MetadataPage } from './pages/MetadataPage';
 import { LibraryPage } from './pages/LibraryPage';
 import { SettingsPage } from './pages/SettingsPage';
 import { WelcomePage } from './pages/WelcomePage';
 
-export type Tab = 'post' | 'accounts' | 'history' | 'analytics' | 'reels' | 'studio' | 'library' | 'settings';
+export type Tab =
+  | 'post'
+  | 'accounts'
+  | 'history'
+  | 'analytics'
+  | 'reels'
+  | 'reels-library'
+  | 'studio'
+  | 'studio-library'
+  | 'studio-spending'
+  | 'edit'
+  | 'meta'
+  | 'settings';
 
-// One row of tabs, like Fifofarm. The first four are Fifofarm; then Reel Finder, AI Studio,
-// the model's library and the app's settings.
-const TABS: { id: Tab; label: string; group: string }[] = [
-  { id: 'post', label: 'Post', group: 'fifofarm' },
-  { id: 'accounts', label: 'Accounts', group: 'fifofarm' },
-  { id: 'history', label: 'History', group: 'fifofarm' },
-  { id: 'analytics', label: 'Analytics', group: 'fifofarm' },
-  { id: 'reels', label: 'Reel Finder', group: 'reels' },
-  { id: 'studio', label: 'AI Studio', group: 'studio' },
-  { id: 'library', label: 'Library', group: 'library' },
-  { id: 'settings', label: 'Settings', group: 'settings' },
-];
 const FIFOFARM_TABS: Tab[] = ['post', 'accounts', 'history', 'analytics'];
+const WIDE_TABS: Tab[] = ['reels', 'reels-library', 'studio-library', 'edit'];
 const MODEL_KEY = 'ultimate.model';
 
 function tabFromHash(): Tab {
   const id = window.location.hash.replace(/^#\/?/, '').split('?')[0] as Tab;
-  return TABS.some((t) => t.id === id) ? id : 'post';
+  return ALL_TABS.includes(id) ? id : 'post';
 }
 
 function rememberedModel(): string {
@@ -45,9 +51,9 @@ function rememberedModel(): string {
   }
 }
 
-// Something one tool hands to another: "post this file", "use this as a reference"…
+// Something one tool hands to another: "post this file", "use this as a reference", "edit this"…
 export interface Handoff {
-  kind: 'post' | 'studio-video' | 'studio-photo';
+  kind: 'post' | 'studio-video' | 'studio-photo' | 'edit';
   path: string;
   at: number;
 }
@@ -159,7 +165,7 @@ export function App() {
   const handOff = useCallback(
     (kind: Handoff['kind'], path: string) => {
       setHandoff({ kind, path, at: Date.now() });
-      go(kind === 'post' ? 'post' : 'studio');
+      go(kind === 'post' ? 'post' : kind === 'edit' ? 'edit' : 'studio');
     },
     [go]
   );
@@ -206,21 +212,10 @@ export function App() {
             onManage={() => go('settings')}
             hunting={huntingModel}
           />
-          <nav className="tabs" aria-label="Tools">
-            {TABS.map((t, i) => (
-              <a
-                key={t.id}
-                href={`#/${t.id}`}
-                className={`tab${tab === t.id ? ' active' : ''}${i > 0 && TABS[i - 1].group !== t.group ? ' tab-gap' : ''}`}
-              >
-                {t.label}
-                {t.id === 'reels' && huntingModel && <span className="tab-dot" title={`Hunting for ${huntingName}`} />}
-              </a>
-            ))}
-          </nav>
+          <SystemNav systems={SYSTEMS} current={tab} huntingName={huntingModel ? huntingName ?? null : null} onNavigate={go} />
         </div>
       </header>
-      <main className={tab === 'reels' || tab === 'library' ? 'wide' : ''}>
+      <main className={WIDE_TABS.includes(tab) ? 'wide' : ''}>
         {status.updateAvailable && (
           <div className="notice info small" style={{ marginBottom: 16 }}>
             A new version of {brand} is ready — quit and reopen the app to install it.
@@ -251,7 +246,7 @@ export function App() {
                 model={model}
                 handoff={handoff?.kind === 'post' ? handoff : null}
                 onGoAccounts={() => go('accounts')}
-                onGoLibrary={() => go('library')}
+                onGoLibrary={() => go('reels-library')}
               />
             )}
             {tab === 'accounts' && <AccountsPage key={model.id} model={model} models={models} toast={toast} />}
@@ -282,13 +277,27 @@ export function App() {
             onSettings={() => go('settings')}
           />
         )}
-        {tab === 'library' && (
-          <LibraryPage
+        {tab === 'studio-spending' && <SpendingPage key={model.id} model={model} onSettings={() => go('settings')} />}
+        {tab === 'edit' && (
+          <EditPage
             key={model.id}
             model={model}
+            handoff={handoff?.kind === 'edit' ? handoff : null}
+            toast={toast}
+            onPost={(path) => handOff('post', path)}
+            onSettings={() => go('settings')}
+          />
+        )}
+        {tab === 'meta' && <MetadataPage key={model.id} model={model} toast={toast} onSettings={() => go('settings')} />}
+        {(tab === 'reels-library' || tab === 'studio-library') && (
+          <LibraryPage
+            key={`${model.id}-${tab}`}
+            model={model}
+            initialKind={tab === 'studio-library' ? 'generated' : 'found'}
             toast={toast}
             onPost={(path) => handOff('post', path)}
             onStudio={(kind, path) => handOff(kind, path)}
+            onEdit={(path) => handOff('edit', path)}
             onReference={async (path) => {
               await api.addReferenceLocal(model.id, path);
               toast('Added as a reference for Reel Finder');

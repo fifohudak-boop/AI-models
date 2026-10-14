@@ -5,17 +5,20 @@ model** you run. Pick **Mia** at the top and every tool shows only Mia's things:
 her posts and numbers, her Reel Finder searches and finds, her AI videos and her folders. Pick
 **Mike** and you get Mike's.
 
-| Tab | What it does |
-| --- | --- |
-| **Post · Accounts · History · Analytics** | Fifofarm: post one video to all of the model's accounts at once, see how each post went and how the videos do. |
-| **Reel Finder** | AI agents scroll TikTok, Instagram and Pinterest for videos that look like the model's reference videos and save the best ones. |
-| **AI Studio** | Makes new videos of the model with **Wan 3.0** (Alibaba Cloud Model Studio): from a prompt, from a photo, or "like this reference video, with my model". |
-| **Library** | Everything of the model in one place: Reel Finder finds, AI Studio videos, references and model photos. |
-| **Settings** | Models and their folders, the posting engine, the AI Studio key, posting defaults. |
+The top bar is one button per **system**; clicking a system rolls down its pages.
 
-The tools hand work to each other: a Reel Finder find goes to **Post** or **AI Studio** with one
-click, an AI Studio video goes to **Post**, and anything in the library can be posted, sent to
-AI Studio or used as a Reel Finder reference ("More like it").
+| System | Rolls down to | What it does |
+| --- | --- | --- |
+| **Post** | New post · Accounts · History · Analytics | Fifofarm: post one video to all of the model's accounts at once, see how each post went and how the videos do. |
+| **Reel Finder** | Find videos · Library | AI agents scroll TikTok, Instagram and Pinterest for videos that look like the model's reference videos and save the best ones. |
+| **AI Studio** | Make a video · Library · Spending | Makes new videos of the model with **Wan 3.0** (Alibaba Cloud Model Studio). Shows the cost before you Generate, and tracks how much each model has spent. |
+| **Editing** | Editor | Turn a clip into a ready reel — trim, crop to shape, add music and captions — free, on your Mac with ffmpeg. |
+| **Metadata** | Clean up | Strip the hidden data files carry (camera, GPS, dates, AI/edit tags) before posting. |
+| **Settings** | — | Models and their folders, the posting engine, the AI Studio key and prices, posting defaults. |
+
+The tools hand work to each other: a Reel Finder find goes to **Post**, **AI Studio** or the
+**Editor** with one click, an AI Studio video goes to **Post** or the **Editor**, and anything in
+the library can be posted, edited, sent to AI Studio or used as a Reel Finder reference.
 
 **Fifofarm and the Reel Finder app stay exactly as they are.** This is a separate app with its
 own data. It posts through the same posting engine (Postiz) your Fifofarm server runs, so
@@ -97,7 +100,25 @@ video's moves, camera and timing with the person in the photos).
   and shows up in the library, ready to post.
 - *Length* can be **Auto** (Wan decides; with a reference, like the reference) or 2–30 s. With
   a reference video, its length plus the new video's is 30 s at most.
-- Generating videos costs money on your Alibaba account.
+- **Cost:** AI Studio shows the price before you press Generate, from the per-second rates in
+  Settings → AI Studio (seeded from Alibaba's list prices — edit them to match your own bill and
+  discount). The **Spending** page shows how much each model has spent, by month and by quality.
+  Only finished videos are counted, because Alibaba bills on success.
+
+## Editing
+
+The **Editor** turns a clip into a ready reel, all on your Mac with ffmpeg (free, no account):
+trim it, crop it to a shape (9:16, 4:5, 1:1, 16:9 or keep original), add text captions, add your
+own music (volume, keep or drop the clip's own sound) and a fade. The finished reel lands in the
+model's *Edited reels* folder, ready to post. Use music you have the rights to.
+
+## Metadata
+
+Photos and videos carry hidden data — the camera or app that made them, GPS location, dates, and
+AI/edit tags. **Metadata → Clean up** lists a model's files, flags what each one still carries,
+and strips it in place (videos are re-wrapped without re-encoding; images are re-saved clean).
+This only *removes* metadata — the normal step before posting. It never writes fake camera or
+"shot on" information into a file.
 
 ---
 

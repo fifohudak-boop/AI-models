@@ -67,6 +67,7 @@ REFERENCE_TOTAL_S = 15.0  # … 15 seconds in total, 1 s at least each
 OUTPUT_PLUS_INPUT_S = 30  # with a video in: its length + the new video's length ≤ 30 s
 MIN_S, MAX_S = 2, 30
 SMART = -1  # Wan picks the length
+ESTIMATE_SECONDS = 5  # when the length is Auto, the cost shown before Generate assumes this many seconds
 POLL_EVERY_S = 15  # what Alibaba recommends
 FINAL = {"saved", "failed"}
 IMAGE_SUFFIXES = {".jpg", ".jpeg", ".png", ".bmp", ".webp", ".heic", ".heif", ".tif", ".tiff", ".gif", ".avif"}
@@ -88,6 +89,68 @@ class StudioError(Exception):
 
 def connected() -> bool:
     return bool(settings.get().get("alibabaApiKey"))
+
+
+# ---------------------------------------------------------------- what a video costs
+
+def currency() -> str:
+    return settings.get().get("studioCurrency") or "USD"
+
+
+def rates() -> dict:
+    return settings.get().get("studioRates") or {}
+
+
+def price_per_second(model: str, resolution: str) -> float | None:
+    """What Wan charges per second of finished video, for this model and resolution (None if unknown)."""
+    try:
+        value = rates().get(model, {}).get(resolution)
+        return float(value) if value is not None else None
+    except (TypeError, ValueError):
+        return None
+
+
+def estimate_cost(model: str, resolution: str, seconds: float) -> float | None:
+    rate = price_per_second(model, resolution)
+    if rate is None or not seconds or seconds <= 0:
+        return None
+    return round(rate * seconds, 4)
+
+
+def spending(model_id: str) -> dict:
+    """What a model has spent on Wan so far — only its own videos that finished (Alibaba bills on success)."""
+    cur = currency()
+    total = 0.0
+    videos = 0
+    seconds = 0.0
+    per_resolution: dict[str, dict] = {}
+    per_month: dict[str, dict] = {}
+    for job in list_jobs(model_id, limit=1000):
+        if job.get("status") != "saved" or job.get("cost") is None:
+            continue
+        cost = float(job["cost"])
+        secs = float(job.get("seconds") or 0)
+        total += cost
+        videos += 1
+        seconds += secs
+        res = job.get("resolution") or "?"
+        bucket = per_resolution.setdefault(res, {"videos": 0, "cost": 0.0, "seconds": 0.0})
+        bucket["videos"] += 1
+        bucket["cost"] += cost
+        bucket["seconds"] += secs
+        month = str(job.get("createdAt") or "")[:7] or "?"
+        mb = per_month.setdefault(month, {"month": month, "videos": 0, "cost": 0.0})
+        mb["videos"] += 1
+        mb["cost"] += cost
+    return {
+        "currency": cur,
+        "total": round(total, 2),
+        "videos": videos,
+        "seconds": round(seconds, 1),
+        "perResolution": {k: {**v, "cost": round(v["cost"], 2), "seconds": round(v["seconds"], 1)}
+                          for k, v in per_resolution.items()},
+        "perMonth": [{**v, "cost": round(v["cost"], 2)} for v in sorted(per_month.values(), key=lambda m: m["month"])],
+    }
 
 
 def base_url(region: str | None = None, workspace: str | None = None) -> str:
@@ -431,8 +494,12 @@ async def poll_once() -> None:
             _save(job)
             try:
                 job["file"] = await _download(job, out["video_url"])
-                job.update(status="saved", step="Saved", error=None,
-                           seconds=(out.get("usage") or {}).get("output_video_duration"))
+                secs = (out.get("usage") or {}).get("output_video_duration")
+                if not secs and job.get("duration") not in (None, SMART):
+                    secs = job["duration"]
+                job.update(status="saved", step="Saved", error=None, seconds=secs,
+                           cost=estimate_cost(job["model"], job["resolution"], float(secs or 0)),
+                           costCurrency=currency())
             except Exception as exc:  # noqa: BLE001 - tried again next round while the link works
                 job.update(status="SUCCEEDED", step="Saving the video", error=f"Couldn't save the video yet: {exc}")
         elif status in ("FAILED", "CANCELED", "UNKNOWN"):

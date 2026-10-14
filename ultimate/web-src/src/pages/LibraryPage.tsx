@@ -5,28 +5,32 @@ import { api } from '../api';
 import { LibraryGrid } from '../components/LibraryGrid';
 import { FOLDER_HINTS, FOLDER_LABELS } from '../folders';
 
-const KINDS: FolderKind[] = ['found', 'generated', 'references', 'photos'];
+const KINDS: FolderKind[] = ['found', 'generated', 'edited', 'references', 'photos'];
 
 // Everything of one model in one place: what Reel Finder found, what AI Studio made, your
 // references and the model's photos — and from here, straight to the other tools.
 export function LibraryPage({
   model,
+  initialKind = 'found',
   toast,
   onPost,
   onStudio,
+  onEdit,
   onReference,
   onSettings,
 }: {
   model: Model;
+  initialKind?: FolderKind;
   toast: (m: string) => void;
   onPost: (path: string) => void;
   onStudio: (kind: Handoff['kind'], path: string) => void;
+  onEdit?: (path: string) => void;
   onReference: (path: string) => Promise<void>;
   onSettings: () => void;
 }) {
   const [library, setLibrary] = useState<Library | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [kind, setKind] = useState<FolderKind>('found');
+  const [kind, setKind] = useState<FolderKind>(initialKind);
 
   const load = useCallback(async () => {
     try {
@@ -107,6 +111,11 @@ export function LibraryPage({
                     >
                       AI Studio
                     </button>
+                    {onEdit && item.kind === 'video' && (
+                      <button className="btn small" onClick={() => onEdit(item.path)} title="Open it in the editor">
+                        Edit
+                      </button>
+                    )}
                   </span>
                   <span className="row lib-links">
                     {item.kind === 'video' && kind !== 'photos' && (
