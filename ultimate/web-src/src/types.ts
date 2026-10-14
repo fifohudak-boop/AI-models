@@ -1,6 +1,6 @@
 // ---- The app, models and folders ----
 
-export type FolderKind = 'references' | 'photos' | 'found' | 'generated';
+export type FolderKind = 'references' | 'photos' | 'found' | 'generated' | 'edited';
 
 export interface Model {
   id: string;
@@ -398,9 +398,21 @@ export interface StudioOptions {
   regions: { id: string; name: string; needsWorkspace: boolean }[];
   minDuration: number;
   maxDuration: number;
+  estimateSeconds: number;
   maxPhotos: number;
   maxVideos: number;
   referenceSeconds: number;
+  currency: string;
+  rates: Record<string, Record<string, number>>;
+}
+
+export interface StudioSpending {
+  currency: string;
+  total: number;
+  videos: number;
+  seconds: number;
+  perResolution: Record<string, { videos: number; cost: number; seconds: number }>;
+  perMonth: { month: string; videos: number; cost: number }[];
 }
 
 export interface StudioJob {
@@ -424,6 +436,48 @@ export interface StudioJob {
   sentPrompt?: string;
   referenceSeconds?: number;
   seconds?: number | null;
+  cost?: number | null;
+  costCurrency?: string;
+}
+
+// ---- Editing ----
+
+export interface EditClip {
+  path: string;
+  name: string;
+  folder: string;
+  kind: 'video' | 'image';
+  size: number;
+  modified: number;
+}
+
+export interface EditJob {
+  id: string;
+  modelId: string;
+  createdAt: string;
+  status: string; // starting | processing | saved | failed
+  step: string;
+  progress: number;
+  error: string | null;
+  file: string | null;
+  name: string;
+}
+
+// ---- Metadata ----
+
+export interface MetaFile {
+  path: string;
+  name: string;
+  folder: string;
+  kind: 'video' | 'image';
+  size: number;
+  clean: boolean; // already free of camera/AI/location metadata
+  tags: string[]; // short labels of what it still carries (e.g. "GPS", "AI tag", "device")
+}
+
+export interface MetaResult {
+  cleaned: { path: string; name: string }[];
+  failed: { path: string; name: string; error: string }[];
 }
 
 // ---- Live updates ----

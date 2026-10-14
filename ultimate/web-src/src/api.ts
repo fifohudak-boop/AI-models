@@ -18,6 +18,11 @@ import type {
   SelfTestState,
   StudioJob,
   StudioOptions,
+  StudioSpending,
+  EditClip,
+  EditJob,
+  MetaFile,
+  MetaResult,
   VideoDetail,
 } from './types';
 
@@ -156,6 +161,28 @@ export const api = {
   studioJobs: (model: string) => request<StudioJob[]>(`${m(model)}/studio/jobs`),
   createStudioJob: (model: string, body: Record<string, unknown>) =>
     request<StudioJob>(`${m(model)}/studio/jobs`, { method: 'POST', body }),
+  studioSpending: (model: string) => request<StudioSpending>(`${m(model)}/studio/spending`),
+  saveStudioRates: (currency: string, rates: Record<string, Record<string, number>>) =>
+    request<{ currency: string; rates: Record<string, Record<string, number>> }>('/api/studio/rates', {
+      method: 'PUT',
+      body: { currency, rates },
+    }),
+
+  // ---- Editing ----
+  editOptions: () =>
+    request<{ aspects: { id: string; name: string }[]; captionSizes: string[]; captionPositions: string[] }>(
+      '/api/edit/options'
+    ),
+  editClips: (model: string) => request<EditClip[]>(`${m(model)}/edit/clips`),
+  editMusic: (model: string) => request<{ name: string; path: string; size: number }[]>(`${m(model)}/edit/music`),
+  createEdit: (model: string, body: Record<string, unknown>) =>
+    request<EditJob>(`${m(model)}/edit/jobs`, { method: 'POST', body }),
+  editJobs: (model: string) => request<EditJob[]>(`${m(model)}/edit/jobs`),
+
+  // ---- Metadata ----
+  metadataFiles: (model: string) => request<MetaFile[]>(`${m(model)}/metadata/files`),
+  cleanMetadata: (model: string, paths: string[]) =>
+    request<MetaResult>(`${m(model)}/metadata/clean`, { method: 'POST', body: { paths } }),
 };
 
 // The file goes as the request body (no form encoding); XHR so big videos show progress.
@@ -189,4 +216,8 @@ export function uploadMedia(file: File, onProgress: (fraction: number) => void):
 
 export function uploadReference(model: string, file: File): Promise<Reference> {
   return sendFile<Reference>(`${m(model)}/reels/references/upload?name=${enc(file.name)}`, file);
+}
+
+export function uploadMusic(model: string, file: File): Promise<{ name: string; path: string; size: number }> {
+  return sendFile(`${m(model)}/edit/music?name=${enc(file.name)}`, file);
 }

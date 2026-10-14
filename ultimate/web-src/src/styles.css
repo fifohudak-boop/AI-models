@@ -1134,10 +1134,6 @@ details > summary {
   cursor: pointer;
 }
 
-/* Tabs: a little gap between the tools (Fifofarm · Reel Finder · AI Studio · Library · Settings). */
-.tab.tab-gap {
-  margin-left: 10px;
-}
 .tab {
   position: relative;
 }
@@ -1151,9 +1147,94 @@ details > summary {
   background: var(--ok);
   animation: pulse 1.4s ease-in-out infinite;
 }
+.tab-dot.inline {
+  position: static;
+  display: inline-block;
+  margin-left: 6px;
+}
 @keyframes pulse {
   50% {
     opacity: 0.35;
+  }
+}
+
+/* ---- System nav: one button per system, each rolls down to its pages ---- */
+.systems {
+  display: flex;
+  gap: 4px;
+  margin-left: auto;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+.system {
+  position: relative;
+}
+.system-tab {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  background: none;
+  cursor: pointer;
+  font: inherit;
+  border: 1px solid transparent;
+}
+.system-tab .caret {
+  font-size: 10px;
+  opacity: 0.6;
+  transition: transform 0.15s ease;
+}
+.system-tab.open .caret {
+  transform: rotate(180deg);
+}
+.system-menu {
+  position: absolute;
+  top: calc(100% + 6px);
+  right: 0;
+  min-width: 180px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  box-shadow: var(--shadow-lg, 0 12px 32px rgb(0 0 0 / 0.18));
+  padding: 6px;
+  z-index: 40;
+  animation: menu-in 0.12s ease;
+}
+@keyframes menu-in {
+  from {
+    opacity: 0;
+    transform: translateY(-4px);
+  }
+}
+.system-menu-item {
+  display: flex;
+  align-items: center;
+  width: 100%;
+  gap: 6px;
+  padding: 9px 11px;
+  border: none;
+  background: none;
+  border-radius: 8px;
+  text-align: left;
+  font: inherit;
+  color: var(--text);
+  cursor: pointer;
+  white-space: nowrap;
+}
+.system-menu-item:hover {
+  background: var(--surface-2);
+}
+.system-menu-item.on {
+  background: var(--accent-soft);
+  color: var(--accent);
+  font-weight: 600;
+}
+
+@media (max-width: 560px) {
+  .systems {
+    order: 3;
+    margin-left: 0;
+    width: 100%;
+    justify-content: flex-start;
   }
 }
 
@@ -1877,3 +1958,133 @@ details > summary {
   }
 }
 
+
+/* ---- AI Studio: cost line & spending, Editor, Metadata ---- */
+.chip.warn {
+  background: var(--warn-soft);
+  color: var(--warn);
+}
+.cost-line {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  flex-wrap: wrap;
+  padding: 4px 0;
+}
+.cost-amount {
+  font-size: 20px;
+  font-weight: 700;
+}
+.cost-tag {
+  margin-left: 8px;
+  font-weight: 600;
+  color: var(--accent);
+}
+
+.spend-tiles {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(130px, 1fr));
+  gap: 12px;
+  margin-bottom: 12px;
+}
+.spend-tile {
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 14px;
+}
+.spend-big {
+  font-size: 26px;
+  font-weight: 700;
+  line-height: 1.1;
+}
+.spend-bars {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.spend-bar-row {
+  display: grid;
+  grid-template-columns: 70px 1fr auto;
+  align-items: center;
+  gap: 10px;
+}
+.spend-bar-track {
+  background: var(--surface-2);
+  border-radius: 6px;
+  height: 14px;
+  overflow: hidden;
+}
+.spend-bar-fill {
+  display: block;
+  height: 100%;
+  background: var(--accent);
+  border-radius: 6px;
+}
+.spend-table {
+  width: 100%;
+  border-collapse: collapse;
+}
+.spend-table th,
+.spend-table td {
+  text-align: left;
+  padding: 7px 10px;
+  border-bottom: 1px solid var(--border);
+}
+.spend-table th {
+  font-size: 13px;
+  color: var(--muted);
+}
+.spend-item {
+  flex-wrap: nowrap;
+  border-bottom: 1px solid var(--border);
+  padding-bottom: 8px;
+}
+.rates-table input[type='number'] {
+  width: 92px;
+}
+
+.edit-preview {
+  width: 100%;
+  max-height: 460px;
+  background: #000;
+  border-radius: 10px;
+}
+.caption-row {
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 10px;
+}
+
+.meta-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 7px 0;
+  border-bottom: 1px solid var(--border);
+}
+.meta-thumb {
+  width: 46px;
+  height: 46px;
+  object-fit: cover;
+  border-radius: 8px;
+  background: var(--surface-2);
+  flex: none;
+}
+.meta-main {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  flex: 1;
+}
+.meta-name {
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.meta-tags {
+  display: flex;
+  gap: 5px;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}

@@ -172,6 +172,12 @@ export function StudioPage({
     !busy &&
     (mode === 'text' ? prompt.trim().length > 0 : mode === 'image' ? photos.length > 0 : videos.length > 0);
 
+  // What this video will cost, from the rates in Settings (Wan bills per second of finished video).
+  const rate = options?.rates?.[wan]?.[resolution];
+  const estSeconds = autoLength ? options?.estimateSeconds ?? 5 : duration;
+  const estCost = rate != null && estSeconds > 0 ? rate * estSeconds : null;
+  const money = (n: number) => `${options?.currency === 'USD' ? '$' : ''}${n.toFixed(2)}${options?.currency && options.currency !== 'USD' ? ` ${options.currency}` : ''}`;
+
   return (
     <div>
       <div className="card-head">
@@ -342,6 +348,28 @@ export function StudioPage({
             video shorter.
           </p>
         )}
+        {connected && (
+          <div className="cost-line">
+            {estCost != null ? (
+              <>
+                <span className="cost-amount">{money(estCost)}</span>
+                <span className="muted small">
+                  {autoLength
+                    ? `about, for ~${estSeconds}s (Auto length — final depends on the video Wan makes)`
+                    : `for ${duration}s at ${resolution}`}
+                </span>
+              </>
+            ) : (
+              <span className="muted small">
+                Set Wan's prices in{' '}
+                <button type="button" className="btn link small" onClick={onSettings}>
+                  Settings → AI Studio
+                </button>{' '}
+                to see the cost.
+              </span>
+            )}
+          </div>
+        )}
         {error && <div className="notice error small">{error}</div>}
         <button type="button" className="btn primary big" disabled={!ready} onClick={generate}>
           {!connected
@@ -378,6 +406,13 @@ export function StudioPage({
                     {job.mode === 'text' ? 'From a prompt' : job.mode === 'image' ? 'From a photo' : 'Like a reference video'} ·{' '}
                     {job.seconds ? `${job.seconds}s` : job.duration === -1 ? 'auto length' : `${job.duration}s`} · {job.ratio} ·{' '}
                     {job.resolution}
+                    {job.cost != null && (
+                      <span className="cost-tag">
+                        {job.costCurrency === 'USD' ? '$' : ''}
+                        {job.cost.toFixed(2)}
+                        {job.costCurrency && job.costCurrency !== 'USD' ? ` ${job.costCurrency}` : ''}
+                      </span>
+                    )}
                   </div>
                   <div className="account-meta" title={job.sentPrompt || job.prompt}>
                     {job.prompt || (job.videos[0] ? fileName(job.videos[0]) : job.photos[0] ? fileName(job.photos[0]) : '')}

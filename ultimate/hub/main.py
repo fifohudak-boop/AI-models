@@ -11,7 +11,10 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
-from . import analytics, db, media, personas, postiz, reels_api, routes_core, routes_posting, routes_studio, studio
+from . import (
+    analytics, db, media, personas, postiz, reels_api, routes_core, routes_edit, routes_meta, routes_posting,
+    routes_studio, studio,
+)
 from .config import WEB_DIR, ensure_dirs
 from .events import bus
 
@@ -93,6 +96,8 @@ app.include_router(routes_core.router)
 app.include_router(routes_posting.router)
 app.include_router(reels_api.router)
 app.include_router(routes_studio.router)
+app.include_router(routes_edit.router)
+app.include_router(routes_meta.router)
 
 
 @app.get("/api/health")

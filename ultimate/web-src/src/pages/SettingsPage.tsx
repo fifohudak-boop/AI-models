@@ -6,8 +6,8 @@ import { ModelAvatar } from '../components/ModelSwitcher';
 import { FOLDER_HINTS, FOLDER_LABELS } from '../folders';
 
 const COLORS = ['#4f46e5', '#db2777', '#059669', '#d97706', '#0891b2', '#7c3aed', '#dc2626', '#65a30d'];
-const FOLDER_ORDER: FolderKind[] = ['references', 'photos', 'found', 'generated'];
-const DEFAULT_FOLDERS: FolderKind[] = ['found', 'generated'];
+const FOLDER_ORDER: FolderKind[] = ['references', 'photos', 'found', 'generated', 'edited'];
+const DEFAULT_FOLDERS: FolderKind[] = ['found', 'generated', 'edited'];
 
 function FolderRow({
   model,
@@ -378,6 +378,102 @@ function PostingDefaults({ prefs, save }: { prefs: Preferences; save: (patch: Pa
   );
 }
 
+// What Wan charges per second of finished video — used for the cost shown before Generate and the
+// Spending pages. Seeded from Alibaba's list prices; editable because prices and discounts change.
+function StudioRatesCard({ toast }: { toast: (m: string) => void }) {
+  const [currency, setCurrency] = useState('USD');
+  const [models, setModels] = useState<{ id: string; name: string }[]>([]);
+  const [resolutions, setResolutions] = useState<string[]>([]);
+  const [rates, setRates] = useState<Record<string, Record<string, number>>>({});
+  const [busy, setBusy] = useState(false);
+  const [saved, setSaved] = useState(false);
+
+  useEffect(() => {
+    api
+      .studioOptions()
+      .then((o) => {
+        setCurrency(o.currency);
+        setModels(o.models);
+        setResolutions(o.resolutions);
+        setRates(o.rates || {});
+      })
+      .catch(() => {});
+  }, []);
+
+  function setRate(model: string, res: string, value: string) {
+    setSaved(false);
+    setRates((r) => ({ ...r, [model]: { ...(r[model] || {}), [res]: value === '' ? 0 : Number(value) } }));
+  }
+
+  async function save() {
+    setBusy(true);
+    try {
+      const res = await api.saveStudioRates(currency, rates);
+      setRates(res.rates);
+      setSaved(true);
+      toast('Saved the Wan prices');
+    } catch (err) {
+      toast((err as Error).message);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  if (models.length === 0) return null;
+
+  return (
+    <section className="card stack">
+      <div className="card-head" style={{ marginBottom: 0 }}>
+        <h2>What a Wan video costs</h2>
+        {saved && <span className="chip published">saved</span>}
+      </div>
+      <p className="small" style={{ margin: 0 }}>
+        Wan charges per second of finished video. These seed the cost shown before you press Generate and the Spending
+        pages — change them to match what Alibaba actually bills you (including any discount).
+      </p>
+      <label className="field" style={{ maxWidth: 160 }}>
+        <span className="small">Currency</span>
+        <input type="text" value={currency} maxLength={8} onChange={(e) => { setCurrency(e.target.value); setSaved(false); }} />
+      </label>
+      <div className="rates-table">
+        <table className="spend-table">
+          <thead>
+            <tr>
+              <th>Per second</th>
+              {resolutions.map((r) => (
+                <th key={r}>{r}</th>
+              ))}
+            </tr>
+          </thead>
+          <tbody>
+            {models.map((mdl) => (
+              <tr key={mdl.id}>
+                <td>{mdl.name}</td>
+                {resolutions.map((res) => (
+                  <td key={res}>
+                    <input
+                      type="number"
+                      min={0}
+                      step={0.001}
+                      value={rates[mdl.id]?.[res] ?? ''}
+                      onChange={(e) => setRate(mdl.id, res, e.target.value)}
+                    />
+                  </td>
+                ))}
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+      <div className="row">
+        <button className="btn primary small" disabled={busy} onClick={save}>
+          {busy ? 'Saving…' : 'Save prices'}
+        </button>
+      </div>
+    </section>
+  );
+}
+
 export function SettingsPage({
   status,
   models,
@@ -498,6 +594,8 @@ export function SettingsPage({
       )}
 
       {settings && <StudioKeyCard settings={settings} onSaved={(s) => { setSettings(s); onStatus(); }} toast={toast} />}
+
+      <StudioRatesCard toast={toast} />
 
       {prefs ? (
         <>
