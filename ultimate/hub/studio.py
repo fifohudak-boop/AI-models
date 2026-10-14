@@ -50,15 +50,20 @@ MODES = {
 }
 RESOLUTIONS = ("480P", "720P", "1080P")
 RATIOS = ("9:16", "3:4", "1:1", "4:3", "16:9", "21:9", "adaptive")
-# region id → (label, region code in the workspace address, classic address without a workspace ID)
-REGIONS: dict[str, tuple[str, str, str | None]] = {
-    "intl": ("Singapore (international)", "ap-southeast-1", "https://dashscope-intl.aliyuncs.com"),
-    "cn": ("China (Beijing)", "cn-beijing", "https://dashscope.aliyuncs.com"),
-    "us": ("US (Virginia)", "us-east-1", None),
-    "eu": ("Germany (Frankfurt)", "eu-central-1", None),
-    "jp": ("Japan (Tokyo)", "ap-northeast-1", None),
-    "hk": ("China (Hong Kong)", "cn-hongkong", None),
+# region id → (label, region code used in the workspace address). Wan 3.0 is served only on the
+# per-workspace address {WorkspaceId}.{code}.maas.aliyuncs.com, so the workspace ID is always needed.
+REGIONS: dict[str, tuple[str, str]] = {
+    "intl": ("Singapore (international)", "ap-southeast-1"),
+    "cn": ("China (Beijing)", "cn-beijing"),
+    "us": ("US (Virginia)", "us-east-1"),
+    "eu": ("Germany (Frankfurt)", "eu-central-1"),
+    "jp": ("Japan (Tokyo)", "ap-northeast-1"),
+    "hk": ("China (Hong Kong)", "cn-hongkong"),
 }
+# China regions go through dashscope.aliyuncs.com, everywhere else through dashscope-intl — only used
+# as a fallback for the temporary-upload step, which is also offered on the shared DashScope host.
+CLASSIC_HOSTS = {"cn": "https://dashscope.aliyuncs.com", "hk": "https://dashscope.aliyuncs.com"}
+CLASSIC_DEFAULT = "https://dashscope-intl.aliyuncs.com"
 WORKSPACE_ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9-]{1,63}$")
 
 MAX_PHOTOS = 10  # reference_image: up to 10
@@ -88,6 +93,11 @@ class StudioError(Exception):
 
 
 def connected() -> bool:
+    s = settings.get()
+    return bool(s.get("alibabaApiKey")) and bool((s.get("alibabaWorkspace") or "").strip())
+
+
+def has_key() -> bool:
     return bool(settings.get().get("alibabaApiKey"))
 
 
@@ -153,19 +163,28 @@ def spending(model_id: str) -> dict:
     }
 
 
-def base_url(region: str | None = None, workspace: str | None = None) -> str:
-    """Where to send requests: your workspace's address when you gave its ID, else the classic one."""
+def _region_workspace(region: str | None, workspace: str | None) -> tuple[str, str]:
     s = settings.get()
     region = region if region is not None else s.get("alibabaRegion") or "intl"
     workspace = (workspace if workspace is not None else s.get("alibabaWorkspace") or "").strip()
-    _label, code, classic = REGIONS.get(region, REGIONS["intl"])
-    if workspace:
-        if not WORKSPACE_ID.match(workspace):
-            raise StudioError("That workspace ID doesn't look right — copy it from the Model Studio console.")
-        return f"https://{workspace}.{code}.maas.aliyuncs.com"
-    if not classic:
-        raise StudioError(f"For {REGIONS[region][0]}, add your Model Studio workspace ID (Settings → AI Studio).")
-    return classic
+    return (region if region in REGIONS else "intl"), workspace
+
+
+def base_url(region: str | None = None, workspace: str | None = None) -> str:
+    """Wan 3.0's address: your workspace's own host. The workspace ID is required — without it
+    Alibaba has no endpoint for Wan 3.0 (the shared dashscope host returns 404)."""
+    region, workspace = _region_workspace(region, workspace)
+    if not workspace:
+        raise StudioError("Add your Model Studio workspace ID (Settings → AI Studio) — Wan 3.0 needs it.", 424)
+    if not WORKSPACE_ID.match(workspace):
+        raise StudioError("That workspace ID doesn't look right — copy it from the Model Studio console.")
+    return f"https://{workspace}.{REGIONS[region][1]}.maas.aliyuncs.com"
+
+
+def classic_url(region: str | None = None) -> str:
+    """The shared DashScope host for this region (temporary uploads also work here)."""
+    region, _ = _region_workspace(region, "")
+    return CLASSIC_HOSTS.get(region, CLASSIC_DEFAULT)
 
 
 def _headers(extra: dict | None = None, key: str | None = None) -> dict:
@@ -194,27 +213,39 @@ def _message(resp: httpx.Response) -> str:
     if code in ("Model.AccessDenied", "Model.NotFound", "ModelNotFound") or (
         "model" in lower and ("not exist" in lower or "not found" in lower or "access" in lower)
     ):
-        text += " — make sure Wan 3.0 is enabled in your Model Studio workspace; adding the workspace ID in Settings may help."
+        text += " — open the Model Studio console and activate Wan 3.0 for this workspace."
     return f"Alibaba: {text}"
 
 
 async def check_key(key: str, region: str, workspace: str) -> None:
-    """A cheap call that tells a wrong key apart from a working one (asks for a task that doesn't exist)."""
-    base = base_url(region, workspace)
+    """Check the key, region and workspace actually work together — asks Wan 3.0's own address for an
+    upload policy, so if that endpoint is wrong (the usual HTTP 404 on Generate) we catch it now."""
+    base = base_url(region, workspace)  # raises if the workspace ID is missing or malformed
     async with _client(20) as client:
-        resp = await client.get(f"{base}/api/v1/tasks/00000000-0000-0000-0000-000000000000", headers=_headers(key=key))
+        resp = await client.get(f"{base}/api/v1/uploads", params={"action": "getPolicy", "model": "wan3.0-video"},
+                                headers=_headers({"Content-Type": "application/json"}, key=key))
+    if resp.status_code == 200:
+        return
     if resp.status_code in (401, 403):
         raise StudioError(_message(resp), 400)
+    if resp.status_code == 404:
+        raise StudioError("Couldn't reach Wan 3.0 at that address — check the region and workspace ID match where "
+                          "your API key was made (they must all be the same place).", 400)
+    raise StudioError(_message(resp), 400)
 
 
 async def upload_temp(path: Path, model: str) -> str:
     """Put a local file in Alibaba's temporary storage; returns an oss:// URL valid for 48 hours.
 
     The policy is asked for the same model the task uses (files can't be shared across models)."""
-    base = base_url()
     async with _client(900) as client:
-        policy_resp = await client.get(f"{base}/api/v1/uploads", params={"action": "getPolicy", "model": model},
+        policy_resp = await client.get(f"{base_url()}/api/v1/uploads", params={"action": "getPolicy", "model": model},
                                        headers=_headers({"Content-Type": "application/json"}))
+        if policy_resp.status_code == 404:
+            # Some accounts serve temporary uploads only on the shared DashScope host.
+            policy_resp = await client.get(f"{classic_url()}/api/v1/uploads",
+                                           params={"action": "getPolicy", "model": model},
+                                           headers=_headers({"Content-Type": "application/json"}))
         if policy_resp.status_code >= 400:
             raise StudioError(_message(policy_resp), 502)
         policy = (policy_resp.json() or {}).get("data") or {}

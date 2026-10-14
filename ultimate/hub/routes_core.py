@@ -96,7 +96,9 @@ async def status() -> dict:
         "build": installed_commit()[:7] or "dev",
         "updateAvailable": update_watch.available,
         "engine": engine,
-        "studio": {"connected": studio.connected(), "region": s.get("alibabaRegion", "intl")},
+        "studio": {"connected": studio.connected(), "hasKey": studio.has_key(),
+                   "needsWorkspace": studio.has_key() and not (s.get("alibabaWorkspace") or "").strip(),
+                   "region": s.get("alibabaRegion", "intl")},
         "activeModel": s.get("activeModel") or "",
     }
 
@@ -162,7 +164,8 @@ async def save_studio_key(body: StudioKeyBody) -> dict:
         raise HTTPException(400, "That workspace ID doesn't look right — copy it from the Model Studio console.")
     old = settings.get()
     key = old["alibabaApiKey"] if body.apiKey is None else body.apiKey.strip()
-    if key:
+    # Wan 3.0 needs the key, region and workspace together, so only check once all three are present.
+    if key and workspace:
         try:
             await studio.check_key(key, body.region, workspace)
         except studio.StudioError as exc:

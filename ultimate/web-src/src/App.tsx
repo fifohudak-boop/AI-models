@@ -271,6 +271,7 @@ export function App() {
             key={model.id}
             model={model}
             connected={status.studio.connected}
+            needsWorkspace={!!status.studio.needsWorkspace}
             handoff={handoff?.kind.startsWith('studio') ? handoff : null}
             toast={toast}
             onPost={(path) => handOff('post', path)}

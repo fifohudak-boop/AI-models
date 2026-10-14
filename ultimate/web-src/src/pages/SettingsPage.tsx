@@ -186,14 +186,14 @@ function ModelCard({
   );
 }
 
-// Where your Model Studio key was made (the key, the region and the workspace must match).
-const STUDIO_REGIONS: { id: string; name: string; needsWorkspace: boolean }[] = [
-  { id: 'intl', name: 'Singapore (international)', needsWorkspace: false },
-  { id: 'cn', name: 'China (Beijing)', needsWorkspace: false },
-  { id: 'us', name: 'US (Virginia)', needsWorkspace: true },
-  { id: 'eu', name: 'Germany (Frankfurt)', needsWorkspace: true },
-  { id: 'jp', name: 'Japan (Tokyo)', needsWorkspace: true },
-  { id: 'hk', name: 'China (Hong Kong)', needsWorkspace: true },
+// Where your Model Studio key was made (the key, the region and the workspace must all match).
+const STUDIO_REGIONS: { id: string; name: string }[] = [
+  { id: 'intl', name: 'Singapore (international)' },
+  { id: 'cn', name: 'China (Beijing)' },
+  { id: 'us', name: 'US (Virginia)' },
+  { id: 'eu', name: 'Germany (Frankfurt)' },
+  { id: 'jp', name: 'Japan (Tokyo)' },
+  { id: 'hk', name: 'China (Hong Kong)' },
 ];
 
 function StudioKeyCard({ settings, onSaved, toast }: { settings: AppSettings; onSaved: (s: AppSettings) => void; toast: (m: string) => void }) {
@@ -202,9 +202,9 @@ function StudioKeyCard({ settings, onSaved, toast }: { settings: AppSettings; on
   const [workspace, setWorkspace] = useState(settings.alibabaWorkspace || '');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const needsWorkspace = STUDIO_REGIONS.find((r) => r.id === region)?.needsWorkspace ?? false;
   const changedPlace = region !== (settings.alibabaRegion || 'intl') || workspace.trim() !== (settings.alibabaWorkspace || '');
-  const canSave = (key.trim() || (settings.alibabaKey && changedPlace)) && (!needsWorkspace || workspace.trim());
+  // Wan 3.0 is only served on your workspace's own address, so the workspace ID is always required.
+  const canSave = Boolean((key.trim() || (settings.alibabaKey && changedPlace)) && workspace.trim());
   return (
     <section className="card stack" id="studio">
       <div className="card-head" style={{ marginBottom: 0 }}>
@@ -216,7 +216,8 @@ function StudioKeyCard({ settings, onSaved, toast }: { settings: AppSettings; on
         <a href="https://modelstudio.console.alibabacloud.com/" target="_blank" rel="noreferrer">
           Model Studio console
         </a>{' '}
-        and paste it here. The key, the region and the workspace must all be the same place.
+        and paste it here, with the <strong>workspace ID</strong> from the same account. Wan 3.0 is served only on
+        your workspace's own address, so all three must be the same place.
       </p>
       <form
         className="stack"
@@ -259,8 +260,7 @@ function StudioKeyCard({ settings, onSaved, toast }: { settings: AppSettings; on
         </div>
         <label className="field">
           <span>
-            Workspace ID{' '}
-            <span className="muted small">{needsWorkspace ? '(needed for this region)' : '(optional for Singapore and Beijing)'}</span>
+            Workspace ID <span className="muted small">(required)</span>
           </span>
           <input
             type="text"

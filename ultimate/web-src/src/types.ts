@@ -20,7 +20,7 @@ export interface AppStatus {
   build: string;
   updateAvailable: boolean;
   engine: { url: string; configured: boolean; state: EngineState; detail?: string };
-  studio: { connected: boolean; region: string };
+  studio: { connected: boolean; hasKey?: boolean; needsWorkspace?: boolean; region: string };
   activeModel: string;
 }
 
@@ -395,7 +395,8 @@ export interface StudioOptions {
   modes: { id: 'text' | 'image' | 'reference'; name: string }[];
   resolutions: string[];
   ratios: string[];
-  regions: { id: string; name: string; needsWorkspace: boolean }[];
+  regions: { id: string; name: string }[];
+  workspaceRequired?: boolean;
   minDuration: number;
   maxDuration: number;
   estimateSeconds: number;

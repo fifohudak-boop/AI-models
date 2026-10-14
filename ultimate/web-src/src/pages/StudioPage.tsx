@@ -58,6 +58,7 @@ function Picked({ model, paths, onRemove }: { model: Model; paths: string[]; onR
 export function StudioPage({
   model,
   connected,
+  needsWorkspace = false,
   handoff,
   toast,
   onPost,
@@ -65,6 +66,7 @@ export function StudioPage({
 }: {
   model: Model;
   connected: boolean;
+  needsWorkspace?: boolean;
   handoff: Handoff | null;
   toast: (m: string) => void;
   onPost: (path: string) => void;
@@ -187,19 +189,20 @@ export function StudioPage({
 
       {!connected && (
         <section className="card stack studio-connect">
-          <h2>Connect Alibaba's Wan 3.0</h2>
+          <h2>{needsWorkspace ? 'Add your workspace ID' : "Connect Alibaba's Wan 3.0"}</h2>
           <p className="small" style={{ margin: 0 }}>
             AI Studio makes new videos of {model.name} with <strong>Wan 3.0</strong> from Alibaba Cloud Model Studio: from a
             prompt, from a photo, or "like this reference video, but with {model.name}". The finished video lands in{' '}
             {model.name}'s library, ready to post with Fifofarm.
           </p>
           <p className="small muted" style={{ margin: 0 }}>
-            Add your Alibaba Cloud Model Studio API key in Settings → AI Studio. Everything here is ready for it — we'll test
-            the first videos together.
+            {needsWorkspace
+              ? 'Your API key is saved, but Wan 3.0 is served only on your workspace’s own address — add your Model Studio workspace ID in Settings → AI Studio to finish.'
+              : 'Add your Alibaba Cloud Model Studio API key and workspace ID in Settings → AI Studio. Everything here is ready for them.'}
           </p>
           <div className="row">
             <button className="btn primary" onClick={onSettings}>
-              Add the API key
+              {needsWorkspace ? 'Add the workspace ID' : 'Add the API key'}
             </button>
           </div>
         </section>
