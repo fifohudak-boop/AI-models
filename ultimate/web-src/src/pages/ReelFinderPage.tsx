@@ -358,6 +358,16 @@ export function ReelFinderPage({
   const agentList = useMemo(() => [...agents.values()].sort((a, b) => a.id - b.id), [agents]);
   const anyLogin = status ? Object.values(status.logins).some(Boolean) : true;
 
+  async function importLogins() {
+    try {
+      await api.importLogins();
+      toast('Logins copied from Reel Finder');
+      onStatus();
+    } catch (err) {
+      toast((err as Error).message);
+    }
+  }
+
   if (!settings) return <p className="muted">Loading…</p>;
 
   const pills = (
@@ -395,6 +405,22 @@ export function ReelFinderPage({
         <div className="notice info small" style={{ marginBottom: 12 }}>
           Another model's hunt is running — one hunt at a time (they share the agents' browser). You can set this one up
           meanwhile.
+        </div>
+      )}
+      {status && !anyLogin && !running && (
+        <div className="notice warn" style={{ marginBottom: 12 }}>
+          <strong>Log in before you hunt.</strong> The agents can only search platforms you're signed into — without a
+          login they land on the sign-in page and find nothing. In <b>Where to search</b> below, press <b>Connect</b> next
+          to a platform, log in, then close that window.
+          {status.canImportLogins && (
+            <>
+              {' '}
+              Already signed in in the Reel Finder app?{' '}
+              <button type="button" className="btn small" onClick={importLogins}>
+                Copy those logins
+              </button>
+            </>
+          )}
         </div>
       )}
       {picking && (
@@ -529,19 +555,7 @@ export function ReelFinderPage({
             {status?.canImportLogins && !anyLogin && (
               <div className="notice info small row">
                 <span>Logged in to these in the Reel Finder app? Copy those logins over instead of logging in again.</span>
-                <button
-                  type="button"
-                  className="btn small"
-                  onClick={async () => {
-                    try {
-                      await api.importLogins();
-                      toast('Logins copied from Reel Finder');
-                      onStatus();
-                    } catch (err) {
-                      toast((err as Error).message);
-                    }
-                  }}
-                >
+                <button type="button" className="btn small" onClick={importLogins}>
                   Copy logins from Reel Finder
                 </button>
               </div>

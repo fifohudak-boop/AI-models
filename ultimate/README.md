@@ -76,9 +76,11 @@ Desktop shortcut. Your videos stay in their folders.
    click **Copy logins from Reel Finder**). The logins are shared by all models; one
    hunt runs at a time.
 6. **AI Studio:** paste your Alibaba Cloud **Model Studio** API key in Settings → AI Studio,
-   choose the region the key was made in, and add your **workspace ID** (needed outside
-   Singapore and Beijing; recommended everywhere, since Wan 3.0 is documented with each
-   workspace's own address).
+   choose the region the key was made in, and add your **workspace ID**. All three are
+   required and must be from the same place — Wan 3.0 is served only on your workspace's own
+   address (`{workspace}.{region}.maas.aliyuncs.com`), so without the workspace ID Alibaba
+   has no endpoint for it. The workspace ID is in the Model Studio console (there's a link
+   next to the field).
 
 ## Where things are kept
 
