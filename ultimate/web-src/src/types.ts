@@ -411,8 +411,18 @@ export interface SelfTestState {
 
 // ---- AI Studio ----
 
+export interface ModelStudioKey {
+  hasOwnKey: boolean; // this model has its own key (not the shared default)
+  usingDefault: boolean;
+  keyMasked: string; // the key is only ever shown masked
+  region: string;
+  workspace: string;
+  defaultConnected: boolean; // is the shared default key usable?
+}
+
 export interface StudioOptions {
   connected: boolean;
+  needsWorkspace?: boolean;
   models: { id: string; name: string }[];
   modes: { id: 'text' | 'image' | 'reference'; name: string }[];
   resolutions: string[];

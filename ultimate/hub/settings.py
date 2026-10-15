@@ -43,9 +43,13 @@ DEFAULTS: dict[str, Any] = {
     "engineUrl": "",
     "engineApiKey": "",
     # AI Studio (Alibaba Cloud Model Studio, the Wan video models)
+    # The shared "default" Model Studio key, used by any model that doesn't have its own.
     "alibabaApiKey": "",
     "alibabaRegion": "intl",  # intl (Singapore) | cn (Beijing) | us | eu | jp | hk — see studio.REGIONS
     "alibabaWorkspace": "",  # Model Studio workspace ID (its own address); needed outside Singapore/Beijing
+    # Per-model keys: { modelId: {apiKey, region, workspace} } — a model with its own key uses it
+    # instead of the default, so different models can be on different Alibaba accounts.
+    "studioKeys": {},
     # What Wan charges, per second of finished video, by model and resolution. Editable in Settings
     # (Alibaba's prices change and depend on your discounts); used for the cost shown before Generate
     # and for the Spending page. Seeded from Alibaba's published Wan 3.0 list prices (USD).

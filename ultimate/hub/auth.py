@@ -204,6 +204,8 @@ def _owner_only(method: str, path: str) -> bool:
         return True
     if path == "/api/sharing" and method == "PUT":
         return True
+    if path.startswith("/api/m/") and path.endswith("/studio/key"):
+        return True  # a model's Alibaba key is the owner's to set, even for a shared model
     if path.startswith("/api/accounts/") and path.endswith("/model") and method == "PUT":
         return True
     if path.startswith("/api/auth/users"):

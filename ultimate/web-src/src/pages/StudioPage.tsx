@@ -57,16 +57,12 @@ function Picked({ model, paths, onRemove }: { model: Model; paths: string[]; onR
 // AI Studio, for one model: make new videos of the model with Wan 3.0 (Alibaba Cloud Model Studio).
 export function StudioPage({
   model,
-  connected,
-  needsWorkspace = false,
   handoff,
   toast,
   onPost,
   onSettings,
 }: {
   model: Model;
-  connected: boolean;
-  needsWorkspace?: boolean;
   handoff: Handoff | null;
   toast: (m: string) => void;
   onPost: (path: string) => void;
@@ -97,9 +93,13 @@ export function StudioPage({
   }, [model.id]);
 
   useEffect(() => {
-    api.studioOptions().then(setOptions).catch(() => {});
+    api.modelStudioOptions(model.id).then(setOptions).catch(() => {});
     load();
-  }, [load]);
+  }, [load, model.id]);
+
+  // This model's own connection (its own key, or the shared default if it has none).
+  const connected = options?.connected ?? false;
+  const needsWorkspace = options?.needsWorkspace ?? false;
 
   // Sent here from Reel Finder or the library.
   const handled = useRef(0);
@@ -197,12 +197,12 @@ export function StudioPage({
           </p>
           <p className="small muted" style={{ margin: 0 }}>
             {needsWorkspace
-              ? 'Your API key is saved, but Wan 3.0 is served only on your workspace’s own address — add your Model Studio workspace ID in Settings → AI Studio to finish.'
-              : 'Add your Alibaba Cloud Model Studio API key and workspace ID in Settings → AI Studio. Everything here is ready for them.'}
+              ? `${model.name}'s API key is saved, but Wan 3.0 is served only on your workspace’s own address — add the Model Studio workspace ID in Settings → Models → ${model.name}'s AI Studio key to finish.`
+              : `Give ${model.name} its own Alibaba Cloud Model Studio API key + workspace in Settings → Models → ${model.name}'s AI Studio key (or set a shared default key there). Each model can be on its own account.`}
           </p>
           <div className="row">
             <button className="btn primary" onClick={onSettings}>
-              {needsWorkspace ? 'Add the workspace ID' : 'Add the API key'}
+              {needsWorkspace ? 'Add the workspace ID' : `Set ${model.name}'s key`}
             </button>
           </div>
         </section>
@@ -376,7 +376,7 @@ export function StudioPage({
         {error && <div className="notice error small">{error}</div>}
         <button type="button" className="btn primary big" disabled={!ready} onClick={generate}>
           {!connected
-            ? 'Connect Wan 3.0 first (Settings → AI Studio)'
+            ? `Connect Wan 3.0 for ${model.name} first`
             : busy
               ? 'Sending…'
               : mode === 'reference' && videos.length === 0

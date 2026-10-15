@@ -92,13 +92,55 @@ class StudioError(Exception):
         self.status = status
 
 
-def connected() -> bool:
+# ---------------------------------------------------------------- each model's own Alibaba key
+# A model can have its own key + region + workspace (so Mia and Mike can be on different accounts).
+# A model without its own falls back to the shared "default" (the old single key), so nothing breaks.
+
+def _default_creds(s: dict | None = None) -> dict:
+    s = s or settings.get()
+    return {"apiKey": s.get("alibabaApiKey") or "", "region": s.get("alibabaRegion") or "intl",
+            "workspace": (s.get("alibabaWorkspace") or "").strip()}
+
+
+def creds(model_id: str | None) -> dict:
+    """This model's AI Studio key, region and workspace — its own if set, else the shared default."""
     s = settings.get()
-    return bool(s.get("alibabaApiKey")) and bool((s.get("alibabaWorkspace") or "").strip())
+    entry = (s.get("studioKeys") or {}).get(model_id or "") or {}
+    if entry.get("apiKey"):
+        return {"apiKey": entry.get("apiKey") or "", "region": entry.get("region") or "intl",
+                "workspace": (entry.get("workspace") or "").strip()}
+    return _default_creds(s)
 
 
-def has_key() -> bool:
-    return bool(settings.get().get("alibabaApiKey"))
+def save_creds(model_id: str, api_key: str | None, region: str, workspace: str) -> None:
+    """Set (or clear) a model's own key. api_key None keeps the saved key; "" removes the model's
+    override so it goes back to the shared default."""
+    s = settings.get()
+    keys = dict(s.get("studioKeys") or {})
+    if api_key == "":
+        keys.pop(model_id, None)  # back to the default
+    else:
+        existing = keys.get(model_id) or {}
+        keys[model_id] = {"apiKey": existing.get("apiKey", "") if api_key is None else api_key,
+                          "region": region, "workspace": workspace}
+    settings.save({"studioKeys": keys})
+
+
+def connected(model_id: str | None = None) -> bool:
+    c = creds(model_id)
+    return bool(c["apiKey"]) and bool(c["workspace"])
+
+
+def has_key(model_id: str | None = None) -> bool:
+    return bool(creds(model_id)["apiKey"])
+
+
+def any_connected() -> bool:
+    """Is at least one model (or the default) ready to reach Wan? (So the poller knows to run.)"""
+    s = settings.get()
+    if _default_creds(s)["apiKey"]:
+        return True
+    return any(bool(e.get("apiKey")) for e in (s.get("studioKeys") or {}).values())
 
 
 # ---------------------------------------------------------------- what a video costs
@@ -163,34 +205,34 @@ def spending(model_id: str) -> dict:
     }
 
 
-def _region_workspace(region: str | None, workspace: str | None) -> tuple[str, str]:
-    s = settings.get()
-    region = region if region is not None else s.get("alibabaRegion") or "intl"
-    workspace = (workspace if workspace is not None else s.get("alibabaWorkspace") or "").strip()
+def _region_workspace(region: str | None, workspace: str | None, model_id: str | None = None) -> tuple[str, str]:
+    c = creds(model_id)
+    region = region if region is not None else c["region"]
+    workspace = (workspace if workspace is not None else c["workspace"]).strip()
     return (region if region in REGIONS else "intl"), workspace
 
 
-def base_url(region: str | None = None, workspace: str | None = None) -> str:
-    """Wan 3.0's address: your workspace's own host. The workspace ID is required — without it
+def base_url(model_id: str | None = None, region: str | None = None, workspace: str | None = None) -> str:
+    """Wan 3.0's address: this model's workspace host. The workspace ID is required — without it
     Alibaba has no endpoint for Wan 3.0 (the shared dashscope host returns 404)."""
-    region, workspace = _region_workspace(region, workspace)
+    region, workspace = _region_workspace(region, workspace, model_id)
     if not workspace:
-        raise StudioError("Add your Model Studio workspace ID (Settings → AI Studio) — Wan 3.0 needs it.", 424)
+        raise StudioError("Add your Model Studio workspace ID (Settings → Models → AI Studio key) — Wan 3.0 needs it.", 424)
     if not WORKSPACE_ID.match(workspace):
         raise StudioError("That workspace ID doesn't look right — copy it from the Model Studio console.")
     return f"https://{workspace}.{REGIONS[region][1]}.maas.aliyuncs.com"
 
 
-def classic_url(region: str | None = None) -> str:
+def classic_url(model_id: str | None = None, region: str | None = None) -> str:
     """The shared DashScope host for this region (temporary uploads also work here)."""
-    region, _ = _region_workspace(region, "")
+    region, _ = _region_workspace(region, "", model_id)
     return CLASSIC_HOSTS.get(region, CLASSIC_DEFAULT)
 
 
-def _headers(extra: dict | None = None, key: str | None = None) -> dict:
-    key = key if key is not None else settings.get().get("alibabaApiKey") or ""
+def _headers(extra: dict | None = None, key: str | None = None, model_id: str | None = None) -> dict:
+    key = key if key is not None else creds(model_id)["apiKey"]
     if not key:
-        raise StudioError("Connect your Alibaba API key first (Settings → AI Studio).", 424)
+        raise StudioError("Connect this model's Alibaba API key first (Settings → Models → AI Studio key).", 424)
     return {"Authorization": f"Bearer {key}", **(extra or {})}
 
 
@@ -218,34 +260,45 @@ def _message(resp: httpx.Response) -> str:
 
 
 async def check_key(key: str, region: str, workspace: str) -> None:
-    """Check the key, region and workspace actually work together — asks Wan 3.0's own address for an
-    upload policy, so if that endpoint is wrong (the usual HTTP 404 on Generate) we catch it now."""
-    base = base_url(region, workspace)  # raises if the workspace ID is missing or malformed
+    """Check the key, region and workspace work together by asking Wan 3.0's own address about a
+    (non-existent) task. It's a plain GET that creates nothing and costs nothing: any reply from the
+    API — even "no such task" — means the address and key are good; a 401 means the key is wrong; an
+    empty 404 means the address itself is wrong, which is the usual cause of the HTTP 404 on Generate."""
+    base = base_url(region=region, workspace=workspace)  # raises if the workspace ID is missing or malformed
     async with _client(20) as client:
-        resp = await client.get(f"{base}/api/v1/uploads", params={"action": "getPolicy", "model": "wan3.0-video"},
-                                headers=_headers({"Content-Type": "application/json"}, key=key))
-    if resp.status_code == 200:
-        return
+        resp = await client.get(f"{base}/api/v1/tasks/connectivity-check", headers=_headers(key=key))
     if resp.status_code in (401, 403):
         raise StudioError(_message(resp), 400)
+    try:
+        body = resp.json()
+    except ValueError:
+        body = None
+    # Any JSON reply from the API (an error about the task is fine) means Wan 3.0 is reachable here.
+    if isinstance(body, dict) and (body.get("code") or body.get("message") or body.get("request_id")
+                                   or body.get("output")):
+        return
+    if resp.status_code == 200:
+        return
     if resp.status_code == 404:
-        raise StudioError("Couldn't reach Wan 3.0 at that address — check the region and workspace ID match where "
-                          "your API key was made (they must all be the same place).", 400)
+        raise StudioError("Couldn't reach Wan 3.0 at that address — the key, region and workspace ID must all be from "
+                          "the same place. Wan 3.0 may also not be offered in that region yet: during preview it runs "
+                          "in Singapore, so a Singapore workspace + key is the safe choice.", 400)
     raise StudioError(_message(resp), 400)
 
 
-async def upload_temp(path: Path, model: str) -> str:
+async def upload_temp(path: Path, model: str, model_id: str) -> str:
     """Put a local file in Alibaba's temporary storage; returns an oss:// URL valid for 48 hours.
 
     The policy is asked for the same model the task uses (files can't be shared across models)."""
     async with _client(900) as client:
-        policy_resp = await client.get(f"{base_url()}/api/v1/uploads", params={"action": "getPolicy", "model": model},
-                                       headers=_headers({"Content-Type": "application/json"}))
+        policy_resp = await client.get(f"{base_url(model_id)}/api/v1/uploads",
+                                       params={"action": "getPolicy", "model": model},
+                                       headers=_headers({"Content-Type": "application/json"}, model_id=model_id))
         if policy_resp.status_code == 404:
             # Some accounts serve temporary uploads only on the shared DashScope host.
-            policy_resp = await client.get(f"{classic_url()}/api/v1/uploads",
+            policy_resp = await client.get(f"{classic_url(model_id)}/api/v1/uploads",
                                            params={"action": "getPolicy", "model": model},
-                                           headers=_headers({"Content-Type": "application/json"}))
+                                           headers=_headers({"Content-Type": "application/json"}, model_id=model_id))
         if policy_resp.status_code >= 400:
             raise StudioError(_message(policy_resp), 502)
         policy = (policy_resp.json() or {}).get("data") or {}
@@ -275,17 +328,17 @@ async def upload_temp(path: Path, model: str) -> str:
     return f"oss://{key}"
 
 
-async def create_task(model: str, prompt: str, media: list[dict], parameters: dict) -> str:
+async def create_task(model: str, prompt: str, media: list[dict], parameters: dict, model_id: str) -> str:
     body: dict[str, Any] = {"model": model, "input": {}, "parameters": parameters}
     if prompt:
         body["input"]["prompt"] = prompt[:20000]
     if media:
         body["input"]["media"] = media
-    headers = _headers({"X-DashScope-Async": "enable", "Content-Type": "application/json"})
+    headers = _headers({"X-DashScope-Async": "enable", "Content-Type": "application/json"}, model_id=model_id)
     if any(str(m.get("url", "")).startswith("oss://") for m in media):
         headers["X-DashScope-OssResourceResolve"] = "enable"
     async with _client(60) as client:
-        resp = await client.post(f"{base_url()}/api/v1/services/aigc/video-generation/video-synthesis",
+        resp = await client.post(f"{base_url(model_id)}/api/v1/services/aigc/video-generation/video-synthesis",
                                  headers=headers, json=body)
     if resp.status_code >= 400:
         raise StudioError(_message(resp), 502)
@@ -295,9 +348,9 @@ async def create_task(model: str, prompt: str, media: list[dict], parameters: di
     return task_id
 
 
-async def get_task(task_id: str) -> dict:
+async def get_task(task_id: str, model_id: str) -> dict:
     async with _client(30) as client:
-        resp = await client.get(f"{base_url()}/api/v1/tasks/{task_id}", headers=_headers())
+        resp = await client.get(f"{base_url(model_id)}/api/v1/tasks/{task_id}", headers=_headers(model_id=model_id))
     if resp.status_code >= 400:
         raise StudioError(_message(resp), 502)
     data = resp.json() or {}
@@ -437,9 +490,9 @@ def validate_request(model_id: str, req: dict) -> dict:
 
 
 def create_job(model_id: str, req: dict) -> dict:
-    if not connected():
-        raise StudioError("Connect your Alibaba API key first (Settings → AI Studio).", 424)
-    base_url()  # a region that needs a workspace ID says so now, not after the uploads
+    if not connected(model_id):
+        raise StudioError("Connect this model's Alibaba API key first (Settings → Models → AI Studio key).", 424)
+    base_url(model_id)  # a region that needs a workspace ID says so now, not after the uploads
     clean = validate_request(model_id, req)
     job = {"id": uuid.uuid4().hex, "modelId": model_id, "createdAt": _now(), "status": "starting",
            "step": "Getting your files ready", "error": None, "taskId": None, "file": None, **clean}
@@ -461,7 +514,7 @@ async def _start(job: dict) -> None:
             photo = await asyncio.to_thread(prepare_photo, Path(job["photos"][0]), work)
             job.update(step="Uploading the photo to Alibaba")
             _save(job)
-            media.append({"type": "first_frame", "url": await upload_temp(photo, job["model"])})
+            media.append({"type": "first_frame", "url": await upload_temp(photo, job["model"], job["modelId"])})
         elif job["mode"] == "reference":
             # Up to 15 s of reference video in total, shared between the clips.
             per_clip = REFERENCE_TOTAL_S / len(job["videos"])
@@ -470,9 +523,9 @@ async def _start(job: dict) -> None:
             job.update(step="Uploading to Alibaba", referenceSeconds=round(sum(s for _, s in prepared), 1))
             _save(job)
             for photo in photos:
-                media.append({"type": "reference_image", "url": await upload_temp(photo, job["model"])})
+                media.append({"type": "reference_image", "url": await upload_temp(photo, job["model"], job["modelId"])})
             for clip, _seconds in prepared:
-                media.append({"type": "reference_video", "url": await upload_temp(clip, job["model"])})
+                media.append({"type": "reference_video", "url": await upload_temp(clip, job["model"], job["modelId"])})
             if job["duration"] != SMART:  # the reference's length + the new video's ≤ 30 s
                 room = int(OUTPUT_PLUS_INPUT_S - job["referenceSeconds"])
                 job["duration"] = max(MIN_S, min(job["duration"], room))
@@ -480,7 +533,7 @@ async def _start(job: dict) -> None:
         parameters = {"resolution": job["resolution"], "ratio": job["ratio"], "duration": job["duration"],
                       "audio": job["audio"], "prompt_extend": True, "watermark": False}
         job.update(step="Waiting for Wan", status="PENDING", sentPrompt=prompt,
-                   taskId=await create_task(job["model"], prompt, media, parameters))
+                   taskId=await create_task(job["model"], prompt, media, parameters, job["modelId"]))
     except Exception as exc:  # noqa: BLE001 - shown on the page
         log.warning("AI Studio job %s failed to start: %s", job["id"], exc)
         job.update(status="failed", error=str(exc) or type(exc).__name__, step="")
@@ -511,7 +564,7 @@ async def poll_once() -> None:
         if job["status"] in FINAL or not job.get("taskId"):
             continue
         try:
-            out = await get_task(job["taskId"])
+            out = await get_task(job["taskId"], job["modelId"])
         except Exception as exc:  # noqa: BLE001 - try again on the next round
             if _age_s(job) > 24 * 3600:  # Alibaba keeps tasks and results for 24 hours
                 job.update(status="failed", step="", error="Wan's result expired (it's kept for 24 hours).")
@@ -562,7 +615,7 @@ async def poll_loop() -> None:
     recover()
     while True:
         try:
-            if connected():
+            if any_connected():
                 await poll_once()
         except Exception as exc:  # noqa: BLE001 - never stop the loop
             log.warning("AI Studio check failed: %s", exc)
