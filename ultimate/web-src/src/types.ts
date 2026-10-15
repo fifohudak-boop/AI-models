@@ -21,7 +21,29 @@ export interface AppStatus {
   updateAvailable: boolean;
   engine: { url: string; configured: boolean; state: EngineState; detail?: string };
   studio: { connected: boolean; hasKey?: boolean; needsWorkspace?: boolean; region: string };
+  sharing?: { enabled: boolean; host: string };
   activeModel: string;
+}
+
+// ---- Sharing (who's signed in, and the people the owner has invited) ----
+
+export type Role = 'owner' | 'guest';
+
+export interface Me {
+  user: { id: string; username: string; name: string; role: Role };
+  local: boolean; // true when you're on this Mac (localhost) — always the owner, no login
+  canManage: boolean; // owner-only things: keys, models, people, sharing
+  models: string[] | null; // the model ids this person may use, or null for all of them
+}
+
+export interface Person {
+  id: string;
+  username: string;
+  name: string;
+  role: Role;
+  createdAt: string;
+  models: string[];
+  modelNames: string[];
 }
 
 export interface AppSettings {

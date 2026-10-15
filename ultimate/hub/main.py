@@ -12,15 +12,36 @@ from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
 from . import (
-    analytics, db, media, personas, postiz, reels_api, routes_core, routes_edit, routes_meta, routes_posting,
-    routes_studio, studio,
+    analytics, auth, db, media, personas, postiz, reels_api, routes_auth, routes_core, routes_edit, routes_meta,
+    routes_posting, routes_studio, settings, studio,
 )
-from .config import WEB_DIR, ensure_dirs
+from .config import BRAND_NAME, WEB_DIR, ensure_dirs
 from .events import bus
 
 log = logging.getLogger("ultimate")
-ALLOWED_HOSTS = {"127.0.0.1", "localhost"}
+LOCAL_HOSTS = {"127.0.0.1", "localhost"}
 HEADER = "x-ultimate"
+
+
+def _host_of(headers) -> str:
+    return (headers.get("host") or "").rsplit(":", 1)[0].strip("[]").lower()
+
+
+def allowed_hosts() -> set[str]:
+    """localhost always; the share address too once you've turned sharing on."""
+    hosts = set(LOCAL_HOSTS)
+    s = settings.get()
+    share = (s.get("shareHost") or "").strip().lower()
+    if s.get("sharingEnabled") and share:
+        hosts.add(share)
+    return hosts
+
+
+def _resolve_user(connection, host: str) -> dict | None:
+    """Who is making this request: you (on localhost) or a logged-in person (by session cookie)."""
+    if host in LOCAL_HOSTS:
+        return auth.OWNER_LOCAL
+    return auth.user_for_token(connection.cookies.get(auth.COOKIE) or "")
 
 
 @asynccontextmanager
@@ -44,15 +65,22 @@ app = FastAPI(title="Fifofarm Ultimate", lifespan=lifespan)
 
 
 @app.middleware("http")
-async def local_only(request: Request, call_next):
-    # Block DNS-rebinding and other websites poking this local server from your browser.
-    host = (request.headers.get("host") or "").rsplit(":", 1)[0].strip("[]")
-    if host not in ALLOWED_HOSTS:
-        return JSONResponse({"error": "Fifofarm Ultimate only answers on localhost."}, status_code=403)
+async def gate(request: Request, call_next):
+    # Only answer on localhost (and the share address, once sharing is on): blocks DNS-rebinding and
+    # other websites poking this server from your browser.
+    host = _host_of(request.headers)
+    if host not in allowed_hosts():
+        return JSONResponse({"error": f"{BRAND_NAME} isn't reachable at that address."}, status_code=403)
     if request.method not in ("GET", "HEAD", "OPTIONS") and request.headers.get(HEADER) != "1":
         return JSONResponse({"error": "Missing X-Ultimate header."}, status_code=403)
-    response = await call_next(request)
     path = request.url.path
+    if path.startswith("/api/"):
+        user = _resolve_user(request, host)
+        verdict = auth.authorize(user, request.method, path)
+        if verdict:
+            return JSONResponse({"error": verdict[1], "detail": verdict[1]}, status_code=verdict[0])
+        request.state.user = user
+    response = await call_next(request)
     if path.startswith("/api/") and "Cache-Control" not in response.headers:
         response.headers["Cache-Control"] = "no-store"
     elif not path.startswith("/assets/") and not path.startswith("/api/"):
@@ -92,6 +120,12 @@ async def studio_error(_request: Request, exc: studio.StudioError) -> JSONRespon
     return _error(exc.status, str(exc))
 
 
+@app.exception_handler(auth.AuthError)
+async def auth_error(_request: Request, exc: auth.AuthError) -> JSONResponse:
+    return _error(400, str(exc))
+
+
+app.include_router(routes_auth.router)
 app.include_router(routes_core.router)
 app.include_router(routes_posting.router)
 app.include_router(reels_api.router)
@@ -107,12 +141,24 @@ async def health() -> dict:
 
 @app.websocket("/ws")
 async def events(ws: WebSocket) -> None:
-    origin_host = (ws.headers.get("origin") or "").split("://")[-1].rsplit(":", 1)[0]
-    if origin_host and origin_host not in ALLOWED_HOSTS:
+    host = _host_of(ws.headers)
+    if host not in allowed_hosts():
+        await ws.close(code=1008)
+        return
+    origin_host = (ws.headers.get("origin") or "").split("://")[-1].rsplit(":", 1)[0].strip("[]").lower()
+    if origin_host and origin_host not in allowed_hosts():
+        await ws.close(code=1008)
+        return
+    user = _resolve_user(ws, host)
+    if user is None:
+        await ws.close(code=1008)
+        return
+    allowed = auth.allowed_models(user)  # None = every model (the owner)
+    model = ws.query_params.get("model") or None
+    if model and allowed is not None and model not in allowed:
         await ws.close(code=1008)
         return
     await ws.accept()
-    model = ws.query_params.get("model") or None
     queue = bus.subscribe()
 
     async def forward() -> None:
@@ -120,7 +166,11 @@ async def events(ws: WebSocket) -> None:
         for test in reels_api.selftest_states():  # a refreshed page still shows the last results
             await ws.send_json({"type": "selftest", "model": None, "data": test})
         while True:
-            await ws.send_json(await queue.get())
+            message = await queue.get()
+            about = message.get("model")
+            if about is not None and allowed is not None and about not in allowed:
+                continue  # another model's event — not for this person
+            await ws.send_json(message)
 
     sender = asyncio.create_task(forward())
     try:

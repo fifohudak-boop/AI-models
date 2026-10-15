@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from 'react';
-import type { AppSettings, AppStatus, FolderKind, Model, Preferences } from '../types';
+import type { AppSettings, AppStatus, FolderKind, Model, Person, Preferences } from '../types';
 import { api } from '../api';
 import { EngineSetup } from '../components/EngineSetup';
 import { ModelAvatar } from '../components/ModelSwitcher';
@@ -474,6 +474,300 @@ function StudioRatesCard({ toast }: { toast: (m: string) => void }) {
   );
 }
 
+// Let other people reach this dashboard from their own computer, with a login.
+function SharingCard({ status, onStatus, toast }: { status: AppStatus; onStatus: () => void; toast: (m: string) => void }) {
+  const current = status.sharing ?? { enabled: false, host: '' };
+  const [host, setHost] = useState(current.host);
+  const [busy, setBusy] = useState(false);
+  useEffect(() => setHost(current.host), [current.host]);
+
+  async function save(enabled: boolean) {
+    setBusy(true);
+    try {
+      await api.saveSharing(enabled, host.trim());
+      onStatus();
+      toast(enabled ? 'Sharing is on' : 'Sharing is off');
+    } catch (err) {
+      toast((err as Error).message);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <section className="card stack" id="sharing">
+      <div className="card-head" style={{ marginBottom: 0 }}>
+        <h2>Sharing</h2>
+        <span className={`chip ${current.enabled ? 'published' : ''}`}>{current.enabled ? 'on' : 'off'}</span>
+      </div>
+      <p className="small" style={{ margin: 0 }}>
+        Let other people open this dashboard from their own computer and sign in. You choose which models each person
+        sees; everything else (keys, models, prices, these settings) stays yours. On this Mac you're always the owner and
+        never have to log in.
+      </p>
+      <label className="field">
+        <span>Web address people will use</span>
+        <input
+          type="text"
+          spellCheck={false}
+          autoComplete="off"
+          placeholder="ultimate.yourname.com"
+          value={host}
+          onChange={(e) => setHost(e.target.value)}
+        />
+      </label>
+      <p className="muted small" style={{ margin: 0 }}>
+        This is the address of the free tunnel that points at this Mac — set it up once (see <strong>Share it with your
+        team</strong> in the README). The app itself stays on localhost; the tunnel carries it over HTTPS with the login in
+        front.
+      </p>
+      <div className="row">
+        {current.enabled ? (
+          <>
+            <button className="btn small" disabled={busy || !host.trim() || host.trim() === current.host} onClick={() => save(true)}>
+              Save address
+            </button>
+            <button className="btn link small" disabled={busy} onClick={() => save(false)}>
+              Turn sharing off
+            </button>
+          </>
+        ) : (
+          <button className="btn primary small" disabled={busy || !host.trim()} onClick={() => save(true)}>
+            Turn sharing on
+          </button>
+        )}
+      </div>
+    </section>
+  );
+}
+
+function randomPassword(): string {
+  const chars = 'abcdefghijkmnpqrstuvwxyzABCDEFGHJKLMNPQRSTUVWXYZ23456789';
+  const arr = new Uint32Array(14);
+  crypto.getRandomValues(arr);
+  let out = '';
+  for (let i = 0; i < arr.length; i++) out += chars[arr[i] % chars.length];
+  return out;
+}
+
+// One invited person: which models they can use, a password reset, and removal.
+function PersonRow({ person, models, onChanged, toast }: { person: Person; models: Model[]; onChanged: () => void; toast: (m: string) => void }) {
+  const [open, setOpen] = useState(false);
+  const [picked, setPicked] = useState<string[]>(person.models);
+  const [pw, setPw] = useState('');
+  const [busy, setBusy] = useState(false);
+  useEffect(() => setPicked(person.models), [person.models]);
+  const changed = [...picked].sort().join() !== [...person.models].sort().join();
+
+  const toggle = (id: string) => setPicked((l) => (l.includes(id) ? l.filter((x) => x !== id) : [...l, id]));
+
+  async function run(fn: () => Promise<unknown>, done: string) {
+    setBusy(true);
+    try {
+      await fn();
+      onChanged();
+      toast(done);
+    } catch (err) {
+      toast((err as Error).message);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <div className={`model-card${open ? ' open' : ''}`}>
+      <button type="button" className="model-card-head" onClick={() => setOpen(!open)} aria-expanded={open}>
+        <span className="account-main">
+          <span className="account-name">{person.name || person.username}</span>
+          <span className="account-meta">
+            @{person.username} · {person.modelNames.length ? person.modelNames.join(', ') : 'no models yet'}
+          </span>
+        </span>
+        <span className="caret" aria-hidden="true">
+          {open ? '▴' : '▾'}
+        </span>
+      </button>
+      {open && (
+        <div className="stack model-card-body">
+          <div>
+            <div className="small" style={{ fontWeight: 600, marginBottom: 6 }}>
+              Models they can use
+            </div>
+            <div className="row" style={{ flexWrap: 'wrap', gap: 8 }}>
+              {models.map((m) => (
+                <label key={m.id} className="check">
+                  <input type="checkbox" checked={picked.includes(m.id)} onChange={() => toggle(m.id)} />
+                  <span>{m.name}</span>
+                </label>
+              ))}
+            </div>
+            {changed && (
+              <div className="row" style={{ marginTop: 8 }}>
+                <button className="btn small" disabled={busy} onClick={() => run(() => api.setPersonModels(person.id, picked), 'Saved')}>
+                  Save models
+                </button>
+              </div>
+            )}
+          </div>
+          <label className="field">
+            <span>Reset password</span>
+            <div className="row">
+              <input
+                type="text"
+                value={pw}
+                autoComplete="off"
+                placeholder="new password (6+ characters)"
+                onChange={(e) => setPw(e.target.value)}
+                style={{ flex: 1 }}
+              />
+              <button type="button" className="btn small" onClick={() => setPw(randomPassword())}>
+                Generate
+              </button>
+              <button
+                type="button"
+                className="btn small"
+                disabled={busy || pw.length < 6}
+                onClick={() => run(async () => { await api.resetPersonPassword(person.id, pw); setPw(''); }, 'Password reset')}
+              >
+                Set
+              </button>
+            </div>
+          </label>
+          <div className="row">
+            <span className="spacer" />
+            <button
+              type="button"
+              className="btn danger small"
+              disabled={busy}
+              onClick={() => run(() => api.removePerson(person.id), `Removed ${person.username}`)}
+            >
+              Remove {person.username}
+            </button>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// The owner invites people here and chooses which models each one can use.
+function PeopleCard({ models, toast }: { models: Model[]; toast: (m: string) => void }) {
+  const [people, setPeople] = useState<Person[] | null>(null);
+  const [name, setName] = useState('');
+  const [username, setUsername] = useState('');
+  const [password, setPassword] = useState('');
+  const [picked, setPicked] = useState<string[]>([]);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const load = useCallback(() => {
+    api.people().then(setPeople).catch((e) => setError((e as Error).message));
+  }, []);
+  useEffect(load, [load]);
+
+  const toggle = (id: string) => setPicked((l) => (l.includes(id) ? l.filter((x) => x !== id) : [...l, id]));
+
+  return (
+    <section className="card stack" id="people">
+      <h2>People</h2>
+      <p className="small" style={{ margin: 0 }}>
+        Invite people and choose which models each one can use. Give them the web address above, their username and their
+        password, and they sign in from anywhere. On the models you give them they can do everything — post, generate, edit.
+      </p>
+
+      {people && people.length > 0 && (
+        <div className="stack">
+          {people.map((p) => (
+            <PersonRow key={p.id} person={p} models={models} onChanged={load} toast={toast} />
+          ))}
+        </div>
+      )}
+      {people && people.length === 0 && (
+        <p className="muted small" style={{ margin: 0 }}>
+          No one invited yet.
+        </p>
+      )}
+
+      <form
+        className="stack"
+        onSubmit={async (e) => {
+          e.preventDefault();
+          setBusy(true);
+          setError(null);
+          try {
+            await api.addPerson({ username: username.trim(), password, name: name.trim(), models: picked });
+            setName('');
+            setUsername('');
+            setPassword('');
+            setPicked([]);
+            load();
+            toast(`Added ${username.trim()}`);
+          } catch (err) {
+            setError((err as Error).message);
+          } finally {
+            setBusy(false);
+          }
+        }}
+      >
+        <div className="small" style={{ fontWeight: 600 }}>
+          Invite someone
+        </div>
+        <div className="row2">
+          <label className="field">
+            <span>Name</span>
+            <input value={name} onChange={(e) => setName(e.target.value)} placeholder="e.g. Ben" />
+          </label>
+          <label className="field">
+            <span>Username</span>
+            <input value={username} autoComplete="off" onChange={(e) => setUsername(e.target.value)} placeholder="ben" />
+          </label>
+        </div>
+        <label className="field">
+          <span>Password</span>
+          <div className="row">
+            <input
+              type="text"
+              value={password}
+              autoComplete="off"
+              placeholder="at least 6 characters"
+              onChange={(e) => setPassword(e.target.value)}
+              style={{ flex: 1 }}
+            />
+            <button type="button" className="btn small" onClick={() => setPassword(randomPassword())}>
+              Generate
+            </button>
+          </div>
+        </label>
+        <div>
+          <div className="small" style={{ fontWeight: 600, marginBottom: 6 }}>
+            Models they can use
+          </div>
+          {models.length === 0 ? (
+            <p className="muted small" style={{ margin: 0 }}>
+              Add a model first.
+            </p>
+          ) : (
+            <div className="row" style={{ flexWrap: 'wrap', gap: 8 }}>
+              {models.map((m) => (
+                <label key={m.id} className="check">
+                  <input type="checkbox" checked={picked.includes(m.id)} onChange={() => toggle(m.id)} />
+                  <span>{m.name}</span>
+                </label>
+              ))}
+            </div>
+          )}
+        </div>
+        {error && <div className="notice error small">{error}</div>}
+        <div className="row">
+          <button className="btn primary small" disabled={busy || !username.trim() || password.length < 6}>
+            Add person
+          </button>
+        </div>
+      </form>
+    </section>
+  );
+}
+
 export function SettingsPage({
   status,
   models,
@@ -607,6 +901,9 @@ export function SettingsPage({
           <p className="muted small">Posting defaults show up once the posting engine is connected.</p>
         )
       )}
+
+      <SharingCard status={status} onStatus={onStatus} toast={toast} />
+      <PeopleCard models={models} toast={toast} />
 
       <section className="card stack">
         <h2>About</h2>

@@ -2088,3 +2088,21 @@ details > summary {
   flex-wrap: wrap;
   justify-content: flex-end;
 }
+
+/* ---- Sharing: login, topbar account, small label stacks ---- */
+.topbar-account {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.stack-sm {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.stack-sm input {
+  width: 100%;
+}
+.login-card {
+  max-width: 380px;
+}

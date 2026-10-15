@@ -9,8 +9,10 @@ import type {
   HuntSnapshot,
   LabeledAccount,
   Library,
+  Me,
   MediaJob,
   Model,
+  Person,
   Platform,
   Preferences,
   Reference,
@@ -57,6 +59,22 @@ const enc = encodeURIComponent;
 const m = (model: string) => `/api/m/${enc(model)}`;
 
 export const api = {
+  // ---- who's signed in, logging in and out, and (owner) the people you've invited ----
+  me: () => request<Me>('/api/auth/me'),
+  login: (username: string, password: string) =>
+    request<{ user: Me['user'] }>('/api/auth/login', { method: 'POST', body: { username, password } }),
+  logout: () => request<{ ok: true }>('/api/auth/logout', { method: 'POST' }),
+  saveSharing: (enabled: boolean, host: string) =>
+    request<{ enabled: boolean; host: string }>('/api/sharing', { method: 'PUT', body: { enabled, host } }),
+  people: () => request<Person[]>('/api/auth/users'),
+  addPerson: (body: { username: string; password: string; name: string; models: string[] }) =>
+    request<Person>('/api/auth/users', { method: 'POST', body }),
+  setPersonModels: (id: string, models: string[]) =>
+    request<Person>(`/api/auth/users/${enc(id)}/models`, { method: 'PUT', body: { models } }),
+  resetPersonPassword: (id: string, password: string) =>
+    request<{ ok: true }>(`/api/auth/users/${enc(id)}/password`, { method: 'PUT', body: { password } }),
+  removePerson: (id: string) => request<{ ok: true }>(`/api/auth/users/${enc(id)}`, { method: 'DELETE' }),
+
   // ---- app, models, folders ----
   status: () => request<AppStatus>('/api/status'),
   settings: () => request<AppSettings>('/api/settings'),
