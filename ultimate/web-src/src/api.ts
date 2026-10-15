@@ -12,6 +12,7 @@ import type {
   Me,
   MediaJob,
   Model,
+  ModelStudioKey,
   Person,
   Platform,
   Preferences,
@@ -176,6 +177,11 @@ export const api = {
 
   // ---- AI Studio ----
   studioOptions: () => request<StudioOptions>('/api/studio/options'),
+  modelStudioOptions: (model: string) => request<StudioOptions>(`${m(model)}/studio/options`),
+  modelStudioKey: (model: string) => request<ModelStudioKey>(`${m(model)}/studio/key`),
+  // apiKey null keeps the saved key; '' removes this model's own key (back to the shared default).
+  saveModelStudioKey: (model: string, apiKey: string | null, region: string, workspace: string) =>
+    request<ModelStudioKey>(`${m(model)}/studio/key`, { method: 'PUT', body: { apiKey, region, workspace } }),
   studioJobs: (model: string) => request<StudioJob[]>(`${m(model)}/studio/jobs`),
   createStudioJob: (model: string, body: Record<string, unknown>) =>
     request<StudioJob>(`${m(model)}/studio/jobs`, { method: 'POST', body }),

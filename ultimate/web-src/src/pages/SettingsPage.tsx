@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from 'react';
-import type { AppSettings, AppStatus, FolderKind, Model, Person, Preferences } from '../types';
+import type { AppSettings, AppStatus, FolderKind, Model, ModelStudioKey, Person, Preferences } from '../types';
 import { api } from '../api';
 import { EngineSetup } from '../components/EngineSetup';
 import { ModelAvatar } from '../components/ModelSwitcher';
@@ -68,6 +68,146 @@ function FolderRow({
           </button>
         )}
       </div>
+    </div>
+  );
+}
+
+// A model's own Alibaba key (so different models can be on different accounts). A model without
+// its own uses the shared default. The key is only ever shown masked.
+function ModelStudioKeySection({ model, toast }: { model: Model; toast: (m: string) => void }) {
+  const [info, setInfo] = useState<ModelStudioKey | null>(null);
+  const [open, setOpen] = useState(false);
+  const [key, setKey] = useState('');
+  const [region, setRegion] = useState('intl');
+  const [workspace, setWorkspace] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const load = useCallback(() => {
+    api
+      .modelStudioKey(model.id)
+      .then((i) => {
+        setInfo(i);
+        setRegion(i.region || 'intl');
+        setWorkspace(i.hasOwnKey ? i.workspace : '');
+      })
+      .catch(() => {});
+  }, [model.id]);
+  useEffect(load, [load]);
+
+  if (!info) return null;
+
+  const changedPlace = region !== info.region || workspace.trim() !== (info.hasOwnKey ? info.workspace : '');
+  const canSave = Boolean((key.trim() || (info.hasOwnKey && changedPlace)) && workspace.trim());
+  const regionName = STUDIO_REGIONS.find((r) => r.id === info.region)?.name ?? info.region;
+  const status = info.hasOwnKey
+    ? `Its own key · ${regionName} · ${info.keyMasked}`
+    : info.defaultConnected
+      ? 'Using the shared default key'
+      : 'No key yet — set one here, or a shared default below';
+
+  async function save() {
+    setBusy(true);
+    setError(null);
+    try {
+      const next = await api.saveModelStudioKey(model.id, key.trim() ? key : null, region, workspace.trim());
+      setInfo(next);
+      setKey('');
+      setWorkspace(next.hasOwnKey ? next.workspace : '');
+      setRegion(next.region || 'intl');
+      setOpen(false);
+      toast(`${model.name}'s AI Studio key saved`);
+    } catch (err) {
+      setError((err as Error).message);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function useDefault() {
+    setBusy(true);
+    setError(null);
+    try {
+      const next = await api.saveModelStudioKey(model.id, '', region, '');
+      setInfo(next);
+      setKey('');
+      setWorkspace('');
+      setOpen(false);
+      toast(`${model.name} now uses the shared default key`);
+    } catch (err) {
+      setError((err as Error).message);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <div className="stack">
+      <div className="row">
+        <div className="small">
+          <strong>AI Studio key</strong> <span className="muted">{status}</span>
+        </div>
+        <span className="spacer" />
+        <button type="button" className="btn small" onClick={() => setOpen((o) => !o)}>
+          {open ? 'Close' : info.hasOwnKey ? 'Change…' : 'Set a key…'}
+        </button>
+      </div>
+      {open && (
+        <div className="stack">
+          <div className="row2">
+            <label className="field">
+              <span className="small">
+                API key {info.hasOwnKey && <span className="muted small">(saved: {info.keyMasked})</span>}
+              </span>
+              <input
+                type="password"
+                autoComplete="off"
+                placeholder={info.hasOwnKey ? 'Paste a new key to replace it' : 'sk-…'}
+                value={key}
+                onChange={(e) => setKey(e.target.value)}
+              />
+            </label>
+            <label className="field">
+              <span className="small">Region</span>
+              <select value={region} onChange={(e) => setRegion(e.target.value)}>
+                {STUDIO_REGIONS.map((r) => (
+                  <option key={r.id} value={r.id}>
+                    {r.name}
+                  </option>
+                ))}
+              </select>
+            </label>
+          </div>
+          <label className="field">
+            <span className="small">
+              Workspace ID <span className="muted small">(required)</span>
+            </span>
+            <input
+              type="text"
+              autoComplete="off"
+              spellCheck={false}
+              placeholder="Model Studio workspace ID"
+              value={workspace}
+              onChange={(e) => setWorkspace(e.target.value)}
+            />
+          </label>
+          <p className="muted small" style={{ margin: 0 }}>
+            The key, region and workspace must all be from the same Alibaba account/place — Wan 3.0 is served only on that
+            workspace's own address.
+          </p>
+          {error && <div className="notice error small">{error}</div>}
+          <div className="row">
+            <button type="button" className="btn primary small" disabled={busy || !canSave} onClick={save}>
+              {busy ? 'Checking…' : `Save ${model.name}'s key`}
+            </button>
+            {info.hasOwnKey && (
+              <button type="button" className="btn link small" disabled={busy} onClick={useDefault}>
+                Use the shared default
+              </button>
+            )}
+          </div>
+        </div>
+      )}
     </div>
   );
 }
@@ -158,6 +298,7 @@ function ModelCard({
               <FolderRow key={kind} model={model} kind={kind} onSaved={onSaved} toast={toast} />
             ))}
           </div>
+          <ModelStudioKeySection model={model} toast={toast} />
           <div className="row">
             {!isCurrent && (
               <button type="button" className="btn small" onClick={onSelect}>
@@ -208,16 +349,17 @@ function StudioKeyCard({ settings, onSaved, toast }: { settings: AppSettings; on
   return (
     <section className="card stack" id="studio">
       <div className="card-head" style={{ marginBottom: 0 }}>
-        <h2>AI Studio (Wan 3.0 by Alibaba)</h2>
+        <h2>Default AI Studio key</h2>
         <span className={`chip ${settings.alibabaKey ? 'published' : ''}`}>{settings.alibabaKey ? 'key saved' : 'no key yet'}</span>
       </div>
       <p className="small" style={{ margin: 0 }}>
-        AI Studio uses Alibaba Cloud <strong>Model Studio</strong> (the Wan 3.0 video models). Make an API key in the{' '}
+        The <strong>shared default</strong> key — any model that doesn't have its own uses this one. To put a model on its
+        own Alibaba account, give it a key in its card above (<em>AI Studio key</em>). Make keys in the{' '}
         <a href="https://modelstudio.console.alibabacloud.com/" target="_blank" rel="noreferrer">
           Model Studio console
-        </a>{' '}
-        and paste it here, with the <strong>workspace ID</strong> from the same account. Wan 3.0 is served only on
-        your workspace's own address, so all three must be the same place.
+        </a>
+        ; Wan 3.0 is served only on your workspace's own address, so the key, region and workspace ID must all be from
+        the same place.
       </p>
       <form
         className="stack"

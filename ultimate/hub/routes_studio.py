@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import httpx
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
@@ -10,10 +11,11 @@ from . import personas, settings, studio
 router = APIRouter()
 
 
-@router.get("/api/studio/options")
-async def options() -> dict:
+def _options(model_id: str | None) -> dict:
+    """The static choices plus whether this model (or the default) is ready to reach Wan."""
     return {
-        "connected": studio.connected(),
+        "connected": studio.connected(model_id),
+        "needsWorkspace": studio.has_key(model_id) and not studio.creds(model_id)["workspace"],
         "models": [{"id": k, "name": v} for k, v in studio.MODELS.items()],
         "modes": [{"id": k, "name": v} for k, v in studio.MODES.items()],
         "resolutions": list(studio.RESOLUTIONS),
@@ -29,6 +31,66 @@ async def options() -> dict:
         "currency": studio.currency(),
         "rates": studio.rates(),
     }
+
+
+@router.get("/api/studio/options")
+async def options() -> dict:
+    return _options(None)
+
+
+@router.get("/api/m/{model_id}/studio/options")
+async def model_options(model_id: str) -> dict:
+    personas.require(model_id)
+    return _options(model_id)
+
+
+@router.get("/api/m/{model_id}/studio/key")
+async def get_model_key(model_id: str) -> dict:
+    """What key this model uses (owner only) — the key itself is only ever shown masked."""
+    personas.require(model_id)
+    s = settings.get()
+    own = (s.get("studioKeys") or {}).get(model_id) or {}
+    default = studio._default_creds(s)
+    c = studio.creds(model_id)
+    return {
+        "hasOwnKey": bool(own.get("apiKey")),
+        "usingDefault": not bool(own.get("apiKey")),
+        "keyMasked": settings.mask(c["apiKey"]),
+        "region": c["region"],
+        "workspace": c["workspace"],
+        "defaultConnected": bool(default["apiKey"]) and bool(default["workspace"]),
+    }
+
+
+class ModelKeyBody(BaseModel):
+    apiKey: str | None = None  # None keeps the saved key; "" removes this model's own key (use the default)
+    region: str = "intl"
+    workspace: str = ""
+
+
+@router.put("/api/m/{model_id}/studio/key")
+async def set_model_key(model_id: str, body: ModelKeyBody) -> dict:
+    personas.require(model_id)
+    if body.apiKey == "":
+        studio.save_creds(model_id, "", body.region, "")
+        return await get_model_key(model_id)
+    if body.region not in studio.REGIONS:
+        raise HTTPException(400, "Pick a region.")
+    workspace = body.workspace.strip()
+    if workspace and not studio.WORKSPACE_ID.match(workspace):
+        raise HTTPException(400, "That workspace ID doesn't look right — copy it from the Model Studio console.")
+    own = (settings.get().get("studioKeys") or {}).get(model_id) or {}
+    key = own.get("apiKey", "") if body.apiKey is None else body.apiKey.strip()
+    # Wan 3.0 needs the key, region and workspace together, so only check once all three are present.
+    if key and workspace:
+        try:
+            await studio.check_key(key, body.region, workspace)
+        except studio.StudioError as exc:
+            raise HTTPException(400, str(exc)) from exc
+        except httpx.HTTPError:
+            pass  # offline: keep it, it's checked again when you generate
+    studio.save_creds(model_id, key, body.region, workspace)
+    return await get_model_key(model_id)
 
 
 @router.get("/api/m/{model_id}/studio/spending")

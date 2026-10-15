@@ -77,12 +77,14 @@ Desktop shortcut. Your videos stay in their folders.
 5. **Reel Finder:** log in to TikTok / Instagram / Pinterest once in the agents' browser (or
    click **Copy logins from Reel Finder**). The logins are shared by all models; one
    hunt runs at a time.
-6. **AI Studio:** paste your Alibaba Cloud **Model Studio** API key in Settings → AI Studio,
-   choose the region the key was made in, and add your **workspace ID**. All three are
-   required and must be from the same place — Wan 3.0 is served only on your workspace's own
-   address (`{workspace}.{region}.maas.aliyuncs.com`), so without the workspace ID Alibaba
-   has no endpoint for it. The workspace ID is in the Model Studio console (there's a link
-   next to the field).
+6. **AI Studio:** each model can have **its own** Alibaba Cloud **Model Studio** key, so Mia and
+   Mike can be on different accounts. Open Settings → Models → a model → **AI Studio key** and add
+   the API key, the region it was made in, and the **workspace ID**. All three are required and must
+   be from the same place — Wan 3.0 is served only on your workspace's own address
+   (`{workspace}.{region}.maas.aliyuncs.com`), so without the workspace ID Alibaba has no endpoint
+   for it. If most models share one account, set a **Default AI Studio key** (further down in
+   Settings) instead, and only give a model its own key when it differs. During Wan 3.0's preview
+   the safe region is **Singapore** — that's where it runs; other regions may not offer it yet.
 
 ## Where things are kept
 
@@ -96,6 +98,10 @@ AI Studio sends jobs to Alibaba Cloud Model Studio's Wan 3.0 video API (`wan3.0-
 `wan3.0-video-prime`, the faster version): from a prompt, from a first frame (a photo of the
 model), or from references (a reference video plus up to 10 model photos — Wan copies the
 video's moves, camera and timing with the person in the photos).
+
+**Each model uses its own key** (set in its card in Settings → Models), falling back to the shared
+**Default AI Studio key** if it has none — so one model can be on one Alibaba account and another on
+a different one. The key, its region and its workspace ID must all be from the same place.
 
 - Before sending, reference videos become H.264 MP4s with **15 seconds in total** at most
   (Wan's limit; longer finds are cut), and photos become JPEGs between 240 and 4096 px.
