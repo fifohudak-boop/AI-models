@@ -23,6 +23,7 @@ export function ModelSwitcher({
   onCreate,
   onManage,
   hunting,
+  canManage = true,
 }: {
   models: Model[];
   current: Model;
@@ -30,6 +31,7 @@ export function ModelSwitcher({
   onCreate: (name: string) => Promise<void>;
   onManage: () => void;
   hunting: string | null;
+  canManage?: boolean;
 }) {
   const [open, setOpen] = useState(false);
   const [adding, setAdding] = useState(false);
@@ -106,7 +108,8 @@ export function ModelSwitcher({
               </button>
             ))}
           </div>
-          {adding ? (
+          {canManage &&
+            (adding ? (
             <form
               className="stack model-new"
               onSubmit={async (e) => {
@@ -155,7 +158,7 @@ export function ModelSwitcher({
                 Manage models
               </button>
             </div>
-          )}
+            ))}
         </div>
       )}
     </div>

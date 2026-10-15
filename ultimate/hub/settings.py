@@ -56,6 +56,9 @@ DEFAULTS: dict[str, Any] = {
     },
     "preferences": DEFAULT_PREFERENCES,
     "activeModel": "",
+    # Sharing: let people reach the app from outside this Mac (through a tunnel), with a login.
+    "sharingEnabled": False,
+    "shareHost": "",  # the public web address people use, e.g. ultimate.yourname.com
 }
 
 _lock = threading.RLock()

@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import type { AppStatus, Model, ReelsStatus } from './types';
-import { api } from './api';
+import type { AppStatus, Me, Model, ReelsStatus } from './types';
+import { api, ApiError } from './api';
 import { BRAND } from './brand';
 import { connectLive, useLive } from './live';
 import { SYSTEMS, ALL_TABS } from './systems';
@@ -19,6 +19,7 @@ import { MetadataPage } from './pages/MetadataPage';
 import { LibraryPage } from './pages/LibraryPage';
 import { SettingsPage } from './pages/SettingsPage';
 import { WelcomePage } from './pages/WelcomePage';
+import { LoginPage } from './pages/LoginPage';
 
 export type Tab =
   | 'post'
@@ -59,6 +60,8 @@ export interface Handoff {
 }
 
 export function App() {
+  const [me, setMe] = useState<Me | null>(null);
+  const [authState, setAuthState] = useState<'loading' | 'login' | 'in'>('loading');
   const [status, setStatus] = useState<AppStatus | null>(null);
   const [models, setModels] = useState<Model[] | null>(null);
   const [modelId, setModelId] = useState<string>(rememberedModel);
@@ -73,12 +76,29 @@ export function App() {
     setTimeout(() => setToastMessage((current) => (current === message ? null : current)), 3500);
   }, []);
 
+  const loadMe = useCallback(async () => {
+    try {
+      const who = await api.me();
+      setMe(who);
+      setAuthState('in');
+      return true;
+    } catch (err) {
+      if ((err as ApiError).status === 401) {
+        setAuthState('login');
+      } else {
+        setLoadError((err as Error).message);
+      }
+      return false;
+    }
+  }, []);
+
   const loadStatus = useCallback(async () => {
     try {
       setStatus(await api.status());
       setLoadError(null);
     } catch (err) {
-      setLoadError((err as Error).message);
+      if ((err as ApiError).status === 401) setAuthState('login');
+      else setLoadError((err as Error).message);
     }
   }, []);
 
@@ -86,8 +106,21 @@ export function App() {
     try {
       setModels(await api.models());
     } catch (err) {
-      setLoadError((err as Error).message);
+      if ((err as ApiError).status === 401) setAuthState('login');
+      else setLoadError((err as Error).message);
     }
+  }, []);
+
+  const logout = useCallback(async () => {
+    try {
+      await api.logout();
+    } catch {
+      // already gone
+    }
+    setMe(null);
+    setStatus(null);
+    setModels(null);
+    setAuthState('login');
   }, []);
 
   const loadReels = useCallback(async () => {
@@ -99,9 +132,15 @@ export function App() {
   }, []);
 
   useEffect(() => {
-    loadStatus();
-    loadModels();
-    loadReels();
+    let active = true;
+    (async () => {
+      if (await loadMe()) {
+        if (!active) return;
+        loadStatus();
+        loadModels();
+        loadReels();
+      }
+    })();
     const onHash = () => setTab(tabFromHash());
     window.addEventListener('hashchange', onHash);
     const timer = setInterval(() => {
@@ -109,10 +148,11 @@ export function App() {
       loadReels();
     }, 30_000);
     return () => {
+      active = false;
       window.removeEventListener('hashchange', onHash);
       clearInterval(timer);
     };
-  }, [loadStatus, loadModels, loadReels]);
+  }, [loadMe, loadStatus, loadModels, loadReels]);
 
   // The model on screen: the one you picked last on this Mac, else the app's last one, else the first.
   const model = useMemo(() => {
@@ -147,6 +187,11 @@ export function App() {
     window.location.hash = `/${next}`;
   }, []);
 
+  // Guests don't have Settings; if they land there (old link, bookmark), send them back.
+  useEffect(() => {
+    if (me && !me.canManage && tab === 'settings') go('post');
+  }, [me, tab, go]);
+
   const selectModel = useCallback((id: string) => {
     setModelId(id);
     api.setActiveModel(id).catch(() => {});
@@ -170,6 +215,24 @@ export function App() {
     [go]
   );
 
+  if (authState === 'loading') return <div className="center-page muted">Loading…</div>;
+  if (authState === 'login') {
+    return (
+      <LoginPage
+        brand={BRAND.name}
+        onDone={() => {
+          setAuthState('loading');
+          loadMe().then((ok) => {
+            if (ok) {
+              loadStatus();
+              loadModels();
+              loadReels();
+            }
+          });
+        }}
+      />
+    );
+  }
   if (loadError && !status) {
     return (
       <div className="center-page">
@@ -185,12 +248,31 @@ export function App() {
   }
   if (!status || !models) return <div className="center-page muted">Loading…</div>;
   const brand = status.brand || BRAND.name;
-  if (!model) return <WelcomePage brand={brand} onCreate={createModel} />;
+  const canManage = me?.canManage ?? false;
+  if (!model) {
+    if (me && !canManage) {
+      return (
+        <div className="center-page">
+          <div className="card stack">
+            <h1>{brand}</h1>
+            <p className="muted">You don't have access to any model yet. Ask the owner to add you to one.</p>
+            {!me.local && (
+              <button className="btn" onClick={logout}>
+                Log out
+              </button>
+            )}
+          </div>
+        </div>
+      );
+    }
+    return <WelcomePage brand={brand} onCreate={createModel} />;
+  }
 
   const engineOk = status.engine.state === 'ok';
   const needsEngine = FIFOFARM_TABS.includes(tab) && !engineOk;
   const huntingModel = reels?.hunting ? reels.huntModel : null;
   const huntingName = huntingModel ? models.find((x) => x.id === huntingModel)?.name : null;
+  const visibleSystems = canManage ? SYSTEMS : SYSTEMS.filter((s) => s.id !== 'settings');
 
   return (
     <>
@@ -211,8 +293,17 @@ export function App() {
             onCreate={createModel}
             onManage={() => go('settings')}
             hunting={huntingModel}
+            canManage={canManage}
           />
-          <SystemNav systems={SYSTEMS} current={tab} huntingName={huntingModel ? huntingName ?? null : null} onNavigate={go} />
+          <SystemNav systems={visibleSystems} current={tab} huntingName={huntingModel ? huntingName ?? null : null} onNavigate={go} />
+          {me && !me.local && (
+            <div className="topbar-account">
+              <span className="muted small">{me.user.name || me.user.username}</span>
+              <button type="button" className="btn link small" onClick={logout}>
+                Log out
+              </button>
+            </div>
+          )}
         </div>
       </header>
       <main className={WIDE_TABS.includes(tab) ? 'wide' : ''}>

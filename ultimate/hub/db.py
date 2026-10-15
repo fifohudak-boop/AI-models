@@ -102,6 +102,31 @@ MIGRATIONS = [
     );
     CREATE INDEX studio_jobs_persona ON studio_jobs (persona_id, created_at);
     """,
+    # Sharing: people who can log in from outside this Mac, and which models each one may use.
+    """
+    CREATE TABLE users (
+      id TEXT PRIMARY KEY,
+      username TEXT NOT NULL UNIQUE,
+      name TEXT NOT NULL DEFAULT '',
+      role TEXT NOT NULL DEFAULT 'guest',
+      pw_salt TEXT NOT NULL,
+      pw_hash TEXT NOT NULL,
+      created_at TEXT NOT NULL
+    );
+    CREATE TABLE user_models (
+      user_id TEXT NOT NULL,
+      model_id TEXT NOT NULL,
+      PRIMARY KEY (user_id, model_id)
+    );
+    CREATE INDEX user_models_model ON user_models (model_id);
+    CREATE TABLE sessions (
+      token TEXT PRIMARY KEY,
+      user_id TEXT NOT NULL,
+      created_at INTEGER NOT NULL,
+      last_seen INTEGER NOT NULL
+    );
+    CREATE INDEX sessions_user ON sessions (user_id);
+    """,
 ]
 
 _lock = threading.RLock()

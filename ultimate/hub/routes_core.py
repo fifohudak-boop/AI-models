@@ -10,12 +10,14 @@ import sys
 from pathlib import Path
 from typing import Any
 
+import re
+
 import httpx
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import FileResponse
 from pydantic import BaseModel
 
-from . import __version__, library, media, personas, postiz, settings, studio
+from . import __version__, auth, library, media, personas, postiz, settings, studio
 from .config import APP_DIR, BRAND_NAME, REPO
 
 router = APIRouter()
@@ -99,6 +101,7 @@ async def status() -> dict:
         "studio": {"connected": studio.connected(), "hasKey": studio.has_key(),
                    "needsWorkspace": studio.has_key() and not (s.get("alibabaWorkspace") or "").strip(),
                    "region": s.get("alibabaRegion", "intl")},
+        "sharing": {"enabled": bool(s.get("sharingEnabled")), "host": s.get("shareHost", "")},
         "activeModel": s.get("activeModel") or "",
     }
 
@@ -176,13 +179,35 @@ async def save_studio_key(body: StudioKeyBody) -> dict:
     return await get_settings()
 
 
+class SharingBody(BaseModel):
+    enabled: bool
+    host: str = ""
+
+
+@router.put("/api/sharing")
+async def set_sharing(body: SharingBody) -> dict:
+    host = (body.host or "").strip().lower().rstrip("/")
+    if "//" in host:
+        host = host.split("//", 1)[1]
+    host = host.split("/", 1)[0].split(":", 1)[0]  # tolerate a pasted URL or port
+    if body.enabled and not host:
+        raise HTTPException(400, "Enter the web address people will use (like ultimate.yourname.com).")
+    if host and not re.match(r"^[a-z0-9.-]+\.[a-z]{2,}$", host):
+        raise HTTPException(400, "That doesn't look like a web address (use something like ultimate.yourname.com).")
+    settings.save({"sharingEnabled": bool(body.enabled), "shareHost": host})
+    return {"enabled": bool(body.enabled), "host": host}
+
+
 class ActiveBody(BaseModel):
     id: str
 
 
 @router.put("/api/active-model")
-async def set_active(body: ActiveBody) -> dict:
+async def set_active(body: ActiveBody, request: Request) -> dict:
     personas.require(body.id)
+    user = getattr(request.state, "user", None)
+    if user and not auth.can_access_model(user, body.id):
+        raise HTTPException(403, "You don't have access to this model.")
     settings.save({"activeModel": body.id})
     return {"ok": True}
 
@@ -190,8 +215,14 @@ async def set_active(body: ActiveBody) -> dict:
 # ---------------------------------------------------------------- models
 
 @router.get("/api/models")
-async def list_models() -> list[dict]:
-    return personas.list_all()
+async def list_models(request: Request) -> list[dict]:
+    everyone = personas.list_all()
+    user = getattr(request.state, "user", None)
+    if user:
+        allowed = auth.allowed_models(user)
+        if allowed is not None:
+            return [m for m in everyone if m["id"] in allowed]
+    return everyone
 
 
 class ModelBody(BaseModel):
@@ -229,6 +260,7 @@ async def delete_model(model_id: str) -> dict:
         raise HTTPException(409, "Stop this model's hunt first.")
     personas.remove(model_id)
     forget_model(model_id)
+    auth.forget_model(model_id)  # drop it from anyone's access
     if settings.get().get("activeModel") == model_id:
         remaining = personas.list_all()
         settings.save({"activeModel": remaining[0]["id"] if remaining else ""})

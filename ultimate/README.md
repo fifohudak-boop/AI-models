@@ -47,7 +47,9 @@ The first time takes a few minutes. It installs:
 - **Look-matching** (about 600 MB), copied from the Reel Finder app when it already has it.
 
 Then the page opens at **http://127.0.0.1:8790**. A Terminal window stays open while the app
-runs; closing it quits the app. It runs on your Mac only: other computers can't open it.
+runs; closing it quits the app. By default it runs on your Mac only — other computers can't open
+it. To let certain people in, see **Share it with your team** below; that's the only way anyone
+else reaches it.
 
 **Next time,** just open the **Fifofarm Ultimate** app. **Updates are automatic:** each time you
 open the app it installs a newer version if there is one, keeping your models, settings, logins
@@ -121,6 +123,56 @@ AI/edit tags. **Metadata → Clean up** lists a model's files, flags what each o
 and strips it in place (videos are re-wrapped without re-encoding; images are re-saved clean).
 This only *removes* metadata — the normal step before posting. It never writes fake camera or
 "shot on" information into a file.
+
+---
+
+## Share it with your team
+
+By default only your Mac can open Fifofarm Ultimate. **Sharing** lets specific people open the
+same live dashboard from their own computer — in a browser, nothing to install — and you choose
+which models each one sees. Because everyone is looking at the one app on your Mac, they see your
+changes as you make them, and there's nothing to sync.
+
+**On your Mac you're always the owner** and never log in. Other people sign in with a username and
+password you give them, and on the models you give them they can do everything (post, generate,
+edit) — but the keys, models, prices, the list of people and these settings stay yours.
+
+It works in two steps: a **tunnel** gives your Mac a web address over HTTPS, and then you turn on
+**Sharing** in the app and point it at that address. Your Mac has to be on and the app running for
+anyone to get in; the login is always in front.
+
+### 1. Give your Mac a web address (pick one, set up once)
+
+**Tailscale Funnel — easiest, no domain needed (recommended).** Gives a fixed `https://…ts.net`
+address, free.
+
+1. Install Tailscale: `brew install tailscale` (or from [tailscale.com/download](https://tailscale.com/download)) and sign in once with `tailscale up`.
+2. In the [Tailscale admin console](https://login.tailscale.com/admin), turn **Funnel** on for your tailnet (Settings → Feature previews / ACLs).
+3. Run the helper: `bash ~/Applications/"Fifofarm Ultimate"/share.sh` — it exposes the app and prints your address (looks like `your-mac.tailXXXX.ts.net`).
+
+**Cloudflare Tunnel — if you'd rather use your own domain.** Needs a domain whose DNS is on
+Cloudflare (free plan is fine).
+
+1. `brew install cloudflared`, then `cloudflared tunnel login` (opens the browser — pick your domain).
+2. `cloudflared tunnel create fifofarm-ultimate`
+3. `cloudflared tunnel route dns fifofarm-ultimate ultimate.yourdomain.com`
+4. Add an ingress rule so `ultimate.yourdomain.com` → `http://localhost:8790` in `~/.cloudflared/config.yml`, then `cloudflared tunnel run fifofarm-ultimate` (or `sudo cloudflared service install` to keep it running).
+
+Either way you end up with one web address that points at your Mac's app.
+
+### 2. Turn Sharing on and invite people
+
+1. In the app, open **Settings → Sharing**, paste that web address (e.g. `your-mac.tailXXXX.ts.net` or `ultimate.yourdomain.com`), and **Turn sharing on**.
+2. In **Settings → People**, add a person: their name, a username, a password (there's a *Generate* button), and tick the models they're allowed to use.
+3. Send them the web address plus their username and password. They open it, sign in, and see only their models.
+
+Change who can use which model, reset a password, or remove someone any time in **People**. Turn
+the whole thing off with one switch in **Sharing** — then it's back to your-Mac-only.
+
+> **Keep in mind:** sharing hands people real control of those models — posting to the connected
+> accounts and generating AI videos (which spends your AI Studio credit). Give each person only the
+> models they should run. Only ever share the address with people you trust; the login is the only
+> thing between the internet and your models.
 
 ---
 
