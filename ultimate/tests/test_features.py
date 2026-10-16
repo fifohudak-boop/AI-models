@@ -138,6 +138,39 @@ def test_editor_refuses_a_file_outside_the_model(client, model):
     assert res.status_code == 400 and "folders" in res.json()["error"]
 
 
+def test_editor_filmstrip(client, model):
+    clip = client.get(f"/api/m/{model}/edit/clips").json()[0]["path"]
+    strip = client.get(f"/api/m/{model}/edit/filmstrip", params={"path": clip})
+    assert strip.status_code == 200 and strip.headers["content-type"] == "image/jpeg"
+    assert len(strip.content) > 500  # a real strip image
+    # cached: a second request returns the same bytes
+    assert client.get(f"/api/m/{model}/edit/filmstrip", params={"path": clip}).content == strip.content
+    # a file outside the model's folders is refused
+    assert client.get(f"/api/m/{model}/edit/filmstrip", params={"path": "/etc/hosts"}).status_code == 404
+
+
+def test_editor_rich_options(client, model):
+    opts = client.get("/api/edit/options").json()
+    assert "outline" in opts["captionStyles"] and opts["fillModes"] == ["crop", "blur"]
+    assert any(c["id"] == "yellow" for c in opts["captionColors"]) and 2.0 in opts["speeds"]
+
+    clip = next(c["path"] for c in client.get(f"/api/m/{model}/edit/clips").json() if c["name"] == "clip.mp4")
+    res = client.post(f"/api/m/{model}/edit/jobs", headers=H, json={
+        "source": clip, "trimStart": 0.0, "trimEnd": 2.0, "aspect": "1:1",
+        "fill": "blur", "mirror": True, "speed": 2.0,
+        "captions": [{"text": "Big bold caption", "position": "top", "size": "XL",
+                      "style": "outline", "color": "yellow"}],
+        "keepOriginalAudio": True, "fade": True})
+    assert res.status_code == 201, res.text
+    created = res.json()["id"]
+    job = wait_job(lambda: [j for j in client.get(f"/api/m/{model}/edit/jobs").json() if j["id"] == created])
+    assert job["status"] == "saved", job
+    info = probe(Path(job["file"]))
+    assert (info.width, info.height) == (1080, 1080)  # square, blurred fit
+    assert 0.8 <= info.duration <= 1.2  # 2 s of source at 2× ≈ 1 s, with sound retimed
+    assert info.audio_codec is not None
+
+
 # ---------------------------------------------------------------- Metadata cleaner
 
 def test_metadata_scan_and_clean_strips_a_video(client, model, tmp_path):

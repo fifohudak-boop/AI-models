@@ -24,6 +24,7 @@ import type {
   StudioSpending,
   EditClip,
   EditJob,
+  EditOptions,
   MetaFile,
   MetaResult,
   VideoDetail,
@@ -193,10 +194,8 @@ export const api = {
     }),
 
   // ---- Editing ----
-  editOptions: () =>
-    request<{ aspects: { id: string; name: string }[]; captionSizes: string[]; captionPositions: string[] }>(
-      '/api/edit/options'
-    ),
+  editOptions: () => request<EditOptions>('/api/edit/options'),
+  editFilmstrip: (model: string, path: string) => `${m(model)}/edit/filmstrip?path=${enc(path)}`,
   editClips: (model: string) => request<EditClip[]>(`${m(model)}/edit/clips`),
   editMusic: (model: string) => request<{ name: string; path: string; size: number }[]>(`${m(model)}/edit/music`),
   createEdit: (model: string, body: Record<string, unknown>) =>

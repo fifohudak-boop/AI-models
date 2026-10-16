@@ -2,9 +2,11 @@
 
 from __future__ import annotations
 
+import asyncio
 from pathlib import Path
 
 from fastapi import APIRouter, HTTPException, Request
+from fastapi.responses import FileResponse
 
 from . import editor, library, personas
 
@@ -13,12 +15,25 @@ router = APIRouter()
 MAX_MUSIC_BYTES = 60 * 1024 * 1024
 
 
+@router.get("/api/m/{model_id}/edit/filmstrip")
+async def filmstrip(model_id: str, path: str) -> FileResponse:
+    try:
+        strip = await asyncio.to_thread(editor.filmstrip, model_id, path)
+    except editor.EditError as exc:
+        raise HTTPException(exc.status, str(exc)) from exc
+    return FileResponse(strip, media_type="image/jpeg", headers={"Cache-Control": "max-age=3600"})
+
+
 @router.get("/api/edit/options")
 async def options() -> dict:
     return {
         "aspects": [{"id": k, "name": v[0]} for k, v in editor.ASPECTS.items()],
         "captionSizes": list(editor.CAPTION_SIZES.keys()),
         "captionPositions": list(editor.CAPTION_POSITIONS),
+        "captionStyles": list(editor.CAPTION_STYLES),
+        "captionColors": [{"id": k, "rgb": list(v)} for k, v in editor.CAPTION_COLORS.items()],
+        "fillModes": list(editor.FILL_MODES),
+        "speeds": list(editor.SPEEDS),
     }
 
 

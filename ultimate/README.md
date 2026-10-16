@@ -117,10 +117,21 @@ a different one. The key, its region and its workspace ID must all be from the s
 
 ## Editing
 
-The **Editor** turns a clip into a ready reel, all on your Mac with ffmpeg (free, no account):
-trim it, crop it to a shape (9:16, 4:5, 1:1, 16:9 or keep original), add text captions, add your
-own music (volume, keep or drop the clip's own sound) and a fade. The finished reel lands in the
-model's *Edited reels* folder, ready to post. Use music you have the rights to.
+The **Editor** turns a clip into a ready reel, all on your Mac with ffmpeg (free, no account). You
+see the reel as you build it — the shape, the captions and the cut are shown on a live preview
+before anything is rendered:
+
+- **Trim** on a filmstrip bar, iPhone-style: drag the yellow handles in from each end, and the
+  preview jumps to the exact frame you're cutting on. Tap the frame to play just the part you kept.
+- **Shape** it to 9:16, 4:5, 1:1, 16:9 or keep the original — either **Fill** (crop the edges) or
+  **Fit** (the whole frame on a blurred background). **Mirror** (flip left–right) and change the
+  **speed** (0.5×–2×) too.
+- **Captions** you see as you type: pick the position, the size, a style (outline, chip or soft
+  shadow) and a colour.
+- **Music** you add (volume, keep or drop the clip's own sound) and a fade in/out.
+
+The finished reel lands in the model's *Edited reels* folder, ready to post. Use music you have the
+rights to.
 
 ## Metadata
 

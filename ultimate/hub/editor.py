@@ -5,6 +5,7 @@ is needed. Finished reels land in the model's "Edited reels" folder, ready to po
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import logging
 import re
 import subprocess
@@ -14,7 +15,7 @@ from pathlib import Path
 from typing import Any
 
 from . import mediainfo, personas
-from .config import MEDIA_TMP_DIR
+from .config import MEDIA_TMP_DIR, THUMB_CACHE_DIR
 from .events import bus
 
 log = logging.getLogger("ultimate.editor")
@@ -27,8 +28,16 @@ ASPECTS: dict[str, tuple[str, int, int]] = {
     "16:9": ("16:9 — YouTube", 1920, 1080),
     "original": ("Keep original shape", 0, 0),
 }
-CAPTION_SIZES = {"S": 0.045, "M": 0.062, "L": 0.085}
+CAPTION_SIZES = {"S": 0.045, "M": 0.062, "L": 0.085, "XL": 0.11}
 CAPTION_POSITIONS = ("top", "middle", "bottom")
+CAPTION_STYLES = ("outline", "box", "plain")  # outline = TikTok-style, box = chip behind, plain = soft shadow
+CAPTION_COLORS: dict[str, tuple[int, int, int]] = {
+    "white": (255, 255, 255), "black": (17, 17, 17), "yellow": (255, 214, 10),
+    "pink": (255, 92, 170), "mint": (86, 230, 170),
+}
+# How fast the reel plays back. 1.0 = normal.
+SPEEDS = (0.5, 0.75, 1.0, 1.25, 1.5, 2.0)
+FILL_MODES = ("crop", "blur")  # crop = fill the frame (center-cut); blur = fit whole frame on a blurred bg
 MAX_LONG_SIDE = 1920
 AUDIO_EXT = {".mp3", ".m4a", ".aac", ".wav", ".flac", ".ogg", ".opus", ".aiff", ".wma"}
 
@@ -78,6 +87,51 @@ def save_music(model_id: str, name: str, data: bytes) -> dict:
     return {"name": target.name, "path": str(target), "size": target.stat().st_size}
 
 
+# ---------------------------------------------------------------- the trim bar's filmstrip
+
+FILMSTRIP_COLS = 14
+FILMSTRIP_CELL = (120, 68)  # each thumbnail (16:9-ish); the whole strip is COLS wide
+
+
+def _strips_dir() -> Path:
+    d = THUMB_CACHE_DIR / "edit-strips"
+    d.mkdir(parents=True, exist_ok=True)
+    return d
+
+
+def filmstrip(model_id: str, source_path: str) -> Path:
+    """A row of thumbnails across the clip, as one JPEG — the background of the trim bar. Cached per
+    file (by path + size + time), so dragging the trim handles is instant."""
+    persona = personas.require(model_id)
+    src = Path(str(source_path or "")).expanduser()
+    if not src.is_file() or not personas.inside_folders(persona, src):
+        raise EditError("Pick a video from this model's folders.", 404)
+    stat = src.stat()
+    cw, ch = FILMSTRIP_CELL
+    key = hashlib.sha1(f"{src}:{int(stat.st_mtime)}:{stat.st_size}:{FILMSTRIP_COLS}x{cw}x{ch}".encode()).hexdigest()
+    out = _strips_dir() / f"{key[:24]}.jpg"
+    if out.exists():
+        return out
+    ffmpeg = mediainfo.find_ffmpeg()
+    if not ffmpeg:
+        raise EditError("ffmpeg is missing — reopen Fifofarm Ultimate to reinstall it.", 500)
+    info = mediainfo.probe(src)
+    if not info.has_video or info.is_still_image:
+        raise EditError("That file isn't a video.")
+    dur = info.duration or 0
+    fps = (FILMSTRIP_COLS / dur) if dur and dur > 0.2 else 1.0
+    vf = (f"fps={fps:.6f},scale={cw}:{ch}:force_original_aspect_ratio=increase,"
+          f"crop={cw}:{ch},setsar=1,tile={FILMSTRIP_COLS}x1")
+    tmp = out.with_suffix(".part.jpg")
+    proc = subprocess.run([ffmpeg, "-y", "-hide_banner", "-v", "error", "-i", str(src),
+                           "-vf", vf, "-frames:v", "1", "-q:v", "4", str(tmp)],
+                          capture_output=True, text=True, errors="replace")
+    if proc.returncode != 0 or not tmp.exists():
+        raise EditError("Couldn't read the clip's frames.", 500)
+    tmp.replace(out)
+    return out
+
+
 # ---------------------------------------------------------------- building the reel
 
 def _even(n: float) -> int:
@@ -121,32 +175,52 @@ def _wrap(draw, text: str, font, max_width: int) -> list[str]:
     return lines
 
 
-def _caption_png(text: str, position: str, size: str, out_w: int, out_h: int, path: Path) -> None:
+def _caption_png(cap: dict, out_w: int, out_h: int, path: Path) -> None:
     from PIL import Image, ImageDraw  # noqa: PLC0415
 
+    text, position = cap["text"], cap["position"]
+    size, style = cap["size"], cap["style"]
+    colour = CAPTION_COLORS.get(cap["color"], (255, 255, 255))
     img = Image.new("RGBA", (out_w, out_h), (0, 0, 0, 0))
     draw = ImageDraw.Draw(img)
-    font = _font(max(16, int(out_h * CAPTION_SIZES.get(size, 0.062))))
-    pad = int(out_h * 0.02)
-    max_text_w = int(out_w * 0.86)
+    font_px = max(16, int(out_h * CAPTION_SIZES.get(size, 0.062)))
+    font = _font(font_px)
+    pad = int(font_px * 0.5)
+    max_text_w = int(out_w * 0.88)
     lines = _wrap(draw, text.strip(), font, max_text_w)
     ascent, descent = font.getmetrics()
-    line_h = ascent + descent + int(out_h * 0.01)
+    line_h = ascent + descent + int(out_h * 0.012)
     block_h = line_h * len(lines)
     block_w = min(max_text_w, max((int(draw.textlength(ln, font=font)) for ln in lines), default=0))
     if position == "top":
-        top = int(out_h * 0.06)
+        top = int(out_h * 0.07)
     elif position == "bottom":
-        top = out_h - block_h - int(out_h * 0.1)
+        top = out_h - block_h - int(out_h * 0.11)
     else:
         top = (out_h - block_h) // 2
-    box = [(out_w - block_w) // 2 - pad, top - pad, (out_w + block_w) // 2 + pad, top + block_h + pad]
-    radius = int(out_h * 0.015)
-    draw.rounded_rectangle(box, radius=radius, fill=(0, 0, 0, 150))
+
+    # A contrasting edge colour for the outline (dark text → light edge, and the reverse).
+    light = (colour[0] * 0.299 + colour[1] * 0.587 + colour[2] * 0.114) > 150
+    edge = (0, 0, 0) if light else (255, 255, 255)
+
+    if style == "box":
+        box = [(out_w - block_w) // 2 - pad, top - int(pad * 0.7),
+               (out_w + block_w) // 2 + pad, top + block_h + int(pad * 0.7)]
+        draw.rounded_rectangle(box, radius=int(font_px * 0.35), fill=(0, 0, 0, 165))
+
     y = top
     for ln in lines:
         w = draw.textlength(ln, font=font)
-        draw.text(((out_w - w) / 2, y), ln, font=font, fill=(255, 255, 255, 255))
+        x = (out_w - w) / 2
+        if style == "outline":
+            draw.text((x, y), ln, font=font, fill=(*colour, 255),
+                      stroke_width=max(2, int(font_px * 0.09)), stroke_fill=(*edge, 255))
+        elif style == "plain":
+            off = max(2, int(font_px * 0.05))
+            draw.text((x + off, y + off), ln, font=font, fill=(0, 0, 0, 150))
+            draw.text((x, y), ln, font=font, fill=(*colour, 255))
+        else:  # box
+            draw.text((x, y), ln, font=font, fill=(*colour, 255))
         y += line_h
     img.save(path)
 
@@ -185,8 +259,14 @@ def _validate(persona: dict, req: dict) -> dict:
     if end - start < 0.3:
         raise EditError("The trimmed clip is too short — give it at least a third of a second.")
     aspect = req.get("aspect") if req.get("aspect") in ASPECTS else "9:16"
+    fill = req.get("fill") if req.get("fill") in FILL_MODES else "crop"
+    mirror = bool(req.get("mirror"))
+    try:
+        speed = min(2.0, max(0.5, float(req.get("speed", 1.0))))
+    except (TypeError, ValueError):
+        speed = 1.0
     captions = []
-    for c in (req.get("captions") or [])[:4]:
+    for c in (req.get("captions") or [])[:5]:
         text = str((c or {}).get("text") or "").strip()[:300]
         if not text:
             continue
@@ -194,6 +274,8 @@ def _validate(persona: dict, req: dict) -> dict:
             "text": text,
             "position": c.get("position") if c.get("position") in CAPTION_POSITIONS else "bottom",
             "size": c.get("size") if c.get("size") in CAPTION_SIZES else "M",
+            "style": c.get("style") if c.get("style") in CAPTION_STYLES else "outline",
+            "color": c.get("color") if c.get("color") in CAPTION_COLORS else "white",
         })
     music_name = str(req.get("music") or "").strip()
     music_path = None
@@ -208,6 +290,7 @@ def _validate(persona: dict, req: dict) -> dict:
         music_volume = 0.8
     return {
         "source": source, "info": info, "start": start, "end": end, "aspect": aspect,
+        "fill": fill, "mirror": mirror, "speed": speed,
         "captions": captions, "music": music_path, "musicVolume": music_volume,
         "keepOriginalAudio": req.get("keepOriginalAudio") is not False,
         "fade": bool(req.get("fade", True)),
@@ -265,13 +348,38 @@ async def _render(job: dict) -> None:
     _emit(job)
 
 
+def _video_base(plan: dict, out_w: int, out_h: int) -> list[str]:
+    """Steps that turn [0:v] into [v0]: speed, mirror, then the chosen shape (fill by cropping, or
+    fit the whole frame on a blurred background)."""
+    pre = []
+    if abs(plan["speed"] - 1.0) > 1e-3:
+        pre.append(f"setpts={1.0 / plan['speed']:.6f}*PTS")
+    if plan["mirror"]:
+        pre.append("hflip")
+    head = (",".join(pre) + ",") if pre else ""
+    if plan["aspect"] == "original":
+        return [f"[0:v]{head}scale={out_w}:{out_h},setsar=1[v0]"]
+    if plan["fill"] == "blur":
+        return [
+            f"[0:v]{head}split=2[bgsrc][fgsrc]",
+            f"[bgsrc]scale={out_w}:{out_h}:force_original_aspect_ratio=increase,"
+            f"crop={out_w}:{out_h},boxblur=26:2,eq=brightness=-0.05[bg]",
+            f"[fgsrc]scale={out_w}:{out_h}:force_original_aspect_ratio=decrease,setsar=1[fg]",
+            f"[bg][fg]overlay=(W-w)/2:(H-h)/2,setsar=1[v0]",
+        ]
+    ar = out_w / out_h
+    return [f"[0:v]{head}crop='min(iw,ih*{ar:.6f})':'min(ih,iw/{ar:.6f})',"
+            f"scale={out_w}:{out_h},setsar=1[v0]"]
+
+
 def _render_blocking(job: dict, plan: dict, work: Path) -> None:
     ffmpeg = mediainfo.find_ffmpeg()
     if not ffmpeg:
         raise EditError("ffmpeg is missing — reopen Fifofarm Ultimate to reinstall it.")
     info: mediainfo.Probe = plan["info"]
     out_w, out_h = _output_size(info, plan["aspect"])
-    duration = plan["end"] - plan["start"]
+    trim_len = plan["end"] - plan["start"]          # seconds of the source to take
+    duration = trim_len / plan["speed"]             # seconds the finished reel plays for
     job.update(status="processing", step="Building the reel", progress=1)
     _emit(job)
 
@@ -279,13 +387,13 @@ def _render_blocking(job: dict, plan: dict, work: Path) -> None:
     caption_pngs: list[Path] = []
     for i, cap in enumerate(plan["captions"]):
         png = work / f"cap{i}.png"
-        _caption_png(cap["text"], cap["position"], cap["size"], out_w, out_h, png)
+        _caption_png(cap, out_w, out_h, png)
         caption_pngs.append(png)
 
     # Inputs: [0] trimmed source, [1..] caption PNGs, [last] music (looped).
     args: list[str] = ["-y", "-hide_banner", "-v", "error",
-                       "-ss", f"{plan['start']:.3f}", "-t", f"{duration:.3f}", "-i", str(plan["source"])]
-    # Each caption and the music are looped to fill the clip, but bounded with -t so ffmpeg stops.
+                       "-ss", f"{plan['start']:.3f}", "-t", f"{trim_len:.3f}", "-i", str(plan["source"])]
+    # Each caption and the music are looped to fill the reel, but bounded with -t so ffmpeg stops.
     for png in caption_pngs:
         args += ["-loop", "1", "-t", f"{duration:.3f}", "-i", str(png)]
     music_index = None
@@ -293,13 +401,8 @@ def _render_blocking(job: dict, plan: dict, work: Path) -> None:
         music_index = 1 + len(caption_pngs)
         args += ["-stream_loop", "-1", "-t", f"{duration:.3f}", "-i", str(plan["music"])]
 
-    # Video: crop to the chosen shape (centered), scale to the exact output, then captions and fade.
-    if plan["aspect"] == "original":
-        vchain = f"scale={out_w}:{out_h},setsar=1"
-    else:
-        ar = out_w / out_h
-        vchain = f"crop='min(iw,ih*{ar:.6f})':'min(ih,iw/{ar:.6f})',scale={out_w}:{out_h},setsar=1"
-    steps = [f"[0:v]{vchain}[v0]"]
+    # Video: speed/mirror/shape → [v0], then captions, then fade.
+    steps = _video_base(plan, out_w, out_h)
     last = "v0"
     for i in range(len(caption_pngs)):
         steps.append(f"[{last}][{i + 1}:v]overlay=0:0:format=auto[v{i + 1}]")
@@ -309,22 +412,23 @@ def _render_blocking(job: dict, plan: dict, work: Path) -> None:
     else:
         steps.append(f"[{last}]null[vout]")
 
-    # Audio: original and/or music, mixed; silent if there's nothing.
+    # Audio: original (retimed to match the speed) and/or music, mixed; silent if there's nothing.
     has_orig = info.audio_codec is not None and plan["keepOriginalAudio"]
+    orig_speed = f"atempo={plan['speed']:.4f}," if abs(plan["speed"] - 1.0) > 1e-3 else ""
     audio_label = None
     if music_index is not None:
         mfade = f",afade=t=out:st={max(0, duration - 0.6):.3f}:d=0.6" if plan["fade"] else ""
         steps.append(f"[{music_index}:a]atrim=0:{duration:.3f},asetpts=PTS-STARTPTS,"
                      f"volume={plan['musicVolume']:.3f}{mfade}[music]")
         if has_orig:
-            steps.append(f"[0:a]volume=1.0[orig]")
+            steps.append(f"[0:a]{orig_speed}asetpts=PTS-STARTPTS,volume=1.0[orig]")
             steps.append("[orig][music]amix=inputs=2:duration=first:dropout_transition=0:normalize=0[aout]")
             audio_label = "aout"
         else:
             audio_label = "music"
     elif has_orig:
         afade = f",afade=t=out:st={max(0, duration - 0.4):.3f}:d=0.4" if plan["fade"] else ""
-        steps.append(f"[0:a]asetpts=PTS-STARTPTS{afade}[aout]")
+        steps.append(f"[0:a]{orig_speed}asetpts=PTS-STARTPTS{afade}[aout]")
         audio_label = "aout"
 
     args += ["-filter_complex", ";".join(steps), "-map", "[vout]"]
