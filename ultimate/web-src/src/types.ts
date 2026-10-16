@@ -484,6 +484,21 @@ export interface EditClip {
   modified: number;
 }
 
+export interface EditCaptionColor {
+  id: string;
+  rgb: [number, number, number];
+}
+
+export interface EditOptions {
+  aspects: { id: string; name: string }[];
+  captionSizes: string[];
+  captionPositions: string[];
+  captionStyles: string[];
+  captionColors: EditCaptionColor[];
+  fillModes: string[];
+  speeds: number[];
+}
+
 export interface EditJob {
   id: string;
   modelId: string;
