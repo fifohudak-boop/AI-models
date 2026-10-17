@@ -200,8 +200,6 @@ def _owner_only(method: str, path: str) -> bool:
         return True
     if path == "/api/preferences" and method == "PUT":
         return True
-    if path == "/api/studio/rates" and method == "PUT":
-        return True
     if path == "/api/sharing" and method == "PUT":
         return True
     if path.startswith("/api/m/") and path.endswith("/studio/key"):

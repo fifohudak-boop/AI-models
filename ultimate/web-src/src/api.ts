@@ -181,17 +181,17 @@ export const api = {
   modelStudioOptions: (model: string) => request<StudioOptions>(`${m(model)}/studio/options`),
   modelStudioKey: (model: string) => request<ModelStudioKey>(`${m(model)}/studio/key`),
   // apiKey null keeps the saved key; '' removes this model's own key (back to the shared default).
-  saveModelStudioKey: (model: string, apiKey: string | null, region: string, workspace: string) =>
-    request<ModelStudioKey>(`${m(model)}/studio/key`, { method: 'PUT', body: { apiKey, region, workspace } }),
+  saveModelStudioKey: (model: string, provider: string, apiKey: string | null, region: string, workspace: string) =>
+    request<ModelStudioKey>(`${m(model)}/studio/key`, { method: 'PUT', body: { provider, apiKey, region, workspace } }),
+  // The automatic price for one generation with these settings.
+  studioPrice: (model: string, genModel: string, resolution: string, seconds: number, images = 1) =>
+    request<{ price: number | null; currency: string }>(
+      `${m(model)}/studio/price?model=${enc(genModel)}&resolution=${enc(resolution)}&seconds=${seconds}&images=${images}`
+    ),
   studioJobs: (model: string) => request<StudioJob[]>(`${m(model)}/studio/jobs`),
   createStudioJob: (model: string, body: Record<string, unknown>) =>
     request<StudioJob>(`${m(model)}/studio/jobs`, { method: 'POST', body }),
   studioSpending: (model: string) => request<StudioSpending>(`${m(model)}/studio/spending`),
-  saveStudioRates: (currency: string, rates: Record<string, Record<string, number>>) =>
-    request<{ currency: string; rates: Record<string, Record<string, number>> }>('/api/studio/rates', {
-      method: 'PUT',
-      body: { currency, rates },
-    }),
 
   // ---- Editing ----
   editOptions: () => request<EditOptions>('/api/edit/options'),

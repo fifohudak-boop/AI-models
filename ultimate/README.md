@@ -11,10 +11,10 @@ The top bar is one button per **system**; clicking a system rolls down its pages
 | --- | --- | --- |
 | **Post** | New post · Accounts · History · Analytics | Fifofarm: post one video to all of the model's accounts at once, see how each post went and how the videos do. |
 | **Reel Finder** | Find videos · Library | AI agents scroll TikTok, Instagram and Pinterest for videos that look like the model's reference videos and save the best ones. |
-| **AI Studio** | Make a video · Library · Spending | Makes new videos of the model with **Wan 3.0** (Alibaba Cloud Model Studio). Shows the cost before you Generate, and tracks how much each model has spent. |
+| **AI Studio** | Make a video · Library · Spending | Makes videos (**Wan**, **Seedance**) and images (**Seedream**) of the model — each model on its own provider + key. The price is automatic, and Spending tracks what each model has spent. |
 | **Editing** | Editor | Turn a clip into a ready reel — trim, crop to shape, add music and captions — free, on your Mac with ffmpeg. |
 | **Metadata** | Clean up | Strip the hidden data files carry (camera, GPS, dates, AI/edit tags) before posting. |
-| **Settings** | — | Models and their folders, the posting engine, the AI Studio key and prices, posting defaults. |
+| **Settings** | — | Models and their folders, each model's AI Studio provider + key, the posting engine, posting defaults. |
 
 The tools hand work to each other: a Reel Finder find goes to **Post**, **AI Studio** or the
 **Editor** with one click, an AI Studio video goes to **Post** or the **Editor**, and anything in
@@ -77,14 +77,13 @@ Desktop shortcut. Your videos stay in their folders.
 5. **Reel Finder:** log in to TikTok / Instagram / Pinterest once in the agents' browser (or
    click **Copy logins from Reel Finder**). The logins are shared by all models; one
    hunt runs at a time.
-6. **AI Studio:** each model can have **its own** Alibaba Cloud **Model Studio** key, so Mia and
-   Mike can be on different accounts. Open Settings → Models → a model → **AI Studio key** and add
-   the API key, the region it was made in, and the **workspace ID**. All three are required and must
-   be from the same place — Wan 3.0 is served only on your workspace's own address
-   (`{workspace}.{region}.maas.aliyuncs.com`), so without the workspace ID Alibaba has no endpoint
-   for it. If most models share one account, set a **Default AI Studio key** (further down in
-   Settings) instead, and only give a model its own key when it differs. During Wan 3.0's preview
-   the safe region is **Singapore** — that's where it runs; other regions may not offer it yet.
+6. **AI Studio:** each model picks **its own provider and key** in Settings → Models → a model →
+   **AI Studio key**, so every model can be a separate paid account. Choose the provider — Alibaba
+   **Wan** or ByteDance **Seedance** for video, ByteDance **Seedream** for images — paste that
+   account's API key and pick its region. Wan also needs the **workspace ID** (Wan is served only on
+   your workspace's own address `{workspace}.{region}.maas.aliyuncs.com`); ByteDance providers need
+   only the key and region. During Wan's preview the safe region is **Singapore**. **Prices are
+   automatic** — worked out from each provider's published rates, so you never type a price.
 
 ## Where things are kept
 
@@ -92,28 +91,35 @@ Desktop shortcut. Your videos stay in their folders.
 - The app's own data (models, settings, history, Reel Finder logins): `~/Applications/Fifofarm Ultimate/data`.
   The posting engine's API key and the Alibaba key are stored there, readable only by you.
 
-## AI Studio and Wan 3.0
+## AI Studio: providers and automatic pricing
 
-AI Studio sends jobs to Alibaba Cloud Model Studio's Wan 3.0 video API (`wan3.0-video`, or
-`wan3.0-video-prime`, the faster version): from a prompt, from a first frame (a photo of the
-model), or from references (a reference video plus up to 10 model photos — Wan copies the
-video's moves, camera and timing with the person in the photos).
+AI Studio makes videos and images of a model. Each model picks a **provider** in its key:
 
-**Each model uses its own key** (set in its card in Settings → Models), falling back to the shared
-**Default AI Studio key** if it has none — so one model can be on one Alibaba account and another on
-a different one. The key, its region and its workspace ID must all be from the same place.
+| Provider | Makes | Needs | Modes |
+| --- | --- | --- | --- |
+| **Alibaba Wan** (`wan3.0-video`, `wan3.0-video-prime`) | video | key + region + **workspace ID** | prompt · first-frame photo · reference video |
+| **ByteDance Seedance** (`seedance-1.0-pro`, `-lite`) | video | key + region | prompt · first-frame photo |
+| **ByteDance Seedream** (`seedream-4.0`, `-3.0`) | images | key + region | prompt · from a photo |
 
-- Before sending, reference videos become H.264 MP4s with **15 seconds in total** at most
-  (Wan's limit; longer finds are cut), and photos become JPEGs between 240 and 4096 px.
-- The files go to Alibaba's temporary upload storage (kept 48 hours), then the task is
-  checked every 15 seconds. The finished video downloads into the model's *AI Studio* folder
-  and shows up in the library, ready to post.
-- *Length* can be **Auto** (Wan decides; with a reference, like the reference) or 2–30 s. With
-  a reference video, its length plus the new video's is 30 s at most.
-- **Cost:** AI Studio shows the price before you press Generate, from the per-second rates in
-  Settings → AI Studio (seeded from Alibaba's list prices — edit them to match your own bill and
-  discount). The **Spending** page shows how much each model has spent, by month and by quality.
-  Only finished videos are counted, because Alibaba bills on success.
+- **Wan** uploads prepared files to Alibaba's temporary storage (48 h) and polls the task; a
+  reference video is cut to **15 s total** and photos become JPEGs (240–4096 px). Length can be
+  **Auto** or 2–30 s (with a reference, in + out ≤ 30 s).
+- **Seedance** (ByteDance ModelArk) sends the prompt and an optional first-frame photo inline and
+  polls the task; length 4–15 s. A local reference *video* can't be sent to ByteDance, so that mode
+  is Wan-only.
+- **Seedream** (ByteDance ModelArk) returns the image right away; pick a size (1K/2K/4K) and shape.
+
+**Prices are automatic** — AI Studio shows the price before you press Generate and on the
+**Spending** page, worked out from each provider's published rates (nobody types a price):
+
+- Wan: per second, by **region** (Singapore is a higher rail than Frankfurt/US/Tokyo/Beijing/HK) and
+  resolution.
+- Seedance: from the token formula (`width·height·24·seconds/1024` × the model's $/1M-token rate),
+  which reproduces ByteDance's own per-clip prices.
+- Seedream: a flat per-image rate.
+
+Only finished generations are counted on the Spending page, because the providers bill on success.
+Rates are built in (checked Oct 2026) and can drift — treat the shown price as an estimate.
 
 ## Editing
 

@@ -74,9 +74,13 @@ function FolderRow({
 
 // A model's own Alibaba key (so different models can be on different accounts). A model without
 // its own uses the shared default. The key is only ever shown masked.
+// Each model's own AI Studio key: pick the provider (Alibaba Wan / ByteDance Seedance / Seedream),
+// paste that account's key, choose its region (and, for Wan, the workspace). Different models can be
+// on different providers and accounts, so each is billed separately.
 function ModelStudioKeySection({ model, toast }: { model: Model; toast: (m: string) => void }) {
   const [info, setInfo] = useState<ModelStudioKey | null>(null);
   const [open, setOpen] = useState(false);
+  const [provider, setProvider] = useState('wan');
   const [key, setKey] = useState('');
   const [region, setRegion] = useState('intl');
   const [workspace, setWorkspace] = useState('');
@@ -88,6 +92,7 @@ function ModelStudioKeySection({ model, toast }: { model: Model; toast: (m: stri
       .modelStudioKey(model.id)
       .then((i) => {
         setInfo(i);
+        setProvider(i.provider || 'wan');
         setRegion(i.region || 'intl');
         setWorkspace(i.hasOwnKey ? i.workspace : '');
       })
@@ -97,22 +102,34 @@ function ModelStudioKeySection({ model, toast }: { model: Model; toast: (m: stri
 
   if (!info) return null;
 
-  const changedPlace = region !== info.region || workspace.trim() !== (info.hasOwnKey ? info.workspace : '');
-  const canSave = Boolean((key.trim() || (info.hasOwnKey && changedPlace)) && workspace.trim());
-  const regionName = STUDIO_REGIONS.find((r) => r.id === info.region)?.name ?? info.region;
+  const providers = info.providers;
+  const chosen = providers.find((p) => p.id === provider) ?? providers[0];
+  const needsWorkspace = chosen?.needsWorkspace ?? false;
+  const regionOk = (chosen?.regions ?? []).some((r) => r.id === region);
+  const canSave = Boolean(key.trim() && regionOk && (!needsWorkspace || workspace.trim()));
+  const providerName = providers.find((p) => p.id === info.provider)?.name ?? info.provider;
+  const regionName = (chosen?.regions ?? []).find((r) => r.id === info.region)?.name ?? info.region;
   const status = info.hasOwnKey
-    ? `Its own key · ${regionName} · ${info.keyMasked}`
+    ? `${providerName} · ${regionName} · ${info.keyMasked}`
     : info.defaultConnected
-      ? 'Using the shared default key'
-      : 'No key yet — set one here, or a shared default below';
+      ? 'Using the shared default Wan key'
+      : 'No key yet — set one here';
+
+  function changeProvider(id: string) {
+    setProvider(id);
+    const p = providers.find((x) => x.id === id);
+    if (p && !p.regions.some((r) => r.id === region)) setRegion(p.regions[0]?.id ?? 'intl');
+    if (p && !p.needsWorkspace) setWorkspace('');
+  }
 
   async function save() {
     setBusy(true);
     setError(null);
     try {
-      const next = await api.saveModelStudioKey(model.id, key.trim() ? key : null, region, workspace.trim());
+      const next = await api.saveModelStudioKey(model.id, provider, key.trim() ? key : null, region, workspace.trim());
       setInfo(next);
       setKey('');
+      setProvider(next.provider || 'wan');
       setWorkspace(next.hasOwnKey ? next.workspace : '');
       setRegion(next.region || 'intl');
       setOpen(false);
@@ -124,16 +141,16 @@ function ModelStudioKeySection({ model, toast }: { model: Model; toast: (m: stri
     }
   }
 
-  async function useDefault() {
+  async function clearKey() {
     setBusy(true);
     setError(null);
     try {
-      const next = await api.saveModelStudioKey(model.id, '', region, '');
+      const next = await api.saveModelStudioKey(model.id, 'wan', '', region, '');
       setInfo(next);
       setKey('');
       setWorkspace('');
       setOpen(false);
-      toast(`${model.name} now uses the shared default key`);
+      toast(`${model.name}'s own key removed`);
     } catch (err) {
       setError((err as Error).message);
     } finally {
@@ -156,21 +173,19 @@ function ModelStudioKeySection({ model, toast }: { model: Model; toast: (m: stri
         <div className="stack">
           <div className="row2">
             <label className="field">
-              <span className="small">
-                API key {info.hasOwnKey && <span className="muted small">(saved: {info.keyMasked})</span>}
-              </span>
-              <input
-                type="password"
-                autoComplete="off"
-                placeholder={info.hasOwnKey ? 'Paste a new key to replace it' : 'sk-…'}
-                value={key}
-                onChange={(e) => setKey(e.target.value)}
-              />
+              <span className="small">Provider</span>
+              <select value={provider} onChange={(e) => changeProvider(e.target.value)}>
+                {providers.map((p) => (
+                  <option key={p.id} value={p.id}>
+                    {p.name} {p.kind === 'image' ? '· images' : '· video'}
+                  </option>
+                ))}
+              </select>
             </label>
             <label className="field">
               <span className="small">Region</span>
               <select value={region} onChange={(e) => setRegion(e.target.value)}>
-                {STUDIO_REGIONS.map((r) => (
+                {(chosen?.regions ?? []).map((r) => (
                   <option key={r.id} value={r.id}>
                     {r.name}
                   </option>
@@ -180,20 +195,38 @@ function ModelStudioKeySection({ model, toast }: { model: Model; toast: (m: stri
           </div>
           <label className="field">
             <span className="small">
-              Workspace ID <span className="muted small">(required)</span>
+              API key {info.hasOwnKey && <span className="muted small">(saved: {info.keyMasked})</span>}
             </span>
             <input
-              type="text"
+              type="password"
               autoComplete="off"
-              spellCheck={false}
-              placeholder="Model Studio workspace ID"
-              value={workspace}
-              onChange={(e) => setWorkspace(e.target.value)}
+              placeholder={info.hasOwnKey ? 'Paste a new key to replace it' : 'Paste the key for this account'}
+              value={key}
+              onChange={(e) => setKey(e.target.value)}
             />
           </label>
+          {needsWorkspace && (
+            <label className="field">
+              <span className="small">
+                Workspace ID <span className="muted small">(required)</span>
+              </span>
+              <input
+                type="text"
+                autoComplete="off"
+                spellCheck={false}
+                placeholder="Model Studio workspace ID"
+                value={workspace}
+                onChange={(e) => setWorkspace(e.target.value)}
+              />
+            </label>
+          )}
           <p className="muted small" style={{ margin: 0 }}>
-            The key, region and workspace must all be from the same Alibaba account/place — Wan 3.0 is served only on that
-            workspace's own address.
+            {chosen?.keyHint}{' '}
+            {chosen?.console && (
+              <a href={chosen.console} target="_blank" rel="noreferrer">
+                Open the console
+              </a>
+            )}
           </p>
           {error && <div className="notice error small">{error}</div>}
           <div className="row">
@@ -201,8 +234,8 @@ function ModelStudioKeySection({ model, toast }: { model: Model; toast: (m: stri
               {busy ? 'Checking…' : `Save ${model.name}'s key`}
             </button>
             {info.hasOwnKey && (
-              <button type="button" className="btn link small" disabled={busy} onClick={useDefault}>
-                Use the shared default
+              <button type="button" className="btn link small" disabled={busy} onClick={clearKey}>
+                Remove this key
               </button>
             )}
           </div>
@@ -520,101 +553,6 @@ function PostingDefaults({ prefs, save }: { prefs: Preferences; save: (patch: Pa
   );
 }
 
-// What Wan charges per second of finished video — used for the cost shown before Generate and the
-// Spending pages. Seeded from Alibaba's list prices; editable because prices and discounts change.
-function StudioRatesCard({ toast }: { toast: (m: string) => void }) {
-  const [currency, setCurrency] = useState('USD');
-  const [models, setModels] = useState<{ id: string; name: string }[]>([]);
-  const [resolutions, setResolutions] = useState<string[]>([]);
-  const [rates, setRates] = useState<Record<string, Record<string, number>>>({});
-  const [busy, setBusy] = useState(false);
-  const [saved, setSaved] = useState(false);
-
-  useEffect(() => {
-    api
-      .studioOptions()
-      .then((o) => {
-        setCurrency(o.currency);
-        setModels(o.models);
-        setResolutions(o.resolutions);
-        setRates(o.rates || {});
-      })
-      .catch(() => {});
-  }, []);
-
-  function setRate(model: string, res: string, value: string) {
-    setSaved(false);
-    setRates((r) => ({ ...r, [model]: { ...(r[model] || {}), [res]: value === '' ? 0 : Number(value) } }));
-  }
-
-  async function save() {
-    setBusy(true);
-    try {
-      const res = await api.saveStudioRates(currency, rates);
-      setRates(res.rates);
-      setSaved(true);
-      toast('Saved the Wan prices');
-    } catch (err) {
-      toast((err as Error).message);
-    } finally {
-      setBusy(false);
-    }
-  }
-
-  if (models.length === 0) return null;
-
-  return (
-    <section className="card stack">
-      <div className="card-head" style={{ marginBottom: 0 }}>
-        <h2>What a Wan video costs</h2>
-        {saved && <span className="chip published">saved</span>}
-      </div>
-      <p className="small" style={{ margin: 0 }}>
-        Wan charges per second of finished video. These seed the cost shown before you press Generate and the Spending
-        pages — change them to match what Alibaba actually bills you (including any discount).
-      </p>
-      <label className="field" style={{ maxWidth: 160 }}>
-        <span className="small">Currency</span>
-        <input type="text" value={currency} maxLength={8} onChange={(e) => { setCurrency(e.target.value); setSaved(false); }} />
-      </label>
-      <div className="rates-table">
-        <table className="spend-table">
-          <thead>
-            <tr>
-              <th>Per second</th>
-              {resolutions.map((r) => (
-                <th key={r}>{r}</th>
-              ))}
-            </tr>
-          </thead>
-          <tbody>
-            {models.map((mdl) => (
-              <tr key={mdl.id}>
-                <td>{mdl.name}</td>
-                {resolutions.map((res) => (
-                  <td key={res}>
-                    <input
-                      type="number"
-                      min={0}
-                      step={0.001}
-                      value={rates[mdl.id]?.[res] ?? ''}
-                      onChange={(e) => setRate(mdl.id, res, e.target.value)}
-                    />
-                  </td>
-                ))}
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
-      <div className="row">
-        <button className="btn primary small" disabled={busy} onClick={save}>
-          {busy ? 'Saving…' : 'Save prices'}
-        </button>
-      </div>
-    </section>
-  );
-}
 
 // Let other people reach this dashboard from their own computer, with a login.
 function SharingCard({ status, onStatus, toast }: { status: AppStatus; onStatus: () => void; toast: (m: string) => void }) {
@@ -1030,8 +968,6 @@ export function SettingsPage({
       )}
 
       {settings && <StudioKeyCard settings={settings} onSaved={(s) => { setSettings(s); onStatus(); }} toast={toast} />}
-
-      <StudioRatesCard toast={toast} />
 
       {prefs ? (
         <>
