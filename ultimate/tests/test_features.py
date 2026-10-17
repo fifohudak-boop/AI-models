@@ -59,27 +59,31 @@ def wait_job(fetch, timeout: float = 120) -> dict:
     raise AssertionError(f"edit job timed out: {job}")
 
 
-# ---------------------------------------------------------------- AI Studio: cost & spending
+# ---------------------------------------------------------------- AI Studio: automatic price & spending
 
-def test_cost_maths_and_rates(client):
-    rate = studio.price_per_second("wan3.0-video", "720P")
-    assert rate and abs(studio.estimate_cost("wan3.0-video", "720P", 10) - rate * 10) < 1e-6
-    assert studio.estimate_cost("wan3.0-video", "720P", 0) is None  # no length, no estimate
+def test_automatic_pricing_matches_published_rates():
+    from hub import providers  # noqa: PLC0415
+    # Wan: region-dependent, resolution-tiered (official per-second numbers).
+    assert providers.price("wan", "wan3.0-video", "intl", "720P", 5) == 0.5
+    assert abs(providers.price("wan", "wan3.0-video", "eu", "720P", 5) - 0.4126) < 0.001
+    assert providers.price("wan", "wan3.0-video-prime", "intl", "1080P", 5) == 2.0  # Prime is the higher rail
+    # Seedance: token formula reproduces BytePlus's per-clip prices.
+    assert abs(providers.price("seedance", "seedance-1.0-pro", "intl", "480p", 5) - 0.1215) < 0.001
+    assert abs(providers.price("seedance", "seedance-1.0-pro", "intl", "1080p", 5) - 0.612) < 0.001
+    assert providers.price("seedance", "seedance-1.0-lite", "intl", "720p", 10) < \
+        providers.price("seedance", "seedance-1.0-pro", "intl", "720p", 10)
+    # Seedream: flat per image.
+    assert providers.price("seedream", "seedream-4.0", "intl", "2K", images=3) == 0.09
 
-    opts = client.get("/api/studio/options").json()
-    assert opts["currency"] == "USD" and opts["rates"]["wan3.0-video"]["1080P"] > 0
-    assert opts["rates"]["wan3.0-video-prime"]["1080P"] > opts["rates"]["wan3.0-video"]["1080P"]
 
-    before = settings.get()["studioRates"]
-    try:
-        saved = client.put("/api/studio/rates", json={"currency": "EUR", "rates": {
-            "wan3.0-video": {"480P": 0.05, "720P": 0.1, "1080P": 0.2}}}, headers=H)
-        assert saved.status_code == 200
-        assert studio.currency() == "EUR" and studio.price_per_second("wan3.0-video", "1080P") == 0.2
-        assert client.put("/api/studio/rates", json={"currency": "USD", "rates": {
-            "wan3.0-video": {"1080P": "free"}}}, headers=H).status_code == 400  # not a number
-    finally:
-        settings.save({"studioCurrency": "USD", "studioRates": before})
+def test_price_endpoint_uses_the_models_provider_and_region(client, model):
+    # default model has no own key → Wan, intl
+    out = client.get(f"/api/m/{model}/studio/price",
+                     params={"model": "wan3.0-video", "resolution": "1080P", "seconds": 5}).json()
+    assert out["price"] == 1.0 and out["currency"] == "USD"
+    opts = client.get(f"/api/m/{model}/studio/options").json()
+    assert opts["provider"] == "wan" and opts["kind"] == "video"
+    assert any(p["id"] == "seedance" for p in opts["providers"])
 
 
 def test_spending_only_counts_this_models_finished_videos(client, model):

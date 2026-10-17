@@ -411,32 +411,47 @@ export interface SelfTestState {
 
 // ---- AI Studio ----
 
+// One AI Studio provider (the account + service a key is for).
+export interface ProviderMeta {
+  id: string;
+  name: string;
+  kind: 'video' | 'image';
+  needsWorkspace: boolean;
+  regions: { id: string; name: string }[];
+  keyHint: string;
+  console: string;
+}
+
 export interface ModelStudioKey {
   hasOwnKey: boolean; // this model has its own key (not the shared default)
   usingDefault: boolean;
+  provider: string;
   keyMasked: string; // the key is only ever shown masked
   region: string;
   workspace: string;
-  defaultConnected: boolean; // is the shared default key usable?
+  needsWorkspace: boolean;
+  defaultConnected: boolean; // is the shared default (Wan) key usable?
+  providers: ProviderMeta[];
 }
 
 export interface StudioOptions {
   connected: boolean;
+  provider: string;
+  providerName: string;
+  kind: 'video' | 'image';
   needsWorkspace?: boolean;
+  providers: { id: string; name: string; kind: 'video' | 'image' }[];
   models: { id: string; name: string }[];
   modes: { id: 'text' | 'image' | 'reference'; name: string }[];
-  resolutions: string[];
+  resolutions: string[]; // for an image provider these are sizes (1K/2K/4K)
   ratios: string[];
   regions: { id: string; name: string }[];
-  workspaceRequired?: boolean;
-  minDuration: number;
-  maxDuration: number;
+  durations: { min: number; max: number; auto: boolean; default: number };
   estimateSeconds: number;
   maxPhotos: number;
   maxVideos: number;
   referenceSeconds: number;
   currency: string;
-  rates: Record<string, Record<string, number>>;
 }
 
 export interface StudioSpending {
@@ -446,6 +461,7 @@ export interface StudioSpending {
   seconds: number;
   perResolution: Record<string, { videos: number; cost: number; seconds: number }>;
   perMonth: { month: string; videos: number; cost: number }[];
+  perProvider?: { provider: string; name: string; videos: number; cost: number }[];
 }
 
 export interface StudioJob {
@@ -459,10 +475,13 @@ export interface StudioJob {
   file: string | null;
   mode: 'text' | 'image' | 'reference';
   prompt: string;
+  provider?: string;
+  kind?: 'video' | 'image';
   model: string;
   resolution: string;
   ratio: string;
-  duration: number; // -1 = Wan picks the length
+  duration: number | null; // -1 = provider picks the length; null = image (no duration)
+  images?: number;
   audio?: boolean;
   photos: string[];
   videos: string[];
