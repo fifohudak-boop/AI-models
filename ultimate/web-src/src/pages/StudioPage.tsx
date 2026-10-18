@@ -290,10 +290,14 @@ export function StudioPage({
             <Picked model={model} paths={videos} onRemove={(p) => setVideos((v) => v.filter((x) => x !== p))} />
           </div>
         )}
-        {mode === 'image' && (
+        {(mode === 'image' || mode === 'reference') && (
           <div className="stack">
             <div className="row">
-              <strong className="small">Photo of {model.name}{isImage ? ' to start from' : ' (the first frame)'}</strong>
+              <strong className="small">
+                {mode === 'reference'
+                  ? `Photos of ${model.name} (up to ${maxPhotos})`
+                  : `Photo of ${model.name}${isImage ? ' to start from' : ' (the first frame)'}`}
+              </strong>
               <button type="button" className="btn small" onClick={() => setPicking('photos')}>
                 Choose…
               </button>
@@ -306,6 +310,11 @@ export function StudioPage({
                 </span>
               )}
             </div>
+            {mode === 'reference' && (
+              <span className="muted small" style={{ marginTop: -4 }}>
+                These are the person Wan puts into the reference — {model.name}'s face, hair, body and look.
+              </span>
+            )}
             <Picked model={model} paths={photos} onRemove={(p) => setPhotos((v) => v.filter((x) => x !== p))} />
           </div>
         )}
