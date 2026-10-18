@@ -124,6 +124,65 @@ def test_seedream_makes_an_image(client, fake, tmp_path):
     assert call["model"] == "seedream-4.0" and "x" in call["size"] and call["response_format"] == "url"
 
 
+def test_wavespeed_makes_a_video(client, tmp_path):
+    from fakewave import GOOD_KEY as WS_KEY, FakeWaveSpeed  # noqa: PLC0415
+
+    ws = FakeWaveSpeed()
+    studio.set_transport(ws.transport())
+    try:
+        mid = _model_with_photo(client, "WaveMia", tmp_path)
+        r = client.put(f"/api/m/{mid}/studio/key", headers=H,
+                       json={"provider": "wavespeed", "apiKey": WS_KEY, "region": "global"})
+        assert r.status_code == 200, r.text
+        assert ws.hosts[-1] == "api.wavespeed.ai"  # key checked on WaveSpeed
+
+        opts = client.get(f"/api/m/{mid}/studio/options").json()
+        assert opts["provider"] == "wavespeed" and opts["kind"] == "video"
+        assert opts["durations"] == {"min": 4, "max": 30, "auto": False, "default": 5}
+
+        jobs = lambda: client.get(f"/api/m/{mid}/studio/jobs").json()  # noqa: E731
+        res = client.post(f"/api/m/{mid}/studio/jobs", headers=H, json={
+            "mode": "text", "prompt": "Mia dancing", "model": "seedance-2.5", "resolution": "720p", "duration": 5})
+        assert res.status_code == 201, res.text
+        wait_for(lambda: jobs()[0], lambda j: j["status"] != "starting")
+        task = ws.tasks[list(ws.tasks)[-1]]
+        assert task["model_path"] == "bytedance/seedance-2.5/text-to-video"
+        assert task["body"]["resolution"] == "720p" and task["body"]["duration"] == 5
+
+        client.portal.call(studio.poll_once)  # processing
+        client.portal.call(studio.poll_once)  # completed → downloaded
+        job = jobs()[0]
+        assert job["status"] == "saved", job
+        assert Path(job["file"]).suffix == ".mp4" and Path(job["file"]).read_bytes() == ws.video_bytes
+        assert job["cost"] == 1.8 and job["provider"] == "wavespeed"  # 720p × 5s on WaveSpeed Seedance
+    finally:
+        studio.set_transport(None)
+        settings.save({"studioKeys": {}})
+
+
+def test_wavespeed_image_mode_uses_the_i2v_path(client, tmp_path):
+    from fakewave import GOOD_KEY as WS_KEY, FakeWaveSpeed  # noqa: PLC0415
+
+    ws = FakeWaveSpeed()
+    studio.set_transport(ws.transport())
+    try:
+        mid = _model_with_photo(client, "WaveImg", tmp_path)
+        client.put(f"/api/m/{mid}/studio/key", headers=H,
+                   json={"provider": "wavespeed", "apiKey": WS_KEY, "region": "global"})
+        folders = next(m["folders"] for m in client.get("/api/models").json() if m["id"] == mid)
+        face = str(Path(folders["references"]) / "face.jpg")
+        res = client.post(f"/api/m/{mid}/studio/jobs", headers=H, json={
+            "mode": "image", "photos": [face], "model": "seedance-2.5-turbo", "resolution": "480p", "duration": 6})
+        assert res.status_code == 201, res.text
+        wait_for(lambda: client.get(f"/api/m/{mid}/studio/jobs").json()[0], lambda j: j["status"] != "starting")
+        task = ws.tasks[list(ws.tasks)[-1]]
+        assert task["model_path"] == "bytedance/seedance-2.5/image-to-video-turbo"
+        assert task["body"]["image"].startswith("data:image/jpeg;base64,")
+    finally:
+        studio.set_transport(None)
+        settings.save({"studioKeys": {}})
+
+
 def test_a_models_provider_is_isolated(client, fake, tmp_path):
     a = _model_with_photo(client, "ProvA", tmp_path)
     b = _model_with_photo(client, "ProvB", tmp_path)

@@ -75,6 +75,34 @@ def seedream_price(model: str, images: int = 1) -> float | None:
     return round(per * max(1, images), 4)
 
 
+# ---------------------------------------------------------------- WaveSpeed (aggregator)
+
+# WaveSpeed is one key for many models; we wire its Seedance 2.5 video models.
+WAVESPEED_HOST = "https://api.wavespeed.ai/api/v3"
+WAVESPEED_MIN_S, WAVESPEED_MAX_S = 4, 30
+# Per-second USD for Seedance 2.5 on WaveSpeed (their FAQ: $0.90/5s@480p, $1.80/5s@720p). 1080p is
+# an estimate — WaveSpeed shows the exact price before you submit.
+WAVESPEED_SEEDANCE_PER_S = {
+    "std": {"480p": 0.18, "720p": 0.36, "1080p": 0.72},
+    "turbo": {"480p": 0.20, "720p": 0.40, "1080p": 0.80},
+}
+
+
+def wavespeed_price(model: str, resolution: str, seconds: float) -> float | None:
+    rail = "turbo" if model.endswith("turbo") else "std"
+    rate = WAVESPEED_SEEDANCE_PER_S.get(rail, {}).get(resolution)
+    if rate is None or not seconds or seconds <= 0:
+        return None
+    return round(rate * seconds, 4)
+
+
+def wavespeed_path(model: str, mode: str) -> str:
+    """The real WaveSpeed model path for our (model, mode) pair."""
+    kind = "image-to-video" if mode == "image" else "text-to-video"
+    suffix = "-turbo" if model.endswith("turbo") else ""
+    return f"bytedance/seedance-2.5/{kind}{suffix}"
+
+
 # ---------------------------------------------------------------- the registry (what the UI reads)
 
 # ByteDance ModelArk is one account/key for both Seedance and Seedream; two regions, no workspace.
@@ -132,6 +160,22 @@ PROVIDERS: dict[str, dict] = {
         "modes": ["text", "image"],
         "console": "https://console.byteplus.com/ark",
     },
+    "wavespeed": {
+        "id": "wavespeed",
+        "name": "WaveSpeed (Seedance 2.5)",
+        "kind": "video",
+        "needsWorkspace": False,
+        "keyHint": "WaveSpeed API key (wavespeed.ai → API Keys). One key covers WaveSpeed's models.",
+        "regions": [{"id": "global", "name": "Global"}],
+        "models": [
+            {"id": "seedance-2.5", "name": "Seedance 2.5"},
+            {"id": "seedance-2.5-turbo", "name": "Seedance 2.5 Turbo (faster)"},
+        ],
+        "resolutions": ["480p", "720p", "1080p"],
+        "ratios": ["9:16", "3:4", "1:1", "4:3", "16:9", "21:9"],
+        "modes": ["text", "image"],
+        "console": "https://wavespeed.ai/",
+    },
 }
 
 DEFAULT_PROVIDER = "wan"
@@ -167,4 +211,6 @@ def price(provider_id: str, model: str, region: str, resolution: str,
         return seedance_price(model, resolution, float(seconds or 0))
     if provider_id == "seedream":
         return seedream_price(model, images)
+    if provider_id == "wavespeed":
+        return wavespeed_price(model, resolution, float(seconds or 0))
     return None
