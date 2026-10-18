@@ -100,6 +100,7 @@ AI Studio makes videos and images of a model. Each model picks a **provider** in
 | **Alibaba Wan** (`wan3.0-video`, `wan3.0-video-prime`) | video | key + region + **workspace ID** | prompt · first-frame photo · reference video |
 | **ByteDance Seedance** (`seedance-1.0-pro`, `-lite`) | video | key + region | prompt · first-frame photo |
 | **ByteDance Seedream** (`seedream-4.0`, `-3.0`) | images | key + region | prompt · from a photo |
+| **WaveSpeed** (Seedance 2.5, +Turbo) | video | key only | prompt · first-frame photo |
 
 - **Wan** uploads prepared files to Alibaba's temporary storage (48 h) and polls the task; a
   reference video is cut to **15 s total** and photos become JPEGs (240–4096 px). Length can be
@@ -117,6 +118,10 @@ AI Studio makes videos and images of a model. Each model picks a **provider** in
 - Seedance: from the token formula (`width·height·24·seconds/1024` × the model's $/1M-token rate),
   which reproduces ByteDance's own per-clip prices.
 - Seedream: a flat per-image rate.
+- WaveSpeed (Seedance 2.5): per second by resolution (480p $0.18/s, 720p $0.36/s; 1080p is an
+  estimate). WaveSpeed is an aggregator reached with one key (`POST /api/v3/{model}` → poll
+  `/predictions/{id}/result`); it shows the exact price before you submit, so treat ours as an
+  estimate.
 
 Only finished generations are counted on the Spending page, because the providers bill on success.
 Rates are built in (checked Oct 2026) and can drift — treat the shown price as an estimate.

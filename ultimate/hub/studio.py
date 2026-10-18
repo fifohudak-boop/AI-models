@@ -64,6 +64,7 @@ REFERENCE_TOTAL_S = 15.0
 OUTPUT_PLUS_INPUT_S = 30
 MIN_S, MAX_S = 2, 30
 SEEDANCE_MIN_S, SEEDANCE_MAX_S = 4, 15
+WAVESPEED_MIN_S, WAVESPEED_MAX_S = providers.WAVESPEED_MIN_S, providers.WAVESPEED_MAX_S
 SMART = -1
 ESTIMATE_SECONDS = 5
 POLL_EVERY_S = 15
@@ -277,6 +278,15 @@ async def check_key(key: str, region: str, workspace: str, provider_id: str = "w
             raise StudioError(_message(resp, "ByteDance"), 400)
         return  # reachable (a model/validation error is fine — the key itself was accepted)
 
+    if provider_id == "wavespeed":
+        async with _client(20) as client:
+            # Asking for a non-existent prediction: a 401 = bad key, anything else = reachable.
+            resp = await client.get(f"{providers.WAVESPEED_HOST}/predictions/connectivity-check/result",
+                                    headers=_headers(key=key))
+        if resp.status_code in (401, 403):
+            raise StudioError(_message(resp, "WaveSpeed"), 400)
+        return
+
     base = base_url(region=region, workspace=workspace)
     async with _client(20) as client:
         resp = await client.get(f"{base}/api/v1/tasks/connectivity-check", headers=_headers(key=key))
@@ -447,6 +457,46 @@ async def seedream_run(job: dict, reference: Path | None) -> list[str]:
     return urls
 
 
+# ---------------------------------------------------------------- WaveSpeed (aggregator)
+
+_WAVE_STATUS = {"created": "RUNNING", "queued": "RUNNING", "processing": "RUNNING",
+                "completed": "SUCCEEDED",
+                "failed": "FAILED", "cancelled": "CANCELED", "canceled": "CANCELED",
+                "timeout": "FAILED", "deleted": "FAILED"}
+
+
+async def wavespeed_create(job: dict, first_frame: Path | None) -> str:
+    path = providers.wavespeed_path(job["model"], job["mode"])
+    body: dict[str, Any] = {"prompt": job["sentPrompt"][:20000], "aspect_ratio": job["ratio"],
+                            "resolution": job["resolution"].lower(), "duration": job["duration"],
+                            "generate_audio": bool(job.get("audio"))}
+    if first_frame is not None:
+        body["image"] = _data_uri(first_frame)
+    async with _client(60) as client:
+        resp = await client.post(f"{providers.WAVESPEED_HOST}/{path}",
+                                 headers=_headers({"Content-Type": "application/json"}, model_id=job["modelId"]),
+                                 json=body)
+    if resp.status_code >= 400:
+        raise StudioError(_message(resp, "WaveSpeed"), 502)
+    task_id = ((resp.json() or {}).get("data") or {}).get("id")
+    if not task_id:
+        raise StudioError("WaveSpeed didn't start the task.", 502)
+    return task_id
+
+
+async def wavespeed_get(task_id: str, model_id: str) -> dict:
+    async with _client(30) as client:
+        resp = await client.get(f"{providers.WAVESPEED_HOST}/predictions/{task_id}/result",
+                                headers=_headers(model_id=model_id))
+    if resp.status_code >= 400:
+        raise StudioError(_message(resp, "WaveSpeed"), 502)
+    data = (resp.json() or {}).get("data") or {}
+    status = _WAVE_STATUS.get(str(data.get("status") or "").lower(), "RUNNING")
+    outputs = data.get("outputs") or []
+    return {"task_status": status, "video_url": outputs[0] if outputs else "",
+            "message": data.get("error") or "", "code": ""}
+
+
 # ---------------------------------------------------------------- preparing files for Wan
 
 def _run(args: list[str], timeout: float = 600) -> None:
@@ -553,12 +603,13 @@ def validate_request(model_id: str, req: dict) -> dict:
 
     if kind == "image":
         duration = None
-    elif prov_id == "seedance":
+    elif prov_id in ("seedance", "wavespeed"):
+        lo, hi = (WAVESPEED_MIN_S, WAVESPEED_MAX_S) if prov_id == "wavespeed" else (SEEDANCE_MIN_S, SEEDANCE_MAX_S)
         try:
             duration = int(req.get("duration") if req.get("duration") is not None else 5)
         except (TypeError, ValueError):
             duration = 5
-        duration = max(SEEDANCE_MIN_S, min(SEEDANCE_MAX_S, duration))
+        duration = max(lo, min(hi, duration))
     else:
         try:
             duration = int(req.get("duration") if req.get("duration") is not None else 5)
@@ -617,6 +668,8 @@ async def _run_job(job: dict) -> None:
             await _start_wan(job, work)
         elif job["provider"] == "seedance":
             await _start_seedance(job, work)
+        elif job["provider"] == "wavespeed":
+            await _start_wavespeed(job, work)
         elif job["provider"] == "seedream":
             await _run_seedream(job, work)
     except Exception as exc:  # noqa: BLE001 - shown on the page
@@ -666,6 +719,17 @@ async def _start_seedance(job: dict, work: Path) -> None:
     _save(job)
 
 
+async def _start_wavespeed(job: dict, work: Path) -> None:
+    first_frame = None
+    if job["mode"] == "image" and job["photos"]:
+        first_frame = await asyncio.to_thread(prepare_photo, Path(job["photos"][0]), work)
+    job.update(step="Waiting for WaveSpeed", status="PENDING",
+               sentPrompt=job["prompt"] or "A short, natural video.")
+    _save(job)
+    job["taskId"] = await wavespeed_create(job, first_frame)
+    _save(job)
+
+
 async def _run_seedream(job: dict, work: Path) -> None:
     reference = None
     if job["mode"] == "image" and job["photos"]:
@@ -701,7 +765,7 @@ async def poll_once() -> None:
         job = json.loads(row["data"])
         if job["status"] in FINAL or not job.get("taskId"):
             continue
-        getter = seedance_get if job.get("provider") == "seedance" else get_task
+        getter = {"seedance": seedance_get, "wavespeed": wavespeed_get}.get(job.get("provider"), get_task)
         try:
             out = await getter(job["taskId"], job["modelId"])
         except Exception as exc:  # noqa: BLE001
