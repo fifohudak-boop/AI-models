@@ -101,6 +101,7 @@ AI Studio makes videos and images of a model. Each model picks a **provider** in
 | **ByteDance Seedance** (`seedance-1.0-pro`, `-lite`) | video | key + region | prompt · first-frame photo |
 | **ByteDance Seedream** (`seedream-4.0`, `-3.0`) | images | key + region | prompt · from a photo |
 | **WaveSpeed** (Seedance 2.5, +Turbo) | video | key only | prompt · first-frame photo |
+| **ArgoLink** (Seedream 5.0 Pro) | images | key only | prompt · from a photo |
 
 - **Wan** uploads prepared files to Alibaba's temporary storage (48 h) and polls the task; a
   reference video is cut to **15 s total** and photos become JPEGs (240–4096 px). Length can be
@@ -122,6 +123,8 @@ AI Studio makes videos and images of a model. Each model picks a **provider** in
   estimate). WaveSpeed is an aggregator reached with one key (`POST /api/v3/{model}` → poll
   `/predictions/{id}/result`); it shows the exact price before you submit, so treat ours as an
   estimate.
+- ArgoLink (Seedream 5.0 Pro): flat $0.03 per image (1K or 2K). OpenAI-style synchronous image API
+  (`POST argolink.io/v1/images/generations`, or `/images/edits` with a reference photo), one key.
 
 Only finished generations are counted on the Spending page, because the providers bill on success.
 Rates are built in (checked Oct 2026) and can drift — treat the shown price as an estimate.

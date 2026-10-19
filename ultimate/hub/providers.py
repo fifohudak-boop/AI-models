@@ -103,6 +103,20 @@ def wavespeed_path(model: str, mode: str) -> str:
     return f"bytedance/seedance-2.5/{kind}{suffix}"
 
 
+# ---------------------------------------------------------------- ArgoLink (images)
+
+# OpenAI-style image API (argolink.io/v1/images/generations · /images/edits), synchronous.
+ARGOLINK_HOST = "https://argolink.io/v1"
+ARGOLINK_USD_PER_IMAGE = {"seedream-5.0-pro": 0.03}  # 1K and 2K both $0.03
+
+
+def argolink_price(model: str, images: int = 1) -> float | None:
+    per = ARGOLINK_USD_PER_IMAGE.get(model)
+    if per is None:
+        return None
+    return round(per * max(1, images), 4)
+
+
 # ---------------------------------------------------------------- the registry (what the UI reads)
 
 # ByteDance ModelArk is one account/key for both Seedance and Seedream; two regions, no workspace.
@@ -143,6 +157,19 @@ PROVIDERS: dict[str, dict] = {
         "ratios": ["9:16", "3:4", "1:1", "4:3", "16:9", "21:9"],
         "modes": ["text", "image"],  # a local reference video can't be sent to ByteDance (needs a hosted URL)
         "console": "https://console.byteplus.com/ark",
+    },
+    "argolink": {
+        "id": "argolink",
+        "name": "ArgoLink (Seedream 5.0)",
+        "kind": "image",
+        "needsWorkspace": False,
+        "keyHint": "ArgoLink API key (argolink.io → Console → API Keys). One key, one account.",
+        "regions": [{"id": "global", "name": "Global"}],
+        "models": [{"id": "seedream-5.0-pro", "name": "Seedream 5.0 Pro"}],
+        "sizes": ["1K", "2K"],
+        "ratios": ["9:16", "3:4", "1:1", "4:3", "16:9", "2:3", "3:2", "5:4", "4:5", "21:9"],
+        "modes": ["text", "image"],
+        "console": "https://argolink.io/",
     },
     "seedream": {
         "id": "seedream",
@@ -211,6 +238,8 @@ def price(provider_id: str, model: str, region: str, resolution: str,
         return seedance_price(model, resolution, float(seconds or 0))
     if provider_id == "seedream":
         return seedream_price(model, images)
+    if provider_id == "argolink":
+        return argolink_price(model, images)
     if provider_id == "wavespeed":
         return wavespeed_price(model, resolution, float(seconds or 0))
     return None

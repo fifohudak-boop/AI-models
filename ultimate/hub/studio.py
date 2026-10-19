@@ -287,6 +287,13 @@ async def check_key(key: str, region: str, workspace: str, provider_id: str = "w
             raise StudioError(_message(resp, "WaveSpeed"), 400)
         return
 
+    if provider_id == "argolink":
+        async with _client(20) as client:
+            resp = await client.get(f"{providers.ARGOLINK_HOST}/models", headers=_headers(key=key))
+        if resp.status_code in (401, 403):
+            raise StudioError(_message(resp, "ArgoLink"), 400)
+        return
+
     base = base_url(region=region, workspace=workspace)
     async with _client(20) as client:
         resp = await client.get(f"{base}/api/v1/tasks/connectivity-check", headers=_headers(key=key))
@@ -455,6 +462,38 @@ async def seedream_run(job: dict, reference: Path | None) -> list[str]:
     if not urls:
         raise StudioError("ByteDance didn't return an image.", 502)
     return urls
+
+
+# ---------------------------------------------------------------- ArgoLink (images, synchronous)
+
+async def argolink_run(job: dict, reference: Path | None) -> dict:
+    """ArgoLink is synchronous — returns the generated image item ({url} or {b64_json})."""
+    body: dict[str, Any] = {"model": job["model"], "prompt": job["sentPrompt"][:4000],
+                            "resolution": job["resolution"].lower(), "aspect_ratio": job["ratio"],
+                            "n": 1, "response_format": "url"}
+    if reference is not None:
+        body["images"] = [{"image_url": _data_uri(reference)}]
+        endpoint = f"{providers.ARGOLINK_HOST}/images/edits"
+    else:
+        endpoint = f"{providers.ARGOLINK_HOST}/images/generations"
+    async with _client(900) as client:  # ArgoLink images can take minutes
+        resp = await client.post(endpoint, headers=_headers({"Content-Type": "application/json"}, model_id=job["modelId"]),
+                                 json=body)
+    if resp.status_code >= 400:
+        raise StudioError(_message(resp, "ArgoLink"), 502)
+    items = (resp.json() or {}).get("data") or []
+    if not items or not (items[0].get("url") or items[0].get("b64_json")):
+        raise StudioError("ArgoLink didn't return an image.", 502)
+    return items[0]
+
+
+def _save_b64_image(job: dict, b64: str) -> str:
+    persona = personas.require(job["modelId"])
+    folder = personas.folder(persona, "generated") or Path(personas.default_folder(persona["name"], "generated"))
+    folder.mkdir(parents=True, exist_ok=True)
+    target = folder / f"{time.strftime('%Y-%m-%d %H.%M')} {job['mode']} {job['id'][:6]}.png"
+    target.write_bytes(base64.b64decode(b64))
+    return str(target)
 
 
 # ---------------------------------------------------------------- WaveSpeed (aggregator)
@@ -672,6 +711,8 @@ async def _run_job(job: dict) -> None:
             await _start_wavespeed(job, work)
         elif job["provider"] == "seedream":
             await _run_seedream(job, work)
+        elif job["provider"] == "argolink":
+            await _run_argolink(job, work)
     except Exception as exc:  # noqa: BLE001 - shown on the page
         log.warning("AI Studio job %s failed to start: %s", job["id"], exc)
         job.update(status="failed", error=str(exc) or type(exc).__name__, step="")
@@ -740,6 +781,22 @@ async def _run_seedream(job: dict, work: Path) -> None:
     job.update(status="downloading", step="Saving the image")
     _save(job)
     job["file"] = await _download(job, urls[0], suffix=".png")
+    job.update(status="saved", step="Saved", error=None, images=1, seconds=0,
+               cost=_job_cost({**job, "images": 1}), costCurrency=currency())
+    _save(job)
+
+
+async def _run_argolink(job: dict, work: Path) -> None:
+    reference = None
+    if job["mode"] == "image" and job["photos"]:
+        reference = await asyncio.to_thread(prepare_photo, Path(job["photos"][0]), work)
+    job.update(step="Making the image", status="RUNNING", sentPrompt=job["prompt"] or "A photo.")
+    _save(job)
+    item = await argolink_run(job, reference)
+    job.update(status="downloading", step="Saving the image")
+    _save(job)
+    job["file"] = await _download(job, item["url"], suffix=".png") if item.get("url") \
+        else await asyncio.to_thread(_save_b64_image, job, item["b64_json"])
     job.update(status="saved", step="Saved", error=None, images=1, seconds=0,
                cost=_job_cost({**job, "images": 1}), costCurrency=currency())
     _save(job)
