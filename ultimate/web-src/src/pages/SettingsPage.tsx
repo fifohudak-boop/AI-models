@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from 'react';
-import type { AppSettings, AppStatus, FolderKind, Model, ModelStudioKey, Person, Preferences } from '../types';
+import type { Account, AppSettings, AppStatus, FolderKind, Model, ModelStudioKey, Person, Preferences } from '../types';
 import { api } from '../api';
+import { AccountAvatar } from '../components/AccountAvatar';
 import { EngineSetup } from '../components/EngineSetup';
 import { ModelAvatar } from '../components/ModelSwitcher';
 import { FOLDER_HINTS, FOLDER_LABELS } from '../folders';
@@ -245,118 +246,184 @@ function ModelStudioKeySection({ model, toast }: { model: Model; toast: (m: stri
   );
 }
 
-function ModelCard({
+// A compact, read-only view of this model's posting accounts, plus a jump to the full Accounts page
+// where you connect/move them. The posting engine itself is one shared connection (General settings).
+function ModelPostingSection({ model, status, onManage }: { model: Model; status: AppStatus; onManage: () => void }) {
+  const [accounts, setAccounts] = useState<Account[] | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const engineOk = status.engine.state === 'ok';
+  useEffect(() => {
+    setAccounts(null);
+    setError(null);
+    if (!engineOk) return; // nothing to list until the shared posting engine is connected (General)
+    let active = true;
+    api
+      .accounts(model.id)
+      .then((a) => active && setAccounts(a))
+      .catch((e) => active && setError((e as Error).message));
+    return () => {
+      active = false;
+    };
+  }, [model.id, engineOk]);
+  return (
+    <div className="stack" style={{ borderTop: '1px solid var(--border)', paddingTop: 14 }}>
+      <div className="row">
+        <div className="small">
+          <strong>Posting</strong>{' '}
+          <span className="muted">{engineOk ? 'engine connected · accounts below' : 'engine not connected'}</span>
+        </div>
+        <span className="spacer" />
+        <button type="button" className="btn small" onClick={onManage}>
+          Manage accounts…
+        </button>
+      </div>
+      {!engineOk && (
+        <div className="notice warn small" style={{ margin: 0 }}>
+          Connect the posting engine in <strong>General</strong> to post and to add accounts.
+        </div>
+      )}
+      {engineOk && error && <div className="notice error small" style={{ margin: 0 }}>{error}</div>}
+      {engineOk && accounts === null && !error && <p className="muted small" style={{ margin: 0 }}>Loading accounts…</p>}
+      {accounts && accounts.length === 0 && (
+        <p className="muted small" style={{ margin: 0 }}>
+          No accounts for {model.name} yet — use <strong>Manage accounts</strong> to connect TikTok, Instagram and the rest.
+        </p>
+      )}
+      {accounts && accounts.length > 0 && (
+        <div className="account-list">
+          {accounts.map((a) => (
+            <div className="account" key={a.id}>
+              <AccountAvatar name={a.name} picture={a.picture} identifier={a.identifier} />
+              <div className="account-main">
+                <div className="account-name">{a.name}</div>
+                <div className="account-meta">
+                  {a.platform}
+                  {a.profile && ` · @${a.profile}`}
+                  {a.disabled && ' · disabled'}
+                </div>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// Everything for one model in one focused place: name & colour, its folders, its AI Studio key, and
+// its posting accounts. Shown one model at a time (picked above) so the page never becomes a wall.
+function ModelSettings({
   model,
-  open,
+  status,
   isCurrent,
-  onToggle,
   onSaved,
   onDelete,
   onSelect,
+  onManageAccounts,
   toast,
 }: {
   model: Model;
-  open: boolean;
+  status: AppStatus;
   isCurrent: boolean;
-  onToggle: () => void;
   onSaved: (m: Model) => void;
   onDelete: () => void;
   onSelect: () => void;
+  onManageAccounts: () => void;
   toast: (m: string) => void;
 }) {
   const [name, setName] = useState(model.name);
   const [typed, setTyped] = useState('');
   useEffect(() => setName(model.name), [model.name]);
+  useEffect(() => setTyped(''), [model.id]);
   return (
-    <div className={`model-card${open ? ' open' : ''}`}>
-      <button type="button" className="model-card-head" onClick={onToggle} aria-expanded={open}>
-        <ModelAvatar model={model} size={32} />
-        <span className="account-main">
-          <span className="account-name">
-            {model.name} {isCurrent && <span className="chip published">showing now</span>}
-          </span>
-          <span className="account-meta">
-            {FOLDER_ORDER.filter((k) => model.folders[k]).length} of 4 folders connected
-          </span>
-        </span>
-        <span className="caret" aria-hidden="true">
-          {open ? '▴' : '▾'}
-        </span>
-      </button>
-      {open && (
-        <div className="stack model-card-body">
-          <form
-            className="row"
-            onSubmit={async (e) => {
-              e.preventDefault();
-              try {
-                onSaved(await api.updateModel(model.id, { name }));
-                toast('Renamed');
-              } catch (err) {
-                toast((err as Error).message);
-              }
-            }}
-          >
-            <label className="field" style={{ flex: 1 }}>
-              <span className="small">Name</span>
-              <input type="text" value={name} onChange={(e) => setName(e.target.value)} />
-            </label>
-            <button className="btn small" disabled={!name.trim() || name.trim() === model.name} style={{ alignSelf: 'flex-end' }}>
-              Rename
-            </button>
-          </form>
-          <div>
-            <div className="small" style={{ fontWeight: 600, marginBottom: 6 }}>
-              Color
-            </div>
-            <div className="row color-row">
-              {COLORS.map((c) => (
-                <button
-                  key={c}
-                  type="button"
-                  className={`color-dot${model.color === c ? ' on' : ''}`}
-                  style={{ background: c }}
-                  aria-label={`Color ${c}`}
-                  aria-pressed={model.color === c}
-                  onClick={async () => onSaved(await api.updateModel(model.id, { color: c }))}
-                />
-              ))}
-            </div>
-          </div>
-          <div className="stack">
-            <div className="small" style={{ fontWeight: 600 }}>
-              Folders
-            </div>
-            {FOLDER_ORDER.map((kind) => (
-              <FolderRow key={kind} model={model} kind={kind} onSaved={onSaved} toast={toast} />
-            ))}
-          </div>
-          <ModelStudioKeySection model={model} toast={toast} />
-          <div className="row">
-            {!isCurrent && (
-              <button type="button" className="btn small" onClick={onSelect}>
-                Show {model.name}
-              </button>
-            )}
-            <span className="spacer" />
-            <details className="danger-zone">
-              <summary className="btn danger small">Remove model…</summary>
-              <div className="stack" style={{ marginTop: 8 }}>
-                <p className="small" style={{ margin: 0 }}>
-                  Removes {model.name} from {`Fifofarm Ultimate`}: its history, analytics and Reel Finder references. Its
-                  accounts stay connected (they become "no model") and <strong>your files and folders aren't touched</strong>.
-                  Type the name to confirm.
-                </p>
-                <input type="text" value={typed} onChange={(e) => setTyped(e.target.value)} aria-label="Type the model's name" />
-                <button type="button" className="btn danger small" disabled={typed.trim() !== model.name} onClick={onDelete}>
-                  Remove {model.name}
-                </button>
-              </div>
-            </details>
-          </div>
+    <section className="card stack">
+      <div className="card-head" style={{ marginBottom: 0 }}>
+        <h2 className="row" style={{ gap: 8, margin: 0, alignItems: 'center' }}>
+          <ModelAvatar model={model} size={28} /> {model.name}
+          {isCurrent && <span className="chip published">showing now</span>}
+        </h2>
+        {!isCurrent && (
+          <button type="button" className="btn small" onClick={onSelect}>
+            Show {model.name}
+          </button>
+        )}
+      </div>
+
+      <form
+        className="row"
+        onSubmit={async (e) => {
+          e.preventDefault();
+          try {
+            onSaved(await api.updateModel(model.id, { name }));
+            toast('Renamed');
+          } catch (err) {
+            toast((err as Error).message);
+          }
+        }}
+      >
+        <label className="field" style={{ flex: 1 }}>
+          <span className="small">Name</span>
+          <input type="text" value={name} onChange={(e) => setName(e.target.value)} />
+        </label>
+        <button className="btn small" disabled={!name.trim() || name.trim() === model.name} style={{ alignSelf: 'flex-end' }}>
+          Rename
+        </button>
+      </form>
+      <div>
+        <div className="small" style={{ fontWeight: 600, marginBottom: 6 }}>
+          Color
         </div>
-      )}
-    </div>
+        <div className="row color-row">
+          {COLORS.map((c) => (
+            <button
+              key={c}
+              type="button"
+              className={`color-dot${model.color === c ? ' on' : ''}`}
+              style={{ background: c }}
+              aria-label={`Color ${c}`}
+              aria-pressed={model.color === c}
+              onClick={async () => onSaved(await api.updateModel(model.id, { color: c }))}
+            />
+          ))}
+        </div>
+      </div>
+
+      <div className="stack" style={{ borderTop: '1px solid var(--border)', paddingTop: 14 }}>
+        <div className="small" style={{ fontWeight: 600 }}>
+          Folders
+        </div>
+        <p className="muted small" style={{ margin: 0 }}>
+          Your reference videos and {model.name}'s photos are yours to choose; Reel Finder and AI Studio save into the rest.
+        </p>
+        {FOLDER_ORDER.map((kind) => (
+          <FolderRow key={kind} model={model} kind={kind} onSaved={onSaved} toast={toast} />
+        ))}
+      </div>
+
+      <div className="stack" style={{ borderTop: '1px solid var(--border)', paddingTop: 14 }}>
+        <ModelStudioKeySection model={model} toast={toast} />
+      </div>
+
+      <ModelPostingSection model={model} status={status} onManage={onManageAccounts} />
+
+      <div className="row" style={{ borderTop: '1px solid var(--border)', paddingTop: 14 }}>
+        <span className="spacer" />
+        <details className="danger-zone">
+          <summary className="btn danger small">Remove model…</summary>
+          <div className="stack" style={{ marginTop: 8 }}>
+            <p className="small" style={{ margin: 0 }}>
+              Removes {model.name} from Fifofarm Ultimate: its history, analytics and Reel Finder references. Its accounts
+              stay connected (they become "no model") and <strong>your files and folders aren't touched</strong>. Type the
+              name to confirm.
+            </p>
+            <input type="text" value={typed} onChange={(e) => setTyped(e.target.value)} aria-label="Type the model's name" />
+            <button type="button" className="btn danger small" disabled={typed.trim() !== model.name} onClick={onDelete}>
+              Remove {model.name}
+            </button>
+          </div>
+        </details>
+      </div>
+    </section>
   );
 }
 
@@ -387,7 +454,8 @@ function StudioKeyCard({ settings, onSaved, toast }: { settings: AppSettings; on
       </div>
       <p className="small" style={{ margin: 0 }}>
         The <strong>shared default</strong> key — any model that doesn't have its own uses this one. To put a model on its
-        own Alibaba account, give it a key in its card above (<em>AI Studio key</em>). Make keys in the{' '}
+        own Alibaba account, give it a key in that model's own settings (pick the model above, then <em>AI Studio key</em>).
+        Make keys in the{' '}
         <a href="https://modelstudio.console.alibabacloud.com/" target="_blank" rel="noreferrer">
           Model Studio console
         </a>
@@ -848,109 +916,32 @@ function PeopleCard({ models, toast }: { models: Model[]; toast: (m: string) => 
   );
 }
 
-export function SettingsPage({
+// The shared, owner-only settings that aren't about one model: the posting engine, the default AI
+// Studio key, posting defaults, sharing and the people invited.
+function GeneralSettings({
   status,
   models,
-  current,
-  toast,
+  settings,
+  prefs,
   onStatus,
-  onModels,
-  onSelectModel,
-  onCreateModel,
+  reload,
+  setSettings,
+  savePrefs,
+  toast,
 }: {
   status: AppStatus;
   models: Model[];
-  current: Model;
-  toast: (m: string) => void;
+  settings: AppSettings | null;
+  prefs: Preferences | null;
   onStatus: () => void;
-  onModels: (list: Model[]) => void;
-  onSelectModel: (id: string) => void;
-  onCreateModel: (name: string) => Promise<void>;
+  reload: () => void;
+  setSettings: (s: AppSettings) => void;
+  savePrefs: (patch: Partial<Preferences>) => void;
+  toast: (m: string) => void;
 }) {
-  const [settings, setSettings] = useState<AppSettings | null>(null);
-  const [prefs, setPrefs] = useState<Preferences | null>(null);
-  const [open, setOpen] = useState<string | null>(current.id);
-  const [newName, setNewName] = useState('');
-  const [error, setError] = useState<string | null>(null);
-
-  const load = useCallback(() => {
-    api.settings().then(setSettings).catch((err) => setError(err.message));
-    if (status.engine.state === 'ok') api.preferences().then(setPrefs).catch(() => {});
-  }, [status.engine.state]);
-
-  useEffect(load, [load]);
-
-  async function savePrefs(patch: Partial<Preferences>) {
-    setPrefs((p) => (p ? { ...p, ...patch } : p));
-    try {
-      setPrefs(await api.savePreferences(patch));
-      toast('Saved');
-    } catch (err) {
-      setError((err as Error).message);
-    }
-  }
-
-  const replaceModel = (m: Model) => onModels(models.map((x) => (x.id === m.id ? m : x)));
-
   return (
-    <div>
-      <h1>Settings</h1>
-      {error && <div className="notice error">{error}</div>}
-
-      <section className="card stack" id="models">
-        <div className="card-head" style={{ marginBottom: 0 }}>
-          <h2>Models</h2>
-          <span className="muted small">
-            {models.length} model{models.length === 1 ? '' : 's'}
-          </span>
-        </div>
-        <p className="small muted" style={{ margin: 0 }}>
-          Every model has its own Fifofarm accounts, Reel Finder and AI Studio. Connect each model's folders here: your
-          reference videos and the model's photos are yours to choose; Reel Finder and AI Studio save into the other two.
-        </p>
-        <div className="stack">
-          {models.map((m) => (
-            <ModelCard
-              key={m.id}
-              model={m}
-              open={open === m.id}
-              isCurrent={m.id === current.id}
-              onToggle={() => setOpen(open === m.id ? null : m.id)}
-              onSaved={replaceModel}
-              onSelect={() => onSelectModel(m.id)}
-              toast={toast}
-              onDelete={async () => {
-                try {
-                  await api.deleteModel(m.id);
-                  onModels(models.filter((x) => x.id !== m.id));
-                  toast(`Removed ${m.name}`);
-                } catch (err) {
-                  toast((err as Error).message);
-                }
-              }}
-            />
-          ))}
-        </div>
-        <form
-          className="row"
-          onSubmit={async (e) => {
-            e.preventDefault();
-            try {
-              await onCreateModel(newName);
-              setNewName('');
-            } catch (err) {
-              toast((err as Error).message);
-            }
-          }}
-        >
-          <input type="text" placeholder="New model's name" value={newName} onChange={(e) => setNewName(e.target.value)} style={{ flex: 1 }} aria-label="New model's name" />
-          <button className="btn small" disabled={!newName.trim()}>
-            + Add model
-          </button>
-        </form>
-      </section>
-
-      <EngineSetup status={status} onDone={() => { onStatus(); load(); }} toast={toast} compact />
+    <>
+      <EngineSetup status={status} onDone={() => { onStatus(); reload(); }} toast={toast} compact />
       {status.engine.configured && (
         <div className="row" style={{ margin: '-8px 0 16px' }}>
           <button
@@ -994,6 +985,162 @@ export function SettingsPage({
           uses the same posting engine as Fifofarm, and a copy of Reel Finder's engine.
         </p>
       </section>
+    </>
+  );
+}
+
+export function SettingsPage({
+  status,
+  models,
+  current,
+  toast,
+  onStatus,
+  onModels,
+  onSelectModel,
+  onCreateModel,
+  onGoAccounts,
+}: {
+  status: AppStatus;
+  models: Model[];
+  current: Model;
+  toast: (m: string) => void;
+  onStatus: () => void;
+  onModels: (list: Model[]) => void;
+  onSelectModel: (id: string) => void;
+  onCreateModel: (name: string) => Promise<void>;
+  onGoAccounts?: () => void;
+}) {
+  const [settings, setSettings] = useState<AppSettings | null>(null);
+  const [prefs, setPrefs] = useState<Preferences | null>(null);
+  // Which panel is showing: a model's id, or 'general' for the shared owner settings.
+  const [view, setView] = useState<string>(current.id);
+  const [adding, setAdding] = useState(false);
+  const [newName, setNewName] = useState('');
+  const [error, setError] = useState<string | null>(null);
+
+  const load = useCallback(() => {
+    api.settings().then(setSettings).catch((err) => setError(err.message));
+    if (status.engine.state === 'ok') api.preferences().then(setPrefs).catch(() => {});
+  }, [status.engine.state]);
+
+  useEffect(load, [load]);
+
+  async function savePrefs(patch: Partial<Preferences>) {
+    setPrefs((p) => (p ? { ...p, ...patch } : p));
+    try {
+      setPrefs(await api.savePreferences(patch));
+      toast('Saved');
+    } catch (err) {
+      setError((err as Error).message);
+    }
+  }
+
+  const replaceModel = (mo: Model) => onModels(models.map((x) => (x.id === mo.id ? mo : x)));
+  const selected = view === 'general' ? null : models.find((mm) => mm.id === view) ?? null;
+
+  return (
+    <div>
+      <h1>Settings</h1>
+      {error && <div className="notice error">{error}</div>}
+      <p className="small muted" style={{ margin: '0 0 12px' }}>
+        Pick a model to set up just that model — its folders, its AI Studio key and its posting accounts. Shared things
+        (the posting engine, sharing, the people you invite) live under <strong>General</strong>.
+      </p>
+
+      <div className="row settings-picker" style={{ flexWrap: 'wrap', gap: 8, marginBottom: 16, alignItems: 'center' }}>
+        {models.map((mo) => (
+          <button
+            key={mo.id}
+            type="button"
+            className={`btn small${view === mo.id ? ' primary' : ''}`}
+            onClick={() => setView(mo.id)}
+            style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}
+          >
+            <ModelAvatar model={mo} size={18} /> {mo.name}
+          </button>
+        ))}
+        {adding ? (
+          <form
+            onSubmit={async (e) => {
+              e.preventDefault();
+              try {
+                await onCreateModel(newName);
+                setNewName('');
+                setAdding(false);
+              } catch (err) {
+                toast((err as Error).message);
+              }
+            }}
+            style={{ display: 'inline-flex', gap: 6 }}
+          >
+            <input
+              autoFocus
+              type="text"
+              placeholder="New model's name"
+              value={newName}
+              onChange={(e) => setNewName(e.target.value)}
+              aria-label="New model's name"
+            />
+            <button className="btn small" disabled={!newName.trim()}>
+              Add
+            </button>
+            <button type="button" className="btn link small" onClick={() => { setAdding(false); setNewName(''); }}>
+              Cancel
+            </button>
+          </form>
+        ) : (
+          <button type="button" className="btn small" onClick={() => setAdding(true)}>
+            + Add model
+          </button>
+        )}
+        <span className="spacer" />
+        <button
+          type="button"
+          className={`btn small${view === 'general' ? ' primary' : ''}`}
+          onClick={() => setView('general')}
+        >
+          General
+        </button>
+      </div>
+
+      {selected ? (
+        <ModelSettings
+          key={selected.id}
+          model={selected}
+          status={status}
+          isCurrent={selected.id === current.id}
+          onSaved={replaceModel}
+          onSelect={() => onSelectModel(selected.id)}
+          onManageAccounts={() => {
+            onSelectModel(selected.id);
+            onGoAccounts?.();
+          }}
+          toast={toast}
+          onDelete={async () => {
+            try {
+              await api.deleteModel(selected.id);
+              const remaining = models.filter((x) => x.id !== selected.id);
+              onModels(remaining);
+              setView(remaining[0]?.id ?? 'general');
+              toast(`Removed ${selected.name}`);
+            } catch (err) {
+              toast((err as Error).message);
+            }
+          }}
+        />
+      ) : (
+        <GeneralSettings
+          status={status}
+          models={models}
+          settings={settings}
+          prefs={prefs}
+          onStatus={onStatus}
+          reload={load}
+          setSettings={setSettings}
+          savePrefs={savePrefs}
+          toast={toast}
+        />
+      )}
     </div>
   );
 }
