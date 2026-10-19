@@ -65,6 +65,7 @@ OUTPUT_PLUS_INPUT_S = 30
 MIN_S, MAX_S = 2, 30
 SEEDANCE_MIN_S, SEEDANCE_MAX_S = 4, 15
 WAVESPEED_MIN_S, WAVESPEED_MAX_S = providers.WAVESPEED_MIN_S, providers.WAVESPEED_MAX_S
+VIDEOROUTER_MIN_S, VIDEOROUTER_MAX_S = providers.VIDEOROUTER_MIN_S, providers.VIDEOROUTER_MAX_S
 SMART = -1
 ESTIMATE_SECONDS = 5
 POLL_EVERY_S = 15
@@ -292,6 +293,13 @@ async def check_key(key: str, region: str, workspace: str, provider_id: str = "w
             resp = await client.get(f"{providers.ARGOLINK_HOST}/models", headers=_headers(key=key))
         if resp.status_code in (401, 403):
             raise StudioError(_message(resp, "ArgoLink"), 400)
+        return
+
+    if provider_id == "videorouter":
+        async with _client(20) as client:
+            resp = await client.get(f"{providers.VIDEOROUTER_HOST}/models", headers=_headers(key=key))
+        if resp.status_code in (401, 403):
+            raise StudioError(_message(resp, "VideoRouter"), 400)
         return
 
     base = base_url(region=region, workspace=workspace)
@@ -536,6 +544,46 @@ async def wavespeed_get(task_id: str, model_id: str) -> dict:
             "message": data.get("error") or "", "code": ""}
 
 
+# ---------------------------------------------------------------- VideoRouter (aggregator)
+
+_VIDEOROUTER_STATUS = {"queued": "RUNNING", "pending": "RUNNING", "in_progress": "RUNNING",
+                       "processing": "RUNNING", "running": "RUNNING",
+                       "completed": "SUCCEEDED", "succeeded": "SUCCEEDED",
+                       "failed": "FAILED", "error": "FAILED", "cancelled": "CANCELED", "canceled": "CANCELED"}
+
+
+async def videorouter_create(job: dict, first_frame: Path | None) -> str:
+    body: dict[str, Any] = {"model": job["model"], "prompt": job["sentPrompt"][:20000],
+                            "duration_secs": job["duration"], "resolution": job["resolution"].lower(),
+                            "aspect_ratio": job["ratio"]}
+    if first_frame is not None:
+        body["start_image_url"] = _data_uri(first_frame)
+    async with _client(60) as client:
+        resp = await client.post(f"{providers.VIDEOROUTER_HOST}/videos",
+                                 headers=_headers({"Content-Type": "application/json"}, model_id=job["modelId"]),
+                                 json=body)
+    if resp.status_code >= 400:
+        raise StudioError(_message(resp, "VideoRouter"), 502)
+    task_id = (resp.json() or {}).get("id")
+    if not task_id:
+        raise StudioError("VideoRouter didn't start the job.", 502)
+    return task_id
+
+
+async def videorouter_get(task_id: str, model_id: str) -> dict:
+    async with _client(30) as client:
+        resp = await client.get(f"{providers.VIDEOROUTER_HOST}/videos/{task_id}", headers=_headers(model_id=model_id))
+    if resp.status_code >= 400:
+        raise StudioError(_message(resp, "VideoRouter"), 502)
+    data = resp.json() or {}
+    status = _VIDEOROUTER_STATUS.get(str(data.get("status") or "").lower(), "RUNNING")
+    items = data.get("data") if isinstance(data.get("data"), list) else []
+    url = (items[0].get("url") if items and isinstance(items[0], dict) else "") or data.get("url") or ""
+    err = data.get("error")
+    msg = err.get("message") if isinstance(err, dict) else (err if isinstance(err, str) else "")
+    return {"task_status": status, "video_url": url, "message": msg or "", "code": ""}
+
+
 # ---------------------------------------------------------------- preparing files for Wan
 
 def _run(args: list[str], timeout: float = 600) -> None:
@@ -642,8 +690,9 @@ def validate_request(model_id: str, req: dict) -> dict:
 
     if kind == "image":
         duration = None
-    elif prov_id in ("seedance", "wavespeed"):
-        lo, hi = (WAVESPEED_MIN_S, WAVESPEED_MAX_S) if prov_id == "wavespeed" else (SEEDANCE_MIN_S, SEEDANCE_MAX_S)
+    elif prov_id in ("seedance", "wavespeed", "videorouter"):
+        lo, hi = {"wavespeed": (WAVESPEED_MIN_S, WAVESPEED_MAX_S),
+                  "videorouter": (VIDEOROUTER_MIN_S, VIDEOROUTER_MAX_S)}.get(prov_id, (SEEDANCE_MIN_S, SEEDANCE_MAX_S))
         try:
             duration = int(req.get("duration") if req.get("duration") is not None else 5)
         except (TypeError, ValueError):
@@ -709,6 +758,8 @@ async def _run_job(job: dict) -> None:
             await _start_seedance(job, work)
         elif job["provider"] == "wavespeed":
             await _start_wavespeed(job, work)
+        elif job["provider"] == "videorouter":
+            await _start_videorouter(job, work)
         elif job["provider"] == "seedream":
             await _run_seedream(job, work)
         elif job["provider"] == "argolink":
@@ -771,6 +822,17 @@ async def _start_wavespeed(job: dict, work: Path) -> None:
     _save(job)
 
 
+async def _start_videorouter(job: dict, work: Path) -> None:
+    first_frame = None
+    if job["mode"] == "image" and job["photos"]:
+        first_frame = await asyncio.to_thread(prepare_photo, Path(job["photos"][0]), work)
+    job.update(step="Waiting for VideoRouter", status="PENDING",
+               sentPrompt=job["prompt"] or "A short, natural video.")
+    _save(job)
+    job["taskId"] = await videorouter_create(job, first_frame)
+    _save(job)
+
+
 async def _run_seedream(job: dict, work: Path) -> None:
     reference = None
     if job["mode"] == "image" and job["photos"]:
@@ -822,7 +884,8 @@ async def poll_once() -> None:
         job = json.loads(row["data"])
         if job["status"] in FINAL or not job.get("taskId"):
             continue
-        getter = {"seedance": seedance_get, "wavespeed": wavespeed_get}.get(job.get("provider"), get_task)
+        getter = {"seedance": seedance_get, "wavespeed": wavespeed_get,
+                  "videorouter": videorouter_get}.get(job.get("provider"), get_task)
         try:
             out = await getter(job["taskId"], job["modelId"])
         except Exception as exc:  # noqa: BLE001

@@ -117,6 +117,28 @@ def argolink_price(model: str, images: int = 1) -> float | None:
     return round(per * max(1, images), 4)
 
 
+# ---------------------------------------------------------------- VideoRouter (aggregator, video)
+
+# VideoRouter (videorouter.sh) is an OpenAI-style router with an async video API: POST /api/v1/videos,
+# then poll GET /api/v1/videos/{id}. One key (llmr_sk_live_…) covers its video models; we wire its
+# Seedance 2.5 (and the cheaper 2.0). The model string is "<creator>/<model>/<host>". VideoRouter
+# bills per requested second at creation time and shows the exact price before you submit, so these
+# per-second rates (its published catalogue floors) are a close estimate.
+VIDEOROUTER_HOST = "https://videorouter.sh/api/v1"
+VIDEOROUTER_MIN_S, VIDEOROUTER_MAX_S = 3, 12
+VIDEOROUTER_USD_PER_S = {
+    "bytedance/seedance-2.5/fal": 0.08,
+    "bytedance/seedance-2.0/fal": 0.06,
+}
+
+
+def videorouter_price(model: str, seconds: float) -> float | None:
+    rate = VIDEOROUTER_USD_PER_S.get(model)
+    if rate is None or not seconds or seconds <= 0:
+        return None
+    return round(rate * seconds, 4)
+
+
 # ---------------------------------------------------------------- the registry (what the UI reads)
 
 # ByteDance ModelArk is one account/key for both Seedance and Seedream; two regions, no workspace.
@@ -203,6 +225,22 @@ PROVIDERS: dict[str, dict] = {
         "modes": ["text", "image"],
         "console": "https://wavespeed.ai/",
     },
+    "videorouter": {
+        "id": "videorouter",
+        "name": "VideoRouter (Seedance 2.5)",
+        "kind": "video",
+        "needsWorkspace": False,
+        "keyHint": "VideoRouter API key (videorouter.sh → API Keys), starts with llmr_sk_live_. One key covers its video models.",
+        "regions": [{"id": "global", "name": "Global"}],
+        "models": [
+            {"id": "bytedance/seedance-2.5/fal", "name": "Seedance 2.5"},
+            {"id": "bytedance/seedance-2.0/fal", "name": "Seedance 2.0 (cheaper)"},
+        ],
+        "resolutions": ["480p", "720p", "1080p"],
+        "ratios": ["9:16", "3:4", "1:1", "4:3", "16:9", "21:9"],
+        "modes": ["text", "image"],
+        "console": "https://videorouter.sh/",
+    },
 }
 
 DEFAULT_PROVIDER = "wan"
@@ -242,4 +280,6 @@ def price(provider_id: str, model: str, region: str, resolution: str,
         return argolink_price(model, images)
     if provider_id == "wavespeed":
         return wavespeed_price(model, resolution, float(seconds or 0))
+    if provider_id == "videorouter":
+        return videorouter_price(model, float(seconds or 0))
     return None

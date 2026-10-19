@@ -227,6 +227,69 @@ def test_argolink_makes_an_image(client, tmp_path):
         settings.save({"studioKeys": {}})
 
 
+def test_videorouter_makes_a_video(client, tmp_path):
+    from fakevideorouter import GOOD_KEY as VR_KEY, FakeVideoRouter  # noqa: PLC0415
+
+    vr = FakeVideoRouter()
+    studio.set_transport(vr.transport())
+    try:
+        mid = _model_with_photo(client, "RouterMia", tmp_path)
+        r = client.put(f"/api/m/{mid}/studio/key", headers=H,
+                       json={"provider": "videorouter", "apiKey": VR_KEY, "region": "global"})
+        assert r.status_code == 200, r.text
+        assert vr.hosts[-1] == "videorouter.sh"  # key checked on VideoRouter
+
+        opts = client.get(f"/api/m/{mid}/studio/options").json()
+        assert opts["provider"] == "videorouter" and opts["kind"] == "video"
+        assert opts["durations"] == {"min": 3, "max": 12, "auto": False, "default": 5}
+        assert opts["models"][0]["id"] == "bytedance/seedance-2.5/fal"
+
+        jobs = lambda: client.get(f"/api/m/{mid}/studio/jobs").json()  # noqa: E731
+        res = client.post(f"/api/m/{mid}/studio/jobs", headers=H, json={
+            "mode": "text", "prompt": "Mia dancing", "model": "bytedance/seedance-2.5/fal",
+            "resolution": "720p", "duration": 5})
+        assert res.status_code == 201, res.text
+        wait_for(lambda: jobs()[0], lambda j: j["status"] != "starting")
+        task = vr.jobs[list(vr.jobs)[-1]]
+        assert task["body"]["model"] == "bytedance/seedance-2.5/fal"
+        assert task["body"]["duration_secs"] == 5 and task["body"]["resolution"] == "720p"
+        assert task["body"]["aspect_ratio"] == "9:16"
+
+        client.portal.call(studio.poll_once)  # in_progress
+        client.portal.call(studio.poll_once)  # completed → downloaded
+        job = jobs()[0]
+        assert job["status"] == "saved", job
+        assert Path(job["file"]).suffix == ".mp4" and Path(job["file"]).read_bytes() == vr.video_bytes
+        assert job["cost"] == 0.4 and job["provider"] == "videorouter"  # 0.08/s × 5s
+    finally:
+        studio.set_transport(None)
+        settings.save({"studioKeys": {}})
+
+
+def test_videorouter_image_mode_sends_a_first_frame(client, tmp_path):
+    from fakevideorouter import GOOD_KEY as VR_KEY, FakeVideoRouter  # noqa: PLC0415
+
+    vr = FakeVideoRouter()
+    studio.set_transport(vr.transport())
+    try:
+        mid = _model_with_photo(client, "RouterImg", tmp_path)
+        client.put(f"/api/m/{mid}/studio/key", headers=H,
+                   json={"provider": "videorouter", "apiKey": VR_KEY, "region": "global"})
+        folders = next(m["folders"] for m in client.get("/api/models").json() if m["id"] == mid)
+        face = str(Path(folders["references"]) / "face.jpg")
+        res = client.post(f"/api/m/{mid}/studio/jobs", headers=H, json={
+            "mode": "image", "photos": [face], "model": "bytedance/seedance-2.0/fal",
+            "resolution": "480p", "duration": 4})
+        assert res.status_code == 201, res.text
+        wait_for(lambda: client.get(f"/api/m/{mid}/studio/jobs").json()[0], lambda j: j["status"] != "starting")
+        task = vr.jobs[list(vr.jobs)[-1]]
+        assert task["body"]["model"] == "bytedance/seedance-2.0/fal"
+        assert task["body"]["start_image_url"].startswith("data:image/jpeg;base64,")
+    finally:
+        studio.set_transport(None)
+        settings.save({"studioKeys": {}})
+
+
 def test_a_models_provider_is_isolated(client, fake, tmp_path):
     a = _model_with_photo(client, "ProvA", tmp_path)
     b = _model_with_photo(client, "ProvB", tmp_path)
