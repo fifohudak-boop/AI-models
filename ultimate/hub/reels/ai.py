@@ -17,6 +17,11 @@ from .config import OLLAMA_HOST
 from .models import Candidate
 from .parsing import split_terms
 
+# Google Gemini (cloud) is an optional analysis engine, picked per model in Reel Finder settings.
+# Discovery always runs on this Mac; only the understanding of each video goes to Gemini.
+GEMINI_HOST = "https://generativelanguage.googleapis.com"
+DEFAULT_GEMINI_MODEL = "gemini-2.0-flash"
+
 _STOPWORDS = set("""
 a an and are as at be but by for from has have i in into is it its me my no not of on or our
 so that the their them then there these this those to too very was we were what when where which
@@ -87,6 +92,89 @@ def _describe(c: Candidate) -> str:
         f"Caption: {c.caption[:1200] or '(no caption)'}\n"
         f"Stats: {', '.join(stats) or 'unknown'}"
     )
+
+
+# ---------------------------------------------------------------- prompts (shared by every AI brain)
+
+def plan_prompt(description: str, keywords: str, platforms: list[str], per_platform: int,
+                avoid: list[str] | tuple = ()) -> str:
+    styles = {
+        "tiktok": "1-3 words or a single #hashtag (no spaces), the way TikTok creators caption such videos",
+        "instagram": "1-3 words or a single #hashtag (no spaces), the way Instagram Reels are captioned",
+        "pinterest": "2-5 descriptive words, no hashtags, the way people search Pinterest for "
+                     "aesthetic references (e.g. 'cinematic night drift', 'moody car photography')",
+    }
+    return (
+        "You plan searches for a tool that finds short-form reference videos for a video editor.\n"
+        f"They want: {description or '(see keywords)'}\n"
+        f"Keywords they gave: {keywords or 'none'}\n\n"
+        f"Write {per_platform} search queries for each of these platforms:\n"
+        + "".join(f"- {p}: {styles[p]}\n" for p in platforms)
+        + "Each query must find exactly this kind of video: keep the main subject in every query, and "
+        "vary the angle (style, mood, setting, technique, the slang and niche words creators use). "
+        "Start with the most direct, literal searches; put wider ones at the end. "
+        + (f"Don't repeat any of these, they were already searched: {', '.join(avoid)}. " if avoid else "")
+        + 'Answer as JSON: {"tiktok": [...], "instagram": [...], "pinterest": [...]} '
+        "with an empty list for any platform not listed above."
+    )
+
+
+def judge_prompt(description: str, keywords: str, c: Candidate, show_image: bool) -> str:
+    if c.kind == "image":
+        what, seen = "picture", "The image is the picture itself.\n"
+    else:
+        what, seen = "video", "The image is the video's cover frame.\n"
+    return (
+        f"You rate {what}s for a video editor who is collecting reference material.\n"
+        f"What they want: {description or keywords}\n"
+        + (f"It should involve: {keywords}\n" if keywords and description else "")
+        + f"\nThe {what}:\n{_describe(c)}\n"
+        + (seen if show_image else "")
+        + "\nHow well does it match what they want? Score 0-100:\n"
+        "90-100 exactly it: right subject AND the style/details they asked for\n"
+        "70-89 right subject, most details match\n"
+        "45-69 the subject is there but the style or details differ\n"
+        "20-44 only loosely related\n"
+        "0-19 unrelated, an ad, or a text/meme slideshow\n"
+        "Judge mostly by what the image shows; use the caption to confirm (hashtag spam proves nothing).\n"
+        'Answer as JSON: {"score": <int>, "reason": "<max 15 words>"}'
+    )
+
+
+def verify_prompt(description: str, frame_count: int) -> str:
+    return (
+        f"These are {frame_count} frames from the start, middle and end of a downloaded short video.\n"
+        f"The user wanted: {description}\n"
+        "Score 0-100 how well the actual footage matches. Answer as JSON: "
+        '{"score": <int>, "reason": "<one sentence>"}'
+    )
+
+
+def describe_prompt(frame_count: int, caption: str, can_see: bool) -> str:
+    prompt = (
+        f"These {frame_count} images are frames, in order, from one short-form video that a video editor "
+        "wants more videos like.\n"
+        + (f"Its caption: {caption[:600]}\n" if caption else "")
+        + "Answer as JSON with:\n"
+        '- "description": 1-2 sentences covering the main subject and action, the setting and time of day, '
+        "the camera work (angle, shot size, movement), lighting and colours, and the editing style "
+        "(cuts, slow motion, text on screen).\n"
+        '- "search_queries": 8 short searches (2-4 words each) that would find videos like this on TikTok, '
+        "Instagram and Pinterest; the most literal first.\n"
+        '- "hashtags": 6 hashtags creators use for this kind of video, without the # sign.'
+    )
+    if not can_see:
+        prompt = prompt.replace("These", "(You can't see the frames — go by the caption.) These", 1)
+    return prompt
+
+
+def _reference_result(data: dict) -> dict:
+    return {
+        "description": str(data.get("description") or "").strip()[:600],
+        "queries": _dedupe([q for q in data.get("search_queries") or [] if isinstance(q, str)], 10),
+        "hashtags": _dedupe([h.lstrip("#").replace(" ", "") for h in data.get("hashtags") or []
+                             if isinstance(h, str)], 8),
+    }
 
 
 class KeywordBrain:
@@ -179,87 +267,27 @@ class OllamaBrain:
 
     async def plan_queries(self, description: str, keywords: str, platforms: list[str], per_platform: int,
                            avoid: list[str] | tuple = ()) -> dict[str, list[str]]:
-        styles = {
-            "tiktok": "1-3 words or a single #hashtag (no spaces), the way TikTok creators caption such videos",
-            "instagram": "1-3 words or a single #hashtag (no spaces), the way Instagram Reels are captioned",
-            "pinterest": "2-5 descriptive words, no hashtags, the way people search Pinterest for "
-                         "aesthetic references (e.g. 'cinematic night drift', 'moody car photography')",
-        }
-        prompt = (
-            "You plan searches for a tool that finds short-form reference videos for a video editor.\n"
-            f"They want: {description or '(see keywords)'}\n"
-            f"Keywords they gave: {keywords or 'none'}\n\n"
-            f"Write {per_platform} search queries for each of these platforms:\n"
-            + "".join(f"- {p}: {styles[p]}\n" for p in platforms)
-            + "Each query must find exactly this kind of video: keep the main subject in every query, and "
-            "vary the angle (style, mood, setting, technique, the slang and niche words creators use). "
-            "Start with the most direct, literal searches; put wider ones at the end. "
-            + (f"Don't repeat any of these, they were already searched: {', '.join(avoid)}. " if avoid else "")
-            + 'Answer as JSON: {"tiktok": [...], "instagram": [...], "pinterest": [...]} '
-            "with an empty list for any platform not listed above."
-        )
-        data = await self._chat(prompt, PLAN_SCHEMA, max_tokens=700)
+        data = await self._chat(plan_prompt(description, keywords, platforms, per_platform, avoid),
+                                PLAN_SCHEMA, max_tokens=700)
         avoid_set = {a.lower() for a in avoid}
         return {p: _dedupe([q for q in data.get(p, []) if isinstance(q, str)], per_platform, avoid_set)
                 for p in platforms}
 
     async def judge(self, description: str, keywords: str, c: Candidate, image: bytes | None) -> Verdict:
-        if c.kind == "image":
-            what, seen = "picture", "The image is the picture itself.\n"
-        else:
-            what, seen = "video", "The image is the video's cover frame.\n"
-        prompt = (
-            f"You rate {what}s for a video editor who is collecting reference material.\n"
-            f"What they want: {description or keywords}\n"
-            + (f"It should involve: {keywords}\n" if keywords and description else "")
-            + f"\nThe {what}:\n{_describe(c)}\n"
-            + (seen if image and self.can_see else "")
-            + "\nHow well does it match what they want? Score 0-100:\n"
-            "90-100 exactly it: right subject AND the style/details they asked for\n"
-            "70-89 right subject, most details match\n"
-            "45-69 the subject is there but the style or details differ\n"
-            "20-44 only loosely related\n"
-            "0-19 unrelated, an ad, or a text/meme slideshow\n"
-            "Judge mostly by what the image shows; use the caption to confirm (hashtag spam proves nothing).\n"
-            'Answer as JSON: {"score": <int>, "reason": "<max 15 words>"}'
-        )
+        prompt = judge_prompt(description, keywords, c, bool(image and self.can_see))
         data = await self._chat(prompt, VERDICT_SCHEMA, [image] if image else None)
         return _verdict(data)
 
     async def verify_frames(self, description: str, frames: list[bytes]) -> Verdict:
         if not self.can_see or not frames:
             return Verdict(100, "Skipped (model can't see images)")
-        prompt = (
-            f"These are {len(frames)} frames from the start, middle and end of a downloaded short video.\n"
-            f"The user wanted: {description}\n"
-            "Score 0-100 how well the actual footage matches. Answer as JSON: "
-            '{"score": <int>, "reason": "<one sentence>"}'
-        )
-        return _verdict(await self._chat(prompt, VERDICT_SCHEMA, frames))
+        return _verdict(await self._chat(verify_prompt(description, len(frames)), VERDICT_SCHEMA, frames))
 
     async def describe_reference(self, frames: list[bytes], caption: str = "") -> dict:
         """What a reference video shows, written so a search can find more like it."""
-        prompt = (
-            f"These {len(frames)} images are frames, in order, from one short-form video that a video editor "
-            "wants more videos like.\n"
-            + (f"Its caption: {caption[:600]}\n" if caption else "")
-            + "Answer as JSON with:\n"
-            '- "description": 1-2 sentences covering the main subject and action, the setting and time of day, '
-            "the camera work (angle, shot size, movement), lighting and colours, and the editing style "
-            "(cuts, slow motion, text on screen).\n"
-            '- "search_queries": 8 short searches (2-4 words each) that would find videos like this on TikTok, '
-            "Instagram and Pinterest; the most literal first.\n"
-            '- "hashtags": 6 hashtags creators use for this kind of video, without the # sign.'
-        )
-        if not self.can_see:
-            prompt = prompt.replace("These", "(You can't see the frames — go by the caption.) These", 1)
-        data = await self._chat(prompt, REFERENCE_SCHEMA, frames, max_tokens=600)
-        return {
-            "description": str(data.get("description") or "").strip()[:600],
-            "queries": _dedupe([q for q in data.get("search_queries") or [] if isinstance(q, str)], 10),
-            "hashtags": _dedupe([h.lstrip("#").replace(" ", "") for h in data.get("hashtags") or []
-                                 if isinstance(h, str)], 8),
-        }
+        data = await self._chat(describe_prompt(len(frames), caption, self.can_see),
+                                REFERENCE_SCHEMA, frames, max_tokens=600)
+        return _reference_result(data)
 
 
 def _verdict(data: dict) -> Verdict:
@@ -317,6 +345,95 @@ async def pick_brain(
             "Using keyword matching for now."
         )
     return OllamaBrain(model, host, transport=transport), None
+
+
+class GeminiBrain:
+    """Scores and plans with Google Gemini (cloud). Same interface as OllamaBrain; discovery still
+    runs on this Mac, only the understanding of each video is sent to Gemini."""
+
+    def __init__(self, api_key: str, model: str = DEFAULT_GEMINI_MODEL, host: str = GEMINI_HOST,
+                 timeout: float = 180, transport: httpx.AsyncBaseTransport | None = None):
+        self.api_key = api_key
+        self.model = model or DEFAULT_GEMINI_MODEL
+        self.host = host.rstrip("/")
+        self.timeout = timeout
+        self.transport = transport
+        self.name = f"Gemini ({self.model})"
+        self.can_see = True
+        self.thinks = False
+
+    async def _generate(self, prompt: str, images: list[bytes] | None = None, max_tokens: int = 400) -> dict:
+        parts: list[dict] = [{"text": prompt}]
+        for img in images or []:
+            parts.append({"inline_data": {"mime_type": "image/jpeg", "data": base64.b64encode(img).decode()}})
+        payload = {
+            "contents": [{"role": "user", "parts": parts}],
+            "generationConfig": {"temperature": 0, "maxOutputTokens": max_tokens,
+                                 "responseMimeType": "application/json"},
+        }
+        async with httpx.AsyncClient(timeout=self.timeout, transport=self.transport) as client:
+            resp = await client.post(f"{self.host}/v1beta/models/{self.model}:generateContent",
+                                     params={"key": self.api_key}, json=payload)
+            resp.raise_for_status()
+            body = resp.json()
+        text = "".join(
+            part["text"] for c in (body.get("candidates") or [])
+            for part in ((c.get("content") or {}).get("parts") or [])
+            if isinstance(part.get("text"), str)
+        )
+        data = parse_json_object(text)
+        if not data:
+            raise ValueError("Gemini gave no usable answer")
+        return data
+
+    async def plan_queries(self, description: str, keywords: str, platforms: list[str], per_platform: int,
+                           avoid: list[str] | tuple = ()) -> dict[str, list[str]]:
+        data = await self._generate(plan_prompt(description, keywords, platforms, per_platform, avoid), max_tokens=800)
+        avoid_set = {a.lower() for a in avoid}
+        return {p: _dedupe([q for q in data.get(p, []) if isinstance(q, str)], per_platform, avoid_set)
+                for p in platforms}
+
+    async def judge(self, description: str, keywords: str, c: Candidate, image: bytes | None) -> Verdict:
+        data = await self._generate(judge_prompt(description, keywords, c, bool(image)), [image] if image else None)
+        return _verdict(data)
+
+    async def verify_frames(self, description: str, frames: list[bytes]) -> Verdict:
+        if not frames:
+            return Verdict(100, "Skipped (no frames)")
+        return _verdict(await self._generate(verify_prompt(description, len(frames)), frames))
+
+    async def describe_reference(self, frames: list[bytes], caption: str = "") -> dict:
+        return _reference_result(await self._generate(describe_prompt(len(frames), caption, True), frames, max_tokens=800))
+
+
+async def gemini_ok(api_key: str, host: str = GEMINI_HOST,
+                    transport: httpx.AsyncBaseTransport | None = None) -> bool | None:
+    """True if Gemini accepts the key, False if it's rejected, None if it couldn't be reached."""
+    if not api_key:
+        return False
+    try:
+        async with httpx.AsyncClient(timeout=10, transport=transport) as client:
+            resp = await client.get(f"{host.rstrip('/')}/v1beta/models", params={"key": api_key})
+        return resp.status_code < 400
+    except httpx.HTTPError:
+        return None
+
+
+async def choose_brain(
+    model: str, *, engine: str = "local", gemini_key: str = "", gemini_model: str = DEFAULT_GEMINI_MODEL,
+    host: str = OLLAMA_HOST, gemini_host: str = GEMINI_HOST, transport: httpx.AsyncBaseTransport | None = None,
+) -> tuple[OllamaBrain | KeywordBrain | GeminiBrain, str | None]:
+    """The analysis engine for a hunt: Gemini when chosen and the key works, otherwise the local
+    model (or keyword matching), with a warning explaining any fallback."""
+    if engine == "gemini":
+        if not gemini_key:
+            brain, _ = await pick_brain(model, host, transport)
+            return brain, "No Gemini key saved yet, so videos are scored on this Mac. Add it in Settings."
+        if await gemini_ok(gemini_key, gemini_host, transport) is False:
+            brain, _ = await pick_brain(model, host, transport)
+            return brain, "Gemini didn't accept the key, so videos are scored on this Mac for now."
+        return GeminiBrain(gemini_key, gemini_model, gemini_host, transport=transport), None
+    return await pick_brain(model, host, transport)
 
 
 _VISION_FAMILIES = (

@@ -64,6 +64,9 @@ class HuntSettings(BaseModel):
     # With reference videos: how close to them the videos must look (0 = same kind, 100 = nearly identical).
     closeness: int = Field(60, ge=0, le=100)
     include_images: bool = False  # Pinterest image pins count too
+    # Which engine scores found videos: "local" = the Ollama model below (runs on this Mac),
+    # "gemini" = Google Gemini in the cloud (needs a Gemini key in Settings; discovery stays local).
+    engine: Literal["local", "gemini"] = "local"
     model: str = DEFAULT_MODEL
     watch_check: bool = False
     show_browser: bool = True

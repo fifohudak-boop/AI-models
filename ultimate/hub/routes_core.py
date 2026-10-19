@@ -18,6 +18,7 @@ from fastapi.responses import FileResponse
 from pydantic import BaseModel
 
 from . import __version__, auth, library, media, personas, postiz, settings, studio
+from .reels import ai as reels_ai
 from .config import APP_DIR, BRAND_NAME, REPO
 
 router = APIRouter()
@@ -101,6 +102,8 @@ async def status() -> dict:
         "studio": {"connected": studio.connected(), "hasKey": studio.has_key(),
                    "needsWorkspace": studio.has_key() and not (s.get("alibabaWorkspace") or "").strip(),
                    "region": s.get("alibabaRegion", "intl")},
+        "gemini": {"hasKey": bool((s.get("geminiApiKey") or "").strip()),
+                   "model": s.get("geminiModel", "gemini-2.0-flash")},
         "sharing": {"enabled": bool(s.get("sharingEnabled")), "host": s.get("shareHost", "")},
         "activeModel": s.get("activeModel") or "",
     }

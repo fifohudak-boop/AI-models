@@ -58,6 +58,10 @@ DEFAULTS: dict[str, Any] = {
         "wan3.0-video": {"480P": 0.0294, "720P": 0.0588, "1080P": 0.1176},
         "wan3.0-video-prime": {"480P": 0.063, "720P": 0.126, "1080P": 0.252},
     },
+    # Reel Finder analysis with Google Gemini (cloud). One key, shared by every model; each model
+    # chooses "local" or "gemini" in its own Reel Finder settings. Discovery always runs on this Mac.
+    "geminiApiKey": "",
+    "geminiModel": "gemini-2.0-flash",
     "preferences": DEFAULT_PREFERENCES,
     "activeModel": "",
     # Sharing: let people reach the app from outside this Mac (through a tunnel), with a login.
