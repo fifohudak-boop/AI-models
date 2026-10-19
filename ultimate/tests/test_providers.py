@@ -183,6 +183,113 @@ def test_wavespeed_image_mode_uses_the_i2v_path(client, tmp_path):
         settings.save({"studioKeys": {}})
 
 
+def test_argolink_makes_an_image(client, tmp_path):
+    from fakeargo import GOOD_KEY as ARGO_KEY, PNG_BYTES, FakeArgoLink  # noqa: PLC0415
+
+    argo = FakeArgoLink()
+    studio.set_transport(argo.transport())
+    try:
+        mid = _model_with_photo(client, "ArgoMia", tmp_path)
+        r = client.put(f"/api/m/{mid}/studio/key", headers=H,
+                       json={"provider": "argolink", "apiKey": ARGO_KEY, "region": "global"})
+        assert r.status_code == 200, r.text
+        assert argo.hosts[-1] == "argolink.io"  # key checked on ArgoLink
+
+        opts = client.get(f"/api/m/{mid}/studio/options").json()
+        assert opts["provider"] == "argolink" and opts["kind"] == "image"
+        assert opts["resolutions"] == ["1K", "2K"]
+
+        jobs = lambda: client.get(f"/api/m/{mid}/studio/jobs").json()  # noqa: E731
+        # text → /images/generations (URL response, downloaded)
+        res = client.post(f"/api/m/{mid}/studio/jobs", headers=H, json={
+            "mode": "text", "prompt": "portrait of Mia", "model": "seedream-5.0-pro", "resolution": "2K", "ratio": "9:16"})
+        assert res.status_code == 201, res.text
+        job = wait_for(lambda: jobs()[0], lambda j: j["status"] in ("saved", "failed"))
+        assert job["status"] == "saved", job
+        assert Path(job["file"]).suffix == ".png" and Path(job["file"]).read_bytes() == PNG_BYTES
+        assert job["cost"] == 0.03 and job["provider"] == "argolink"
+        gen = argo.generations[-1]
+        assert gen["model"] == "seedream-5.0-pro" and gen["resolution"] == "2k" and gen["aspect_ratio"] == "9:16"
+
+        # photo → /images/edits with the reference image inline (base64 response, decoded)
+        folders = next(m["folders"] for m in client.get("/api/models").json() if m["id"] == mid)
+        face = str(Path(folders["references"]) / "face.jpg")
+        res = client.post(f"/api/m/{mid}/studio/jobs", headers=H, json={
+            "mode": "image", "photos": [face], "model": "seedream-5.0-pro", "resolution": "1K", "ratio": "1:1"})
+        assert res.status_code == 201, res.text
+        job = wait_for(lambda: jobs()[0], lambda j: j["status"] in ("saved", "failed"))
+        assert job["status"] == "saved", job
+        assert Path(job["file"]).read_bytes() == PNG_BYTES  # decoded from b64_json
+        edit = argo.edits[-1]
+        assert edit["resolution"] == "1k" and edit["images"][0]["image_url"].startswith("data:image/jpeg;base64,")
+    finally:
+        studio.set_transport(None)
+        settings.save({"studioKeys": {}})
+
+
+def test_videorouter_makes_a_video(client, tmp_path):
+    from fakevideorouter import GOOD_KEY as VR_KEY, FakeVideoRouter  # noqa: PLC0415
+
+    vr = FakeVideoRouter()
+    studio.set_transport(vr.transport())
+    try:
+        mid = _model_with_photo(client, "RouterMia", tmp_path)
+        r = client.put(f"/api/m/{mid}/studio/key", headers=H,
+                       json={"provider": "videorouter", "apiKey": VR_KEY, "region": "global"})
+        assert r.status_code == 200, r.text
+        assert vr.hosts[-1] == "videorouter.sh"  # key checked on VideoRouter
+
+        opts = client.get(f"/api/m/{mid}/studio/options").json()
+        assert opts["provider"] == "videorouter" and opts["kind"] == "video"
+        assert opts["durations"] == {"min": 3, "max": 12, "auto": False, "default": 5}
+        assert opts["models"][0]["id"] == "bytedance/seedance-2.5/fal"
+
+        jobs = lambda: client.get(f"/api/m/{mid}/studio/jobs").json()  # noqa: E731
+        res = client.post(f"/api/m/{mid}/studio/jobs", headers=H, json={
+            "mode": "text", "prompt": "Mia dancing", "model": "bytedance/seedance-2.5/fal",
+            "resolution": "720p", "duration": 5})
+        assert res.status_code == 201, res.text
+        wait_for(lambda: jobs()[0], lambda j: j["status"] != "starting")
+        task = vr.jobs[list(vr.jobs)[-1]]
+        assert task["body"]["model"] == "bytedance/seedance-2.5/fal"
+        assert task["body"]["duration_secs"] == 5 and task["body"]["resolution"] == "720p"
+        assert task["body"]["aspect_ratio"] == "9:16"
+
+        client.portal.call(studio.poll_once)  # in_progress
+        client.portal.call(studio.poll_once)  # completed → downloaded
+        job = jobs()[0]
+        assert job["status"] == "saved", job
+        assert Path(job["file"]).suffix == ".mp4" and Path(job["file"]).read_bytes() == vr.video_bytes
+        assert job["cost"] == 0.4 and job["provider"] == "videorouter"  # 0.08/s × 5s
+    finally:
+        studio.set_transport(None)
+        settings.save({"studioKeys": {}})
+
+
+def test_videorouter_image_mode_sends_a_first_frame(client, tmp_path):
+    from fakevideorouter import GOOD_KEY as VR_KEY, FakeVideoRouter  # noqa: PLC0415
+
+    vr = FakeVideoRouter()
+    studio.set_transport(vr.transport())
+    try:
+        mid = _model_with_photo(client, "RouterImg", tmp_path)
+        client.put(f"/api/m/{mid}/studio/key", headers=H,
+                   json={"provider": "videorouter", "apiKey": VR_KEY, "region": "global"})
+        folders = next(m["folders"] for m in client.get("/api/models").json() if m["id"] == mid)
+        face = str(Path(folders["references"]) / "face.jpg")
+        res = client.post(f"/api/m/{mid}/studio/jobs", headers=H, json={
+            "mode": "image", "photos": [face], "model": "bytedance/seedance-2.0/fal",
+            "resolution": "480p", "duration": 4})
+        assert res.status_code == 201, res.text
+        wait_for(lambda: client.get(f"/api/m/{mid}/studio/jobs").json()[0], lambda j: j["status"] != "starting")
+        task = vr.jobs[list(vr.jobs)[-1]]
+        assert task["body"]["model"] == "bytedance/seedance-2.0/fal"
+        assert task["body"]["start_image_url"].startswith("data:image/jpeg;base64,")
+    finally:
+        studio.set_transport(None)
+        settings.save({"studioKeys": {}})
+
+
 def test_a_models_provider_is_isolated(client, fake, tmp_path):
     a = _model_with_photo(client, "ProvA", tmp_path)
     b = _model_with_photo(client, "ProvB", tmp_path)

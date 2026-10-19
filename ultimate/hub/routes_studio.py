@@ -18,6 +18,8 @@ def _durations(provider_id: str) -> dict:
         return {"min": studio.SEEDANCE_MIN_S, "max": studio.SEEDANCE_MAX_S, "auto": False, "default": 5}
     if provider_id == "wavespeed":
         return {"min": studio.WAVESPEED_MIN_S, "max": studio.WAVESPEED_MAX_S, "auto": False, "default": 5}
+    if provider_id == "videorouter":
+        return {"min": studio.VIDEOROUTER_MIN_S, "max": studio.VIDEOROUTER_MAX_S, "auto": False, "default": 5}
     return {"min": studio.MIN_S, "max": studio.MAX_S, "auto": True, "default": 5}
 
 
