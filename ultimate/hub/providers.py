@@ -190,7 +190,7 @@ PROVIDERS: dict[str, dict] = {
         "models": [{"id": "seedream-5.0-pro", "name": "Seedream 5.0 Pro"}],
         "sizes": ["1K", "2K"],
         "ratios": ["9:16", "3:4", "1:1", "4:3", "16:9", "2:3", "3:2", "5:4", "4:5", "21:9"],
-        "modes": ["text", "image"],
+        "modes": ["text", "image", "reference"],
         "console": "https://argolink.io/",
     },
     "seedream": {
@@ -206,7 +206,7 @@ PROVIDERS: dict[str, dict] = {
         ],
         "sizes": ["1K", "2K", "4K"],
         "ratios": ["9:16", "3:4", "1:1", "4:3", "16:9"],
-        "modes": ["text", "image"],
+        "modes": ["text", "image", "reference"],
         "console": "https://console.byteplus.com/ark",
     },
     "wavespeed": {

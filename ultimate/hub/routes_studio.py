@@ -40,7 +40,8 @@ def _options(model_id: str | None, provider_id: str | None = None) -> dict:
         "providers": [{"id": p["id"], "name": p["name"], "kind": p["kind"], "connected": p["id"] in conn}
                       for p in providers.PROVIDERS.values()],
         "models": prov["models"],
-        "modes": [{"id": m, "name": studio.MODES.get(m, m)} for m in prov["modes"]],
+        "modes": [{"id": m, "name": (studio.IMAGE_MODE_LABELS if prov["kind"] == "image" else studio.MODES).get(m, m)}
+                  for m in prov["modes"]],
         "resolutions": providers.resolutions(prov_id),
         "ratios": prov["ratios"],
         "regions": prov["regions"],
