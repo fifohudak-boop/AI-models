@@ -109,8 +109,11 @@ def test_seedream_makes_an_image(client, fake, tmp_path):
     mid = _model_with_photo(client, "SeedreamModel", tmp_path)
     _connect(client, mid, "seedream")
     opts = client.get(f"/api/m/{mid}/studio/options").json()
-    assert opts["kind"] == "image" and opts["modes"] == [{"id": "text", "name": "From a prompt"},
-                                                          {"id": "image", "name": "From a photo (first frame)"}]
+    assert opts["kind"] == "image" and opts["modes"] == [
+        {"id": "text", "name": "From a prompt"},
+        {"id": "image", "name": "From a photo"},
+        {"id": "reference", "name": "Recreate a picture, with your model"},
+    ]
     jobs = lambda: client.get(f"/api/m/{mid}/studio/jobs").json()  # noqa: E731
     res = client.post(f"/api/m/{mid}/studio/jobs", headers=H,
                       json={"mode": "text", "prompt": "portrait of Mei, studio light", "resolution": "2K", "ratio": "9:16"})
@@ -222,6 +225,45 @@ def test_argolink_makes_an_image(client, tmp_path):
         assert Path(job["file"]).read_bytes() == PNG_BYTES  # decoded from b64_json
         edit = argo.edits[-1]
         assert edit["resolution"] == "1k" and edit["images"][0]["image_url"].startswith("data:image/jpeg;base64,")
+    finally:
+        studio.set_transport(None)
+        settings.save({"studioKeys": {}})
+
+
+def test_argolink_recreates_a_picture_with_the_model(client, tmp_path):
+    """Image 'reference' mode: one picture to recreate + the model's photos, kept separate (reference
+    first, then the person's photos) and the prompt spelling out the roles."""
+    from fakeargo import GOOD_KEY as ARGO_KEY, FakeArgoLink  # noqa: PLC0415
+
+    argo = FakeArgoLink()
+    studio.set_transport(argo.transport())
+    try:
+        mid = _model_with_photo(client, "ArgoRef", tmp_path)
+        client.put(f"/api/m/{mid}/studio/key", headers=H,
+                   json={"provider": "argolink", "apiKey": ARGO_KEY, "region": "global"})
+
+        # The mode is offered with an image-specific label.
+        opts = client.get(f"/api/m/{mid}/studio/options").json()
+        assert {"id": "reference", "name": "Recreate a picture, with your model"} in opts["modes"]
+
+        folders = next(m["folders"] for m in client.get("/api/models").json() if m["id"] == mid)
+        refs = Path(folders["references"])
+        Image.new("RGB", (640, 800), (200, 90, 90)).save(refs / "scene.jpg")  # the picture to recreate
+        scene, face = str(refs / "scene.jpg"), str(refs / "face.jpg")
+
+        res = client.post(f"/api/m/{mid}/studio/jobs", headers=H, json={
+            "mode": "reference", "videos": [scene], "photos": [face],
+            "model": "seedream-5.0-pro", "resolution": "2K", "ratio": "9:16", "prompt": "golden hour light"})
+        assert res.status_code == 201, res.text
+        job = wait_for(lambda: client.get(f"/api/m/{mid}/studio/jobs").json()[0], lambda j: j["status"] in ("saved", "failed"))
+        assert job["status"] == "saved", job
+
+        edit = argo.edits[-1]  # reference mode goes through /images/edits with the images in order
+        assert len(edit["images"]) == 2  # [picture to recreate, model photo]
+        assert all(img["image_url"].startswith("data:image/jpeg;base64,") for img in edit["images"])
+        # The prompt keeps the two apart: recreate Image 1 with the person in Image 2.
+        assert "Image 1" in job["sentPrompt"] and "Image 2" in job["sentPrompt"]
+        assert "golden hour light" in job["sentPrompt"]
     finally:
         studio.set_transport(None)
         settings.save({"studioKeys": {}})

@@ -51,6 +51,13 @@ MODES = {
     "image": "From a photo (first frame)",
     "reference": "Like a reference video, with your model",
 }
+# The same mode ids mean something image-specific on an image provider (Seedream / ArgoLink):
+# "image" starts from one photo; "reference" recreates a reference picture with the model's person.
+IMAGE_MODE_LABELS = {
+    "text": "From a prompt",
+    "image": "From a photo",
+    "reference": "Recreate a picture, with your model",
+}
 RESOLUTIONS = ("480P", "720P", "1080P")
 RATIOS = ("9:16", "3:4", "1:1", "4:3", "16:9", "21:9", "adaptive")
 REGIONS = providers.WAN_REGIONS
@@ -488,15 +495,16 @@ def _seedream_size(size_label: str, ratio: str) -> str:
     return f"{w}x{h}"
 
 
-async def seedream_run(job: dict, reference: Path | None) -> list[str]:
-    """Seedream is synchronous — this returns the generated image URL(s) directly."""
+async def seedream_run(job: dict, images: list[Path]) -> list[str]:
+    """Seedream is synchronous — this returns the generated image URL(s) directly. In 'reference' mode
+    `images` is [picture-to-recreate, model-photo, …] in that order; the prompt assigns the roles."""
     c = creds(job["modelId"], "seedream")
     body: dict[str, Any] = {"model": job["model"], "prompt": job["sentPrompt"][:4000],
                             "size": _seedream_size(job["resolution"], job["ratio"]),
                             "response_format": "url", "watermark": False,
                             "sequential_image_generation": "disabled"}
-    if reference is not None:
-        body["image"] = [_data_uri(reference)]
+    if images:
+        body["image"] = [_data_uri(p) for p in images]
     async with _client(120) as client:
         resp = await client.post(f"{bytedance_base(c['region'])}/api/v3/images/generations",
                                  headers=_headers({"Content-Type": "application/json"}, model_id=job["modelId"],
@@ -513,13 +521,14 @@ async def seedream_run(job: dict, reference: Path | None) -> list[str]:
 
 # ---------------------------------------------------------------- ArgoLink (images, synchronous)
 
-async def argolink_run(job: dict, reference: Path | None) -> dict:
-    """ArgoLink is synchronous — returns the generated image item ({url} or {b64_json})."""
+async def argolink_run(job: dict, images: list[Path]) -> dict:
+    """ArgoLink is synchronous — returns the generated image item ({url} or {b64_json}). In 'reference'
+    mode `images` is [picture-to-recreate, model-photo, …] in order; the prompt assigns the roles."""
     body: dict[str, Any] = {"model": job["model"], "prompt": job["sentPrompt"][:4000],
                             "resolution": job["resolution"].lower(), "aspect_ratio": job["ratio"],
                             "n": 1, "response_format": "url"}
-    if reference is not None:
-        body["images"] = [{"image_url": _data_uri(reference)}]
+    if images:
+        body["images"] = [{"image_url": _data_uri(p)} for p in images]
         endpoint = f"{providers.ARGOLINK_HOST}/images/edits"
     else:
         endpoint = f"{providers.ARGOLINK_HOST}/images/generations"
@@ -696,6 +705,21 @@ def default_prompt(photos: int, extra: str) -> str:
     return f"{base} {extra}".strip()
 
 
+def default_image_prompt(photos: int, extra: str) -> str:
+    """Image 'reference' mode: Image 1 is the picture to recreate; Images 2+ are the model's photos.
+    Kept in that order and spelled out so the reference and the person never get confused."""
+    if photos == 0:
+        base = "Recreate Image 1 as closely as possible: the same pose, composition, framing, outfit, lighting and style."
+    elif photos == 1:
+        base = ("Recreate the scene in Image 1 — its pose, composition, framing, lighting and style — but with the "
+                "person shown in Image 2: that person's face, hair, body and look. Keep it photorealistic and natural.")
+    else:
+        base = (f"Recreate the scene in Image 1 — its pose, composition, framing, lighting and style — but with the "
+                f"person shown in Images 2 to {photos + 1} (all the same person): that person's face, hair, body and "
+                "look. Keep it photorealistic and natural.")
+    return f"{base} {extra}".strip()
+
+
 # ---------------------------------------------------------------- jobs (one per "Generate")
 
 def _now() -> str:
@@ -766,11 +790,16 @@ def validate_request(model_id: str, req: dict) -> dict:
         if not inputs["photos"]:
             raise StudioError("Pick a photo of the model to start from.")
         inputs = {"photos": inputs["photos"][:1], "videos": []}
-    elif mode == "reference" and not inputs["videos"]:
-        raise StudioError("Pick a reference video (for example one Reel Finder found).")
-    for p in inputs["photos"]:
+    elif mode == "reference":
+        if not inputs["videos"]:
+            raise StudioError("Pick the picture you want to recreate." if kind == "image"
+                              else "Pick a reference video (for example one Reel Finder found).")
+        if kind == "image":
+            inputs["videos"] = inputs["videos"][:1]  # one reference picture to recreate (the model's photos stay separate)
+    # On an image provider the reference is a picture too, so check it's an image alongside the photos.
+    for p in inputs["photos"] + (inputs["videos"] if kind == "image" else []):
         if Path(p).suffix.lower() not in IMAGE_SUFFIXES:
-            raise StudioError(f"{Path(p).name} isn't a photo.")
+            raise StudioError(f"{Path(p).name} isn't an image.")
 
     return {"provider": prov_id, "kind": kind, "mode": mode, "prompt": prompt, "model": model,
             "resolution": resolution, "ratio": ratio, "duration": duration,
@@ -881,13 +910,24 @@ async def _start_videorouter(job: dict, work: Path) -> None:
     _save(job)
 
 
-async def _run_seedream(job: dict, work: Path) -> None:
-    reference = None
+async def _prepare_images(job: dict, work: Path) -> tuple[list[Path], str]:
+    """The input images and the prompt for an image generation. In 'reference' mode the first image is
+    the picture to recreate and the rest are the model's photos — kept in that order so the two are
+    never confused — and the prompt tells the model to rebuild the reference with that person."""
+    if job["mode"] == "reference":
+        reference = await asyncio.to_thread(prepare_photo, Path(job["videos"][0]), work)
+        photos = [await asyncio.to_thread(prepare_photo, Path(p), work) for p in job["photos"]]
+        return [reference, *photos], default_image_prompt(len(photos), job["prompt"])
     if job["mode"] == "image" and job["photos"]:
-        reference = await asyncio.to_thread(prepare_photo, Path(job["photos"][0]), work)
-    job.update(step="Making the image", status="RUNNING", sentPrompt=job["prompt"] or "A photo.")
+        return [await asyncio.to_thread(prepare_photo, Path(job["photos"][0]), work)], job["prompt"] or "A photo."
+    return [], job["prompt"] or "A photo."
+
+
+async def _run_seedream(job: dict, work: Path) -> None:
+    images, prompt = await _prepare_images(job, work)
+    job.update(step="Making the image", status="RUNNING", sentPrompt=prompt)
     _save(job)
-    urls = await seedream_run(job, reference)
+    urls = await seedream_run(job, images)
     job.update(status="downloading", step="Saving the image")
     _save(job)
     job["file"] = await _download(job, urls[0], suffix=".png")
@@ -897,12 +937,10 @@ async def _run_seedream(job: dict, work: Path) -> None:
 
 
 async def _run_argolink(job: dict, work: Path) -> None:
-    reference = None
-    if job["mode"] == "image" and job["photos"]:
-        reference = await asyncio.to_thread(prepare_photo, Path(job["photos"][0]), work)
-    job.update(step="Making the image", status="RUNNING", sentPrompt=job["prompt"] or "A photo.")
+    images, prompt = await _prepare_images(job, work)
+    job.update(step="Making the image", status="RUNNING", sentPrompt=prompt)
     _save(job)
-    item = await argolink_run(job, reference)
+    item = await argolink_run(job, images)
     job.update(status="downloading", step="Saving the image")
     _save(job)
     job["file"] = await _download(job, item["url"], suffix=".png") if item.get("url") \

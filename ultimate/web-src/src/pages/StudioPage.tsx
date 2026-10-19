@@ -34,9 +34,9 @@ function fileName(path: string) {
 
 function modeHelp(mode: Mode, kind: 'video' | 'image', name: string): string {
   if (kind === 'image') {
-    return mode === 'text'
-      ? `Describe the image and the model makes it from scratch.`
-      : `Starts from a photo of ${name} and makes a new image from it.`;
+    if (mode === 'text') return `Describe the image and the model makes it from scratch.`;
+    if (mode === 'image') return `Starts from a photo of ${name} and makes a new image from it.`;
+    return `Pick the picture you want to recreate, plus a few photos of ${name} — it rebuilds that picture as ${name}. The reference picture and ${name}'s photos stay separate, so they're never mixed up.`;
   }
   if (mode === 'text') return 'Describe the video and it is made from scratch.';
   if (mode === 'image') return `Starts from a photo of ${name} (the first frame) and brings it to life.`;
@@ -117,6 +117,7 @@ export function StudioPage({
           setRatio(o.ratios[0] ?? '9:16');
           setDuration(o.durations.default || 5);
           setAutoLength(o.durations.auto);
+          setVideos([]); // the reference slot is a video for Wan but a picture for image providers
         })
         .catch(() => {});
     },
@@ -141,11 +142,11 @@ export function StudioPage({
     if (!handoff || handoff.at === handled.current || !options) return;
     handled.current = handoff.at;
     const modes = options.modes.map((x) => x.id);
-    if (handoff.kind === 'studio-video' && modes.includes('reference')) {
+    if (handoff.kind === 'studio-video' && options.kind !== 'image' && modes.includes('reference')) {
       setMode('reference');
       setAutoLength(options.durations.auto);
       setVideos((v) => (v.includes(handoff.path) ? v : [...v, handoff.path].slice(-5)));
-    } else if (modes.includes('image')) {
+    } else if (handoff.kind !== 'studio-video' && modes.includes('image')) {
       setMode('image');
       setPhotos((p) => (p.includes(handoff.path) ? p : [...p, handoff.path].slice(-10)));
     }
@@ -189,8 +190,15 @@ export function StudioPage({
 
   function pick(item: LibraryItem) {
     if (picking === 'videos') {
-      if (item.kind !== 'video') return toast('Pick a video here.');
-      setVideos((v) => (v.includes(item.path) ? v : [...v, item.path].slice(-maxVideos)));
+      if (isImage) {
+        // Image providers: the "reference" slot is the one picture to recreate (one image, kept
+        // separate from the model photos).
+        if (item.kind !== 'image') return toast('Pick an image here.');
+        setVideos([item.path]);
+      } else {
+        if (item.kind !== 'video') return toast('Pick a video here.');
+        setVideos((v) => (v.includes(item.path) ? v : [...v, item.path].slice(-maxVideos)));
+      }
     } else {
       if (item.kind !== 'image') return toast('Pick a photo here.');
       setPhotos((p) => (mode === 'image' ? [item.path] : p.includes(item.path) ? p : [...p, item.path].slice(-maxPhotos)));
@@ -286,10 +294,16 @@ export function StudioPage({
       {picking && (
         <LibraryPicker
           model={model}
-          kinds={picking === 'videos' ? ['found', 'references', 'generated'] : ['photos', 'references', 'generated']}
-          title={picking === 'videos' ? 'Pick a reference video' : `Pick a photo of ${model.name}`}
-          videosOnly={picking === 'videos'}
-          imagesOnly={picking === 'photos'}
+          kinds={
+            picking === 'videos'
+              ? isImage
+                ? ['references', 'found', 'generated', 'photos']
+                : ['found', 'references', 'generated']
+              : ['photos', 'references', 'generated']
+          }
+          title={picking === 'videos' ? (isImage ? 'Pick a picture to recreate' : 'Pick a reference video') : `Pick a photo of ${model.name}`}
+          videosOnly={picking === 'videos' && !isImage}
+          imagesOnly={picking === 'photos' || (picking === 'videos' && isImage)}
           onPick={pick}
           onClose={() => setPicking(null)}
         />
@@ -313,11 +327,16 @@ export function StudioPage({
         {mode === 'reference' && showReference && (
           <div className="stack">
             <div className="row">
-              <strong className="small">Reference video{videos.length > 1 ? 's' : ''}</strong>
+              <strong className="small">{isImage ? 'Picture to recreate' : `Reference video${videos.length > 1 ? 's' : ''}`}</strong>
               <button type="button" className="btn small" onClick={() => setPicking('videos')}>
                 Choose…
               </button>
             </div>
+            {isImage && (
+              <span className="muted small" style={{ marginTop: -4 }}>
+                The picture whose pose, scene and style you want to copy — kept separate from {model.name}'s photos below.
+              </span>
+            )}
             <Picked model={model} paths={videos} onRemove={(p) => setVideos((v) => v.filter((x) => x !== p))} />
           </div>
         )}
@@ -343,7 +362,9 @@ export function StudioPage({
             </div>
             {mode === 'reference' && (
               <span className="muted small" style={{ marginTop: -4 }}>
-                These are the person Wan puts into the reference — {model.name}'s face, hair, body and look.
+                {isImage
+                  ? `${model.name}'s face, hair, body and look — put into the recreated picture (kept separate from the reference above).`
+                  : `These are the person Wan puts into the reference — ${model.name}'s face, hair, body and look.`}
               </span>
             )}
             <Picked model={model} paths={photos} onRemove={(p) => setPhotos((v) => v.filter((x) => x !== p))} />
@@ -354,8 +375,9 @@ export function StudioPage({
           <span>{mode === 'text' ? `Describe the ${verb}` : 'Anything to add? (optional)'}</span>
           {mode === 'reference' && (
             <span className="muted small" style={{ display: 'block', fontWeight: 'normal', marginBottom: 4 }}>
-              Ultimate already tells the model to copy the reference's moves with {model.name} from the photos — add anything
-              else here (light, place, outfit…).
+              {isImage
+                ? `Ultimate already tells the model to rebuild the reference picture as ${model.name} — add anything else here (outfit, light, place…).`
+                : `Ultimate already tells the model to copy the reference's moves with ${model.name} from the photos — add anything else here (light, place, outfit…).`}
             </span>
           )}
           <textarea
@@ -394,7 +416,7 @@ export function StudioPage({
             </select>
           </label>
           <label className="field">
-            <span className="small">{isImage ? 'Size' : 'Quality'}</span>
+            <span className="small">Quality</span>
             <select value={resolution} onChange={(e) => setResolution(e.target.value)}>
               {(options?.resolutions ?? []).map((r) => (
                 <option key={r} value={r}>
@@ -433,7 +455,7 @@ export function StudioPage({
             <span>With sound (matching audio)</span>
           </label>
         )}
-        {!autoLength && mode === 'reference' && duration > 15 && (
+        {!isImage && !autoLength && mode === 'reference' && duration > 15 && (
           <p className="muted small" style={{ margin: 0 }}>
             With a reference video, its length plus the new video's can be 30 s at most — a long reference makes the new
             video shorter.
@@ -465,7 +487,9 @@ export function StudioPage({
             : busy
               ? 'Sending…'
               : mode === 'reference' && videos.length === 0
-                ? 'Choose a reference video'
+                ? isImage
+                  ? 'Choose a picture to recreate'
+                  : 'Choose a reference video'
                 : mode === 'image' && photos.length === 0
                   ? `Choose a photo of ${model.name}`
                   : mode === 'text' && !prompt.trim()
@@ -492,7 +516,7 @@ export function StudioPage({
                 <div className="account-main">
                   <div className="account-name">
                     {job.kind === 'image'
-                      ? `Image · ${job.ratio} · ${job.resolution}`
+                      ? `${job.mode === 'reference' ? 'Recreated picture' : job.mode === 'image' ? 'From a photo' : 'Image'} · ${job.ratio} · ${job.resolution}`
                       : `${job.mode === 'text' ? 'From a prompt' : job.mode === 'image' ? 'From a photo' : 'Like a reference video'} · ${
                           job.seconds ? `${job.seconds}s` : job.duration === -1 ? 'auto length' : `${job.duration}s`
                         } · ${job.ratio} · ${job.resolution}`}
