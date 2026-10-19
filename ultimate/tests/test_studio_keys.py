@@ -38,10 +38,10 @@ def test_each_model_uses_its_own_key(owner, fake):
                   json={"apiKey": GOOD_KEY, "region": "intl", "workspace": "ws-aaa-111"})
     assert r.status_code == 200, r.text
     assert fake.hosts[-1] == "ws-aaa-111.ap-southeast-1.maas.aliyuncs.com"
-    key = r.json()
-    assert key["hasOwnKey"] is True and key["usingDefault"] is False
-    assert key["region"] == "intl" and key["workspace"] == "ws-aaa-111"
-    assert "…" in key["keyMasked"]  # masked, never the real key
+    wan = r.json()["keys"]["wan"]
+    assert wan["hasKey"] is True and wan["usingDefault"] is False
+    assert wan["region"] == "intl" and wan["workspace"] == "ws-aaa-111"
+    assert "…" in wan["keyMasked"]  # masked, never the real key
 
     # B gets a different workspace in a different region.
     r2 = owner.put(f"/api/m/{b['id']}/studio/key", headers=H,
@@ -52,7 +52,7 @@ def test_each_model_uses_its_own_key(owner, fake):
     # Each model is connected and resolves to its own address, independently.
     assert owner.get(f"/api/m/{a['id']}/studio/options").json()["connected"] is True
     assert owner.get(f"/api/m/{b['id']}/studio/options").json()["connected"] is True
-    assert studio.creds(a["id"])["workspace"] == "ws-aaa-111"
+    assert studio.creds(a["id"], "wan")["workspace"] == "ws-aaa-111"
     assert studio.base_url(b["id"]) == "https://ws-bbb-222.eu-central-1.maas.aliyuncs.com"
 
 
@@ -60,8 +60,8 @@ def test_the_default_key_is_the_fallback(owner, fake):
     c = owner.post("/api/models", json={"name": "KeyC"}, headers=H).json()
 
     # No own key and no default yet → not connected.
-    k = owner.get(f"/api/m/{c['id']}/studio/key").json()
-    assert k["usingDefault"] is True and k["hasOwnKey"] is False
+    wan = owner.get(f"/api/m/{c['id']}/studio/key").json()["keys"]["wan"]
+    assert wan["hasKey"] is False and wan["usingDefault"] is False  # no default set yet
     assert owner.get(f"/api/m/{c['id']}/studio/options").json()["connected"] is False
 
     # The shared default makes it connected (via the fallback).
@@ -77,6 +77,34 @@ def test_the_default_key_is_the_fallback(owner, fake):
     # …and removing it falls back to the default again.
     owner.put(f"/api/m/{c['id']}/studio/key", headers=H, json={"apiKey": ""})
     assert studio.base_url(c["id"]) == "https://ws-def-999.ap-southeast-1.maas.aliyuncs.com"
+
+
+def test_a_model_keeps_a_key_per_provider(owner, fake):
+    m = owner.post("/api/models", json={"name": "Multi"}, headers=H).json()["id"]
+    # Save a Wan key and a Seedance key for the SAME model — neither wipes the other.
+    studio.save_creds(m, "wan", GOOD_KEY, "intl", "ws-multi-1")
+    studio.save_creds(m, "seedance", "byte-key", "intl", "")
+    assert studio.creds(m, "wan")["apiKey"] == GOOD_KEY and studio.creds(m, "wan")["workspace"] == "ws-multi-1"
+    assert studio.creds(m, "seedance")["apiKey"] == "byte-key"
+    assert set(studio.connected_providers(m)) >= {"wan", "seedance"}
+    # The key endpoint reports every provider; both are connected here.
+    keys = owner.get(f"/api/m/{m}/studio/key").json()["keys"]
+    assert keys["wan"]["hasKey"] is True and keys["seedance"]["hasKey"] is True
+    assert keys["seedream"]["hasKey"] is False
+    # Removing one provider's key leaves the other untouched.
+    studio.save_creds(m, "wan", "", "intl", "")
+    assert studio.creds(m, "wan")["apiKey"] == "" and studio.creds(m, "seedance")["apiKey"] == "byte-key"
+
+
+def test_old_single_provider_key_migrates(owner, fake):
+    m = owner.post("/api/models", json={"name": "Old"}, headers=H).json()["id"]
+    # A key saved by the old version (one provider per model) is read as that provider's key…
+    settings.save({"studioKeys": {m: {"provider": "seedance", "apiKey": "old-byte", "region": "intl", "workspace": ""}}})
+    assert studio.creds(m, "seedance")["apiKey"] == "old-byte"
+    assert studio.model_keys(m) == {"seedance": {"apiKey": "old-byte", "region": "intl", "workspace": ""}}
+    # …and adding a Wan key keeps the migrated Seedance one.
+    studio.save_creds(m, "wan", GOOD_KEY, "intl", "ws-mig-1")
+    assert studio.creds(m, "seedance")["apiKey"] == "old-byte" and studio.creds(m, "wan")["apiKey"] == GOOD_KEY
 
 
 def test_a_bad_workspace_is_rejected(owner, fake):

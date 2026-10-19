@@ -66,8 +66,8 @@ def test_seedance_makes_a_video(client, fake, tmp_path):
     opts = client.get(f"/api/m/{mid}/studio/options").json()
     assert opts["provider"] == "seedance" and opts["kind"] == "video"
     assert opts["connected"] is True and opts["durations"]["min"] == 4
-    key = client.get(f"/api/m/{mid}/studio/key").json()
-    assert key["provider"] == "seedance" and key["needsWorkspace"] is False
+    keys = client.get(f"/api/m/{mid}/studio/key").json()["keys"]
+    assert keys["seedance"]["hasKey"] is True and keys["seedance"]["connected"] is True
 
     jobs = lambda: client.get(f"/api/m/{mid}/studio/jobs").json()  # noqa: E731
     res = client.post(f"/api/m/{mid}/studio/jobs", headers=H,
@@ -295,7 +295,7 @@ def test_a_models_provider_is_isolated(client, fake, tmp_path):
     b = _model_with_photo(client, "ProvB", tmp_path)
     _connect(client, a, "seedance")
     _connect(client, b, "seedream")
-    assert studio.provider_of(a) == "seedance" and studio.provider_of(b) == "seedream"
+    assert studio.connected_providers(a) == ["seedance"] and studio.connected_providers(b) == ["seedream"]
     assert client.get(f"/api/m/{a}/studio/options").json()["kind"] == "video"
     assert client.get(f"/api/m/{b}/studio/options").json()["kind"] == "image"
 

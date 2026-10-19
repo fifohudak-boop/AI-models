@@ -11,7 +11,7 @@ The top bar is one button per **system**; clicking a system rolls down its pages
 | --- | --- | --- |
 | **Post** | New post · Accounts · History · Analytics | Fifofarm: post one video to all of the model's accounts at once, see how each post went and how the videos do. |
 | **Reel Finder** | Find videos · Library | AI agents scroll TikTok, Instagram and Pinterest for videos that look like the model's reference videos and save the best ones. |
-| **AI Studio** | Make a video · Library · Spending | Makes videos (**Wan**, **Seedance**) and images (**Seedream**) of the model — each model on its own provider + key. The price is automatic, and Spending tracks what each model has spent. |
+| **AI Studio** | Make a video · Library · Spending | Makes videos (**Wan**, **Seedance**, WaveSpeed, VideoRouter) and images (**Seedream**, ArgoLink) of the model — each model holds a key per provider and you switch providers while generating. The price is automatic, and Spending tracks what each model has spent. |
 | **Editing** | Editor | Turn a clip into a ready reel — trim, crop to shape, add music and captions — free, on your Mac with ffmpeg. |
 | **Metadata** | Clean up | Strip the hidden data files carry (camera, GPS, dates, AI/edit tags) before posting. |
 | **Settings** | — | Models and their folders, each model's AI Studio provider + key, the posting engine, posting defaults. |
@@ -77,13 +77,16 @@ Desktop shortcut. Your videos stay in their folders.
 5. **Reel Finder:** log in to TikTok / Instagram / Pinterest once in the agents' browser (or
    click **Copy logins from Reel Finder**). The logins are shared by all models; one
    hunt runs at a time.
-6. **AI Studio:** each model picks **its own provider and key** in Settings → Models → a model →
-   **AI Studio key**, so every model can be a separate paid account. Choose the provider — Alibaba
-   **Wan** or ByteDance **Seedance** for video, ByteDance **Seedream** for images — paste that
-   account's API key and pick its region. Wan also needs the **workspace ID** (Wan is served only on
-   your workspace's own address `{workspace}.{region}.maas.aliyuncs.com`); ByteDance providers need
-   only the key and region. During Wan's preview the safe region is **Singapore**. **Prices are
-   automatic** — worked out from each provider's published rates, so you never type a price.
+6. **AI Studio:** each model holds **its own key for every provider at once** — connect them in
+   Settings → a model → **AI Studio keys** (one row per provider, each connected independently), and
+   every key is a separate paid account. Then in **AI Studio** you **switch between providers freely**
+   with the provider switch at the top — each generation uses that provider's saved key, no
+   re-entering anything. Providers: Alibaba **Wan**, ByteDance **Seedance**, **WaveSpeed** and
+   **VideoRouter** for video; ByteDance **Seedream** and **ArgoLink** for images. Each needs that
+   account's API key and region; Wan also needs the **workspace ID** (Wan is served only on your
+   workspace's own address `{workspace}.{region}.maas.aliyuncs.com`). During Wan's preview the safe
+   region is **Singapore**. **Prices are automatic** — worked out from each provider's published
+   rates, so you never type a price.
 
 ## Where things are kept
 

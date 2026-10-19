@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from 'react';
-import type { Account, AppSettings, AppStatus, FolderKind, Model, ModelStudioKey, Person, Preferences } from '../types';
+import type { Account, AppSettings, AppStatus, FolderKind, Model, ModelStudioKey, ProviderKeyInfo, ProviderMeta, Person, Preferences } from '../types';
 import { api } from '../api';
 import { AccountAvatar } from '../components/AccountAvatar';
 import { EngineSetup } from '../components/EngineSetup';
@@ -73,85 +73,55 @@ function FolderRow({
   );
 }
 
-// A model's own Alibaba key (so different models can be on different accounts). A model without
-// its own uses the shared default. The key is only ever shown masked.
-// Each model's own AI Studio key: pick the provider (Alibaba Wan / ByteDance Seedance / Seedream),
-// paste that account's key, choose its region (and, for Wan, the workspace). Different models can be
-// on different providers and accounts, so each is billed separately.
-function ModelStudioKeySection({ model, toast }: { model: Model; toast: (m: string) => void }) {
-  const [info, setInfo] = useState<ModelStudioKey | null>(null);
+// One provider's key for a model. A model can hold a key for every provider at once, so each has its
+// own connect/remove here; you then switch between them freely in AI Studio. Keys are shown masked.
+function ProviderKeyRow({
+  model,
+  provider,
+  info,
+  onSaved,
+  toast,
+}: {
+  model: Model;
+  provider: ProviderMeta;
+  info: ProviderKeyInfo;
+  onSaved: (next: ModelStudioKey) => void;
+  toast: (m: string) => void;
+}) {
   const [open, setOpen] = useState(false);
-  const [provider, setProvider] = useState('wan');
   const [key, setKey] = useState('');
-  const [region, setRegion] = useState('intl');
-  const [workspace, setWorkspace] = useState('');
+  const [region, setRegion] = useState(info.region || provider.regions[0]?.id || 'intl');
+  const [workspace, setWorkspace] = useState(info.hasKey ? info.workspace : '');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  const load = useCallback(() => {
-    api
-      .modelStudioKey(model.id)
-      .then((i) => {
-        setInfo(i);
-        setProvider(i.provider || 'wan');
-        setRegion(i.region || 'intl');
-        setWorkspace(i.hasOwnKey ? i.workspace : '');
-      })
-      .catch(() => {});
-  }, [model.id]);
-  useEffect(load, [load]);
-
-  if (!info) return null;
-
-  const providers = info.providers;
-  const chosen = providers.find((p) => p.id === provider) ?? providers[0];
-  const needsWorkspace = chosen?.needsWorkspace ?? false;
-  const regionOk = (chosen?.regions ?? []).some((r) => r.id === region);
+  const needsWorkspace = provider.needsWorkspace;
+  const multiRegion = provider.regions.length > 1;
+  const regionOk = provider.regions.some((r) => r.id === region);
   const canSave = Boolean(key.trim() && regionOk && (!needsWorkspace || workspace.trim()));
-  const providerName = providers.find((p) => p.id === info.provider)?.name ?? info.provider;
-  const regionName = (chosen?.regions ?? []).find((r) => r.id === info.region)?.name ?? info.region;
-  const status = info.hasOwnKey
-    ? `${providerName} · ${regionName} · ${info.keyMasked}`
-    : info.defaultConnected
-      ? 'Using the shared default Wan key'
-      : 'No key yet — set one here';
+  const regionName = provider.regions.find((r) => r.id === info.region)?.name ?? info.region;
 
-  function changeProvider(id: string) {
-    setProvider(id);
-    const p = providers.find((x) => x.id === id);
-    if (p && !p.regions.some((r) => r.id === region)) setRegion(p.regions[0]?.id ?? 'intl');
-    if (p && !p.needsWorkspace) setWorkspace('');
-  }
+  const chip = info.connected
+    ? { cls: 'published', text: 'connected' }
+    : info.hasKey
+      ? { cls: 'draft', text: needsWorkspace ? 'needs workspace' : 'key saved' }
+      : info.usingDefault
+        ? { cls: '', text: 'shared default' }
+        : null;
+  const detail = info.hasKey
+    ? `${multiRegion ? `${regionName} · ` : ''}${info.keyMasked}`
+    : info.usingDefault
+      ? 'using the shared default Wan key'
+      : 'no key yet';
 
-  async function save() {
+  async function run(fn: () => Promise<ModelStudioKey>, done: string) {
     setBusy(true);
     setError(null);
     try {
-      const next = await api.saveModelStudioKey(model.id, provider, key.trim() ? key : null, region, workspace.trim());
-      setInfo(next);
+      onSaved(await fn());
       setKey('');
-      setProvider(next.provider || 'wan');
-      setWorkspace(next.hasOwnKey ? next.workspace : '');
-      setRegion(next.region || 'intl');
       setOpen(false);
-      toast(`${model.name}'s AI Studio key saved`);
-    } catch (err) {
-      setError((err as Error).message);
-    } finally {
-      setBusy(false);
-    }
-  }
-
-  async function clearKey() {
-    setBusy(true);
-    setError(null);
-    try {
-      const next = await api.saveModelStudioKey(model.id, 'wan', '', region, '');
-      setInfo(next);
-      setKey('');
-      setWorkspace('');
-      setOpen(false);
-      toast(`${model.name}'s own key removed`);
+      toast(done);
     } catch (err) {
       setError((err as Error).message);
     } finally {
@@ -160,52 +130,43 @@ function ModelStudioKeySection({ model, toast }: { model: Model; toast: (m: stri
   }
 
   return (
-    <div className="stack">
+    <div className="folder-row" style={{ display: 'block' }}>
       <div className="row">
-        <div className="small">
-          <strong>AI Studio key</strong> <span className="muted">{status}</span>
+        <div className="small" style={{ flex: 1 }}>
+          <strong>{provider.name}</strong> <span className="muted">· {provider.kind === 'image' ? 'images' : 'video'}</span>
+          {chip && <span className={`chip ${chip.cls}`} style={{ marginLeft: 6 }}>{chip.text}</span>}
+          <div className="muted small mono" style={{ marginTop: 2 }}>{detail}</div>
         </div>
-        <span className="spacer" />
         <button type="button" className="btn small" onClick={() => setOpen((o) => !o)}>
-          {open ? 'Close' : info.hasOwnKey ? 'Change…' : 'Set a key…'}
+          {open ? 'Close' : info.hasKey ? 'Change…' : 'Connect…'}
         </button>
       </div>
       {open && (
-        <div className="stack">
-          <div className="row2">
-            <label className="field">
-              <span className="small">Provider</span>
-              <select value={provider} onChange={(e) => changeProvider(e.target.value)}>
-                {providers.map((p) => (
-                  <option key={p.id} value={p.id}>
-                    {p.name} {p.kind === 'image' ? '· images' : '· video'}
-                  </option>
-                ))}
-              </select>
-            </label>
+        <div className="stack" style={{ marginTop: 8 }}>
+          <label className="field">
+            <span className="small">
+              API key {info.hasKey && <span className="muted small">(saved: {info.keyMasked})</span>}
+            </span>
+            <input
+              type="password"
+              autoComplete="off"
+              placeholder={info.hasKey ? 'Paste a new key to replace it' : 'Paste the key for this account'}
+              value={key}
+              onChange={(e) => setKey(e.target.value)}
+            />
+          </label>
+          {multiRegion && (
             <label className="field">
               <span className="small">Region</span>
               <select value={region} onChange={(e) => setRegion(e.target.value)}>
-                {(chosen?.regions ?? []).map((r) => (
+                {provider.regions.map((r) => (
                   <option key={r.id} value={r.id}>
                     {r.name}
                   </option>
                 ))}
               </select>
             </label>
-          </div>
-          <label className="field">
-            <span className="small">
-              API key {info.hasOwnKey && <span className="muted small">(saved: {info.keyMasked})</span>}
-            </span>
-            <input
-              type="password"
-              autoComplete="off"
-              placeholder={info.hasOwnKey ? 'Paste a new key to replace it' : 'Paste the key for this account'}
-              value={key}
-              onChange={(e) => setKey(e.target.value)}
-            />
-          </label>
+          )}
           {needsWorkspace && (
             <label className="field">
               <span className="small">
@@ -222,26 +183,71 @@ function ModelStudioKeySection({ model, toast }: { model: Model; toast: (m: stri
             </label>
           )}
           <p className="muted small" style={{ margin: 0 }}>
-            {chosen?.keyHint}{' '}
-            {chosen?.console && (
-              <a href={chosen.console} target="_blank" rel="noreferrer">
+            {provider.keyHint}{' '}
+            {provider.console && (
+              <a href={provider.console} target="_blank" rel="noreferrer">
                 Open the console
               </a>
             )}
           </p>
           {error && <div className="notice error small">{error}</div>}
           <div className="row">
-            <button type="button" className="btn primary small" disabled={busy || !canSave} onClick={save}>
-              {busy ? 'Checking…' : `Save ${model.name}'s key`}
+            <button
+              type="button"
+              className="btn primary small"
+              disabled={busy || !canSave}
+              onClick={() =>
+                run(
+                  () => api.saveModelStudioKey(model.id, provider.id, key.trim() ? key : null, region, workspace.trim()),
+                  `${provider.name} key saved for ${model.name}`
+                )
+              }
+            >
+              {busy ? 'Checking…' : 'Save key'}
             </button>
-            {info.hasOwnKey && (
-              <button type="button" className="btn link small" disabled={busy} onClick={clearKey}>
-                Remove this key
+            {info.hasKey && (
+              <button
+                type="button"
+                className="btn link small"
+                disabled={busy}
+                onClick={() => run(() => api.saveModelStudioKey(model.id, provider.id, '', region, ''), `${provider.name} key removed`)}
+              >
+                Remove
               </button>
             )}
           </div>
         </div>
       )}
+    </div>
+  );
+}
+
+// Every provider's key for one model, each connected independently. Connect the ones you want once;
+// in AI Studio you switch between them without re-entering anything.
+function ModelStudioKeySection({ model, toast }: { model: Model; toast: (m: string) => void }) {
+  const [info, setInfo] = useState<ModelStudioKey | null>(null);
+  useEffect(() => {
+    let active = true;
+    api
+      .modelStudioKey(model.id)
+      .then((i) => active && setInfo(i))
+      .catch(() => {});
+    return () => {
+      active = false;
+    };
+  }, [model.id]);
+  if (!info) return null;
+  return (
+    <div className="stack">
+      <div className="small" style={{ fontWeight: 600 }}>AI Studio keys</div>
+      <p className="muted small" style={{ margin: 0 }}>
+        Connect a key for each provider you want to use with {model.name}. They're saved separately, so in AI Studio you
+        switch between them freely — no re-entering keys. Each provider is its own account, billed on its own.
+      </p>
+      {info.providers.map((p) => {
+        const ki = info.keys[p.id];
+        return ki ? <ProviderKeyRow key={p.id} model={model} provider={p} info={ki} onSaved={setInfo} toast={toast} /> : null;
+      })}
     </div>
   );
 }

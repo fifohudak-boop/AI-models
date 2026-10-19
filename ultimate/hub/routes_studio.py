@@ -23,17 +23,22 @@ def _durations(provider_id: str) -> dict:
     return {"min": studio.MIN_S, "max": studio.MAX_S, "auto": True, "default": 5}
 
 
-def _options(model_id: str | None) -> dict:
-    prov_id = studio.provider_of(model_id)
+def _options(model_id: str | None, provider_id: str | None = None) -> dict:
+    """Options for one provider (the selected one, or this model's default-connected one), plus the
+    full provider list with a `connected` flag so AI Studio can offer a switcher."""
+    prov_id = provider_id if provider_id in providers.PROVIDERS else studio.default_provider(model_id)
     prov = providers.provider(prov_id)
-    c = studio.creds(model_id)
+    c = studio.creds(model_id, prov_id)
+    conn = set(studio.connected_providers(model_id))
     return {
-        "connected": studio.connected(model_id),
+        "connected": studio.connected(model_id, prov_id),
+        "anyConnected": bool(conn),
         "provider": prov_id,
         "providerName": prov["name"],
         "kind": prov["kind"],
-        "needsWorkspace": prov_id == "wan" and studio.has_key(model_id) and not c["workspace"],
-        "providers": [{"id": p["id"], "name": p["name"], "kind": p["kind"]} for p in providers.PROVIDERS.values()],
+        "needsWorkspace": prov_id == "wan" and studio.has_key(model_id, "wan") and not c["workspace"],
+        "providers": [{"id": p["id"], "name": p["name"], "kind": p["kind"], "connected": p["id"] in conn}
+                      for p in providers.PROVIDERS.values()],
         "models": prov["models"],
         "modes": [{"id": m, "name": studio.MODES.get(m, m)} for m in prov["modes"]],
         "resolutions": providers.resolutions(prov_id),
@@ -54,38 +59,46 @@ async def options() -> dict:
 
 
 @router.get("/api/m/{model_id}/studio/options")
-async def model_options(model_id: str) -> dict:
+async def model_options(model_id: str, provider: str | None = None) -> dict:
     personas.require(model_id)
-    return _options(model_id)
+    return _options(model_id, provider)
 
 
 @router.get("/api/m/{model_id}/studio/price")
-async def price(model_id: str, model: str, resolution: str, seconds: float = 0, images: int = 1) -> dict:
+async def price(model_id: str, model: str, resolution: str, seconds: float = 0, images: int = 1,
+                provider: str | None = None) -> dict:
     """The automatic price for one generation with these settings (None when it can't be worked out)."""
     personas.require(model_id)
-    prov_id = studio.provider_of(model_id)
-    region = studio.creds(model_id)["region"]
+    prov_id = provider if provider in providers.PROVIDERS else studio.default_provider(model_id)
+    region = studio.creds(model_id, prov_id)["region"]
     value = providers.price(prov_id, model, region, resolution, seconds or None, images)
     return {"price": value, "currency": studio.currency()}
 
 
 @router.get("/api/m/{model_id}/studio/key")
 async def get_model_key(model_id: str) -> dict:
-    """What key this model uses (owner only) — the key itself is only ever shown masked."""
+    """Every provider's key status for this model (owner only). Keys are only ever shown masked.
+    A model can hold a key for each provider at once, so this returns one entry per provider."""
     personas.require(model_id)
     s = settings.get()
-    own = (s.get("studioKeys") or {}).get(model_id) or {}
+    mk = studio.model_keys(model_id, s)  # {provider: {apiKey, region, workspace}}
     default = studio._default_creds(s)
-    c = studio.creds(model_id)
+    default_ok = bool(default["apiKey"]) and bool(default["workspace"])
+    keys = {}
+    for pid in providers.PROVIDERS:
+        c = studio.creds(model_id, pid)
+        own = mk.get(pid) or {}
+        keys[pid] = {
+            "hasKey": bool(own.get("apiKey")),
+            "keyMasked": settings.mask(c["apiKey"]),
+            "region": c["region"],
+            "workspace": c["workspace"],
+            "connected": studio.connected(model_id, pid),
+            "usingDefault": pid == "wan" and not own.get("apiKey") and default_ok,
+        }
     return {
-        "hasOwnKey": bool(own.get("apiKey")),
-        "usingDefault": not bool(own.get("apiKey")),
-        "provider": c["provider"],
-        "keyMasked": settings.mask(c["apiKey"]),
-        "region": c["region"],
-        "workspace": c["workspace"],
-        "needsWorkspace": c["provider"] == "wan",
-        "defaultConnected": bool(default["apiKey"]) and bool(default["workspace"]),
+        "defaultConnected": default_ok,
+        "keys": keys,
         "providers": [{"id": p["id"], "name": p["name"], "kind": p["kind"], "needsWorkspace": p["needsWorkspace"],
                        "regions": p["regions"], "keyHint": p["keyHint"], "console": p["console"]}
                       for p in providers.PROVIDERS.values()],
@@ -94,7 +107,7 @@ async def get_model_key(model_id: str) -> dict:
 
 class ModelKeyBody(BaseModel):
     provider: str = "wan"
-    apiKey: str | None = None  # None keeps the saved key; "" removes this model's own key
+    apiKey: str | None = None  # None keeps the saved key; "" removes this provider's key for the model
     region: str = "intl"
     workspace: str = ""
 
@@ -102,11 +115,11 @@ class ModelKeyBody(BaseModel):
 @router.put("/api/m/{model_id}/studio/key")
 async def set_model_key(model_id: str, body: ModelKeyBody) -> dict:
     personas.require(model_id)
-    if body.apiKey == "":
-        studio.save_creds(model_id, "wan", "", body.region, "")
-        return await get_model_key(model_id)
     if body.provider not in providers.PROVIDERS:
         raise HTTPException(400, "Pick a provider.")
+    if body.apiKey == "":  # remove just this provider's key, leaving the model's other keys intact
+        studio.save_creds(model_id, body.provider, "", body.region, "")
+        return await get_model_key(model_id)
     prov = providers.provider(body.provider)
     region_ids = {r["id"] for r in prov["regions"]}
     if body.region not in region_ids:
@@ -117,8 +130,8 @@ async def set_model_key(model_id: str, body: ModelKeyBody) -> dict:
             raise HTTPException(400, "That workspace ID doesn't look right — copy it from the Model Studio console.")
     else:
         workspace = ""
-    own = (settings.get().get("studioKeys") or {}).get(model_id) or {}
-    key = own.get("apiKey", "") if body.apiKey is None else body.apiKey.strip()
+    saved = studio.model_keys(model_id).get(body.provider) or {}
+    key = saved.get("apiKey", "") if body.apiKey is None else body.apiKey.strip()
     # Check only once everything the provider needs is present (Wan also needs the workspace).
     ready = bool(key) and (workspace or not prov["needsWorkspace"])
     if ready:

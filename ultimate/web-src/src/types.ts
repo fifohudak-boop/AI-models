@@ -422,25 +422,30 @@ export interface ProviderMeta {
   console: string;
 }
 
-export interface ModelStudioKey {
-  hasOwnKey: boolean; // this model has its own key (not the shared default)
-  usingDefault: boolean;
-  provider: string;
-  keyMasked: string; // the key is only ever shown masked
+// One provider's key status for a model (the key itself is only ever shown masked).
+export interface ProviderKeyInfo {
+  hasKey: boolean; // a key is saved for this provider on this model
+  keyMasked: string;
   region: string;
   workspace: string;
-  needsWorkspace: boolean;
+  connected: boolean; // usable right now (Wan also needs a workspace)
+  usingDefault: boolean; // Wan with no own key, falling back to the shared default
+}
+
+export interface ModelStudioKey {
   defaultConnected: boolean; // is the shared default (Wan) key usable?
+  keys: Record<string, ProviderKeyInfo>; // provider id -> its key status for this model
   providers: ProviderMeta[];
 }
 
 export interface StudioOptions {
-  connected: boolean;
-  provider: string;
+  connected: boolean; // the selected provider is usable
+  anyConnected: boolean; // the model has at least one usable provider
+  provider: string; // the selected provider
   providerName: string;
   kind: 'video' | 'image';
   needsWorkspace?: boolean;
-  providers: { id: string; name: string; kind: 'video' | 'image' }[];
+  providers: { id: string; name: string; kind: 'video' | 'image'; connected: boolean }[];
   models: { id: string; name: string }[];
   modes: { id: 'text' | 'image' | 'reference'; name: string }[];
   resolutions: string[]; // for an image provider these are sizes (1K/2K/4K)
