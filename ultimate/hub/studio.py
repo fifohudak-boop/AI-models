@@ -86,7 +86,10 @@ class StudioError(Exception):
         self.status = status
 
 
-# ---------------------------------------------------------------- each model's own key
+# ---------------------------------------------------------------- each model's own keys (per provider)
+# A model can hold a separate key for every provider at once: settings.studioKeys[model_id] is
+# { provider_id: {apiKey, region, workspace} }. The provider is chosen per generation in AI Studio,
+# so you connect all your keys once and switch freely without re-entering anything.
 
 def _default_creds(s: dict | None = None) -> dict:
     s = s or settings.get()
@@ -94,66 +97,99 @@ def _default_creds(s: dict | None = None) -> dict:
             "region": s.get("alibabaRegion") or "intl", "workspace": (s.get("alibabaWorkspace") or "").strip()}
 
 
-def creds(model_id: str | None) -> dict:
-    """This model's provider + key + region (+ workspace for Wan): its own if set, else the shared Wan default."""
-    s = settings.get()
+def _default_region(provider_id: str) -> str:
+    regions = providers.provider(provider_id).get("regions") or []
+    return regions[0]["id"] if regions else "intl"
+
+
+def model_keys(model_id: str | None, s: dict | None = None) -> dict:
+    """A model's saved keys as { provider_id: {apiKey, region, workspace} }, migrating the old
+    one-provider-per-model shape ({provider, apiKey, region, workspace}) on read."""
+    s = s or settings.get()
     entry = (s.get("studioKeys") or {}).get(model_id or "") or {}
-    if entry.get("apiKey"):
-        prov = entry.get("provider") or "wan"
-        return {"provider": prov if prov in providers.PROVIDERS else "wan", "apiKey": entry.get("apiKey") or "",
-                "region": entry.get("region") or "intl", "workspace": (entry.get("workspace") or "").strip()}
-    return _default_creds(s)
+    if "apiKey" in entry:  # old single-provider shape → one entry under its provider
+        if not entry.get("apiKey"):
+            return {}
+        prov = entry.get("provider") if entry.get("provider") in providers.PROVIDERS else "wan"
+        return {prov: {"apiKey": entry.get("apiKey") or "", "region": entry.get("region") or "intl",
+                       "workspace": (entry.get("workspace") or "").strip()}}
+    return {p: v for p, v in entry.items() if isinstance(v, dict) and p in providers.PROVIDERS}
 
 
-def provider_of(model_id: str | None) -> str:
-    return creds(model_id)["provider"]
+def creds(model_id: str | None, provider_id: str) -> dict:
+    """This model's key + region (+ workspace for Wan) for one provider: its own if set, else — for
+    Wan only — the shared default key."""
+    pc = model_keys(model_id).get(provider_id) or {}
+    if pc.get("apiKey"):
+        return {"provider": provider_id, "apiKey": pc.get("apiKey") or "",
+                "region": pc.get("region") or _default_region(provider_id),
+                "workspace": (pc.get("workspace") or "").strip()}
+    if provider_id == "wan":
+        return _default_creds()
+    return {"provider": provider_id, "apiKey": "", "region": _default_region(provider_id), "workspace": ""}
 
 
 def save_creds(model_id: str, provider_id: str, api_key: str | None, region: str, workspace: str) -> None:
-    """Set (or clear) a model's own key. api_key None keeps the saved key; "" removes the override."""
+    """Set (or clear) a model's key for one provider, leaving its other providers' keys untouched.
+    api_key None keeps the saved key (change region/workspace only); "" removes this provider's key."""
     s = settings.get()
-    keys = dict(s.get("studioKeys") or {})
+    all_keys = dict(s.get("studioKeys") or {})
+    keys = dict(model_keys(model_id, s))  # a migrated copy of this model's keys
     if api_key == "":
-        keys.pop(model_id, None)
+        keys.pop(provider_id, None)
     else:
-        existing = keys.get(model_id) or {}
-        keys[model_id] = {
-            "provider": provider_id if provider_id in providers.PROVIDERS else "wan",
-            "apiKey": existing.get("apiKey", "") if api_key is None else api_key,
-            "region": region, "workspace": workspace,
-        }
-    settings.save({"studioKeys": keys})
+        existing = keys.get(provider_id) or {}
+        keys[provider_id] = {"apiKey": existing.get("apiKey", "") if api_key is None else api_key,
+                             "region": region, "workspace": workspace}
+    if keys:
+        all_keys[model_id] = keys
+    else:
+        all_keys.pop(model_id, None)
+    settings.save({"studioKeys": all_keys})
 
 
-def connected(model_id: str | None = None) -> bool:
-    c = creds(model_id)
+def connected(model_id: str | None, provider_id: str) -> bool:
+    c = creds(model_id, provider_id)
     if not c["apiKey"]:
         return False
-    if c["provider"] == "wan":
-        return bool(c["workspace"])
+    if provider_id == "wan":
+        return bool(c["workspace"])  # Wan also needs the workspace ID
     return True
 
 
-def has_key(model_id: str | None = None) -> bool:
-    return bool(creds(model_id)["apiKey"])
+def has_key(model_id: str | None, provider_id: str) -> bool:
+    return bool(creds(model_id, provider_id)["apiKey"])
+
+
+def connected_providers(model_id: str | None) -> list[str]:
+    """Providers this model can generate with right now (own key, or the shared Wan default)."""
+    return [p for p in providers.PROVIDERS if connected(model_id, p)]
+
+
+def default_provider(model_id: str | None) -> str:
+    """Which provider AI Studio shows first: the first connected one, else Wan."""
+    conn = connected_providers(model_id)
+    return conn[0] if conn else "wan"
 
 
 def any_connected() -> bool:
     s = settings.get()
     if _default_creds(s)["apiKey"]:
         return True
-    return any(bool(e.get("apiKey")) for e in (s.get("studioKeys") or {}).values())
+    for entry in (s.get("studioKeys") or {}).values():
+        if not isinstance(entry, dict):
+            continue
+        if "apiKey" in entry and entry.get("apiKey"):  # old shape
+            return True
+        if any(isinstance(v, dict) and v.get("apiKey") for v in entry.values()):
+            return True
+    return False
 
 
 # ---------------------------------------------------------------- automatic price & spending
 
 def currency() -> str:
     return "USD"  # all provider rates we track are in USD
-
-
-def estimate(model_id: str, model: str, region: str, resolution: str,
-             seconds: float | None = None, images: int = 1) -> float | None:
-    return providers.price(provider_of(model_id), model, region, resolution, seconds, images)
 
 
 def _job_cost(job: dict) -> float | None:
@@ -206,7 +242,7 @@ def spending(model_id: str) -> dict:
 # ---------------------------------------------------------------- Wan: endpoints
 
 def _region_workspace(region: str | None, workspace: str | None, model_id: str | None = None) -> tuple[str, str]:
-    c = creds(model_id)
+    c = creds(model_id, "wan")
     region = region if region is not None else c["region"]
     workspace = (workspace if workspace is not None else c["workspace"]).strip()
     return (region if region in REGIONS else "intl"), workspace
@@ -231,8 +267,9 @@ def bytedance_base(region: str) -> str:
     return entry[1]
 
 
-def _headers(extra: dict | None = None, key: str | None = None, model_id: str | None = None) -> dict:
-    key = key if key is not None else creds(model_id)["apiKey"]
+def _headers(extra: dict | None = None, key: str | None = None, model_id: str | None = None,
+             provider_id: str = "wan") -> dict:
+    key = key if key is not None else creds(model_id, provider_id)["apiKey"]
     if not key:
         raise StudioError("Connect this model's API key first (Settings → Models → AI Studio key).", 424)
     return {"Authorization": f"Bearer {key}", **(extra or {})}
@@ -401,7 +438,7 @@ _BYTE_STATUS = {"queued": "RUNNING", "running": "RUNNING", "pending": "RUNNING",
 
 
 async def seedance_create(job: dict, first_frame: Path | None) -> str:
-    c = creds(job["modelId"])
+    c = creds(job["modelId"], "seedance")
     content: list[dict] = [{"type": "text", "text": job["sentPrompt"][:20000]}] if job["sentPrompt"] else []
     if first_frame is not None:
         content.append({"type": "image_url", "role": "first_frame", "image_url": {"url": _data_uri(first_frame)}})
@@ -410,7 +447,8 @@ async def seedance_create(job: dict, first_frame: Path | None) -> str:
             "watermark": False, "generate_audio": bool(job.get("audio"))}
     async with _client(60) as client:
         resp = await client.post(f"{bytedance_base(c['region'])}/api/v3/contents/generations/tasks",
-                                 headers=_headers({"Content-Type": "application/json"}, model_id=job["modelId"]),
+                                 headers=_headers({"Content-Type": "application/json"}, model_id=job["modelId"],
+                                                  provider_id="seedance"),
                                  json=body)
     if resp.status_code >= 400:
         raise StudioError(_message(resp, "ByteDance"), 502)
@@ -421,10 +459,10 @@ async def seedance_create(job: dict, first_frame: Path | None) -> str:
 
 
 async def seedance_get(task_id: str, model_id: str) -> dict:
-    c = creds(model_id)
+    c = creds(model_id, "seedance")
     async with _client(30) as client:
         resp = await client.get(f"{bytedance_base(c['region'])}/api/v3/contents/generations/tasks/{task_id}",
-                                headers=_headers(model_id=model_id))
+                                headers=_headers(model_id=model_id, provider_id="seedance"))
     if resp.status_code >= 400:
         raise StudioError(_message(resp, "ByteDance"), 502)
     data = resp.json() or {}
@@ -452,7 +490,7 @@ def _seedream_size(size_label: str, ratio: str) -> str:
 
 async def seedream_run(job: dict, reference: Path | None) -> list[str]:
     """Seedream is synchronous — this returns the generated image URL(s) directly."""
-    c = creds(job["modelId"])
+    c = creds(job["modelId"], "seedream")
     body: dict[str, Any] = {"model": job["model"], "prompt": job["sentPrompt"][:4000],
                             "size": _seedream_size(job["resolution"], job["ratio"]),
                             "response_format": "url", "watermark": False,
@@ -461,7 +499,8 @@ async def seedream_run(job: dict, reference: Path | None) -> list[str]:
         body["image"] = [_data_uri(reference)]
     async with _client(120) as client:
         resp = await client.post(f"{bytedance_base(c['region'])}/api/v3/images/generations",
-                                 headers=_headers({"Content-Type": "application/json"}, model_id=job["modelId"]),
+                                 headers=_headers({"Content-Type": "application/json"}, model_id=job["modelId"],
+                                                  provider_id="seedream"),
                                  json=body)
     if resp.status_code >= 400:
         raise StudioError(_message(resp, "ByteDance"), 502)
@@ -485,8 +524,8 @@ async def argolink_run(job: dict, reference: Path | None) -> dict:
     else:
         endpoint = f"{providers.ARGOLINK_HOST}/images/generations"
     async with _client(900) as client:  # ArgoLink images can take minutes
-        resp = await client.post(endpoint, headers=_headers({"Content-Type": "application/json"}, model_id=job["modelId"]),
-                                 json=body)
+        resp = await client.post(endpoint, headers=_headers({"Content-Type": "application/json"},
+                                 model_id=job["modelId"], provider_id="argolink"), json=body)
     if resp.status_code >= 400:
         raise StudioError(_message(resp, "ArgoLink"), 502)
     items = (resp.json() or {}).get("data") or []
@@ -521,7 +560,8 @@ async def wavespeed_create(job: dict, first_frame: Path | None) -> str:
         body["image"] = _data_uri(first_frame)
     async with _client(60) as client:
         resp = await client.post(f"{providers.WAVESPEED_HOST}/{path}",
-                                 headers=_headers({"Content-Type": "application/json"}, model_id=job["modelId"]),
+                                 headers=_headers({"Content-Type": "application/json"}, model_id=job["modelId"],
+                                                  provider_id="wavespeed"),
                                  json=body)
     if resp.status_code >= 400:
         raise StudioError(_message(resp, "WaveSpeed"), 502)
@@ -534,7 +574,7 @@ async def wavespeed_create(job: dict, first_frame: Path | None) -> str:
 async def wavespeed_get(task_id: str, model_id: str) -> dict:
     async with _client(30) as client:
         resp = await client.get(f"{providers.WAVESPEED_HOST}/predictions/{task_id}/result",
-                                headers=_headers(model_id=model_id))
+                                headers=_headers(model_id=model_id, provider_id="wavespeed"))
     if resp.status_code >= 400:
         raise StudioError(_message(resp, "WaveSpeed"), 502)
     data = (resp.json() or {}).get("data") or {}
@@ -560,7 +600,8 @@ async def videorouter_create(job: dict, first_frame: Path | None) -> str:
         body["start_image_url"] = _data_uri(first_frame)
     async with _client(60) as client:
         resp = await client.post(f"{providers.VIDEOROUTER_HOST}/videos",
-                                 headers=_headers({"Content-Type": "application/json"}, model_id=job["modelId"]),
+                                 headers=_headers({"Content-Type": "application/json"}, model_id=job["modelId"],
+                                                  provider_id="videorouter"),
                                  json=body)
     if resp.status_code >= 400:
         raise StudioError(_message(resp, "VideoRouter"), 502)
@@ -572,7 +613,8 @@ async def videorouter_create(job: dict, first_frame: Path | None) -> str:
 
 async def videorouter_get(task_id: str, model_id: str) -> dict:
     async with _client(30) as client:
-        resp = await client.get(f"{providers.VIDEOROUTER_HOST}/videos/{task_id}", headers=_headers(model_id=model_id))
+        resp = await client.get(f"{providers.VIDEOROUTER_HOST}/videos/{task_id}",
+                                headers=_headers(model_id=model_id, provider_id="videorouter"))
     if resp.status_code >= 400:
         raise StudioError(_message(resp, "VideoRouter"), 502)
     data = resp.json() or {}
@@ -674,7 +716,11 @@ def _save(job: dict) -> None:
 
 def validate_request(model_id: str, req: dict) -> dict:
     persona = personas.require(model_id)
-    prov_id = provider_of(model_id)
+    # The provider is chosen per generation now. Keep a valid id as-is (so create_job can reject it
+    # with a clear "connect a key" message if it isn't connected); only fall back when it's missing.
+    prov_id = req.get("provider")
+    if prov_id not in providers.PROVIDERS:
+        prov_id = default_provider(model_id)
     prov = providers.provider(prov_id)
     kind = prov["kind"]
     mode = req.get("mode")
@@ -728,15 +774,17 @@ def validate_request(model_id: str, req: dict) -> dict:
 
     return {"provider": prov_id, "kind": kind, "mode": mode, "prompt": prompt, "model": model,
             "resolution": resolution, "ratio": ratio, "duration": duration,
-            "region": creds(model_id)["region"], "audio": req.get("audio") is not False, **inputs}
+            "region": creds(model_id, prov_id)["region"], "audio": req.get("audio") is not False, **inputs}
 
 
 def create_job(model_id: str, req: dict) -> dict:
-    if not connected(model_id):
-        raise StudioError("Connect this model's API key first (Settings → Models → AI Studio key).", 424)
-    if provider_of(model_id) == "wan":
-        base_url(model_id)  # fail early if the workspace ID is missing
     clean = validate_request(model_id, req)
+    prov_id = clean["provider"]
+    if not connected(model_id, prov_id):
+        name = providers.provider(prov_id)["name"]
+        raise StudioError(f"Connect a {name} key for this model first (Settings → the model → AI Studio key).", 424)
+    if prov_id == "wan":
+        base_url(model_id)  # fail early if the workspace ID is missing
     job = {"id": uuid.uuid4().hex, "modelId": model_id, "createdAt": _now(), "status": "starting",
            "step": "Getting your files ready", "error": None, "taskId": None, "file": None, "images": 1, **clean}
     _save(job)

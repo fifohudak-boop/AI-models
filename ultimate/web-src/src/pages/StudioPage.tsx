@@ -76,6 +76,7 @@ export function StudioPage({
   onSettings: () => void;
 }) {
   const [options, setOptions] = useState<StudioOptions | null>(null);
+  const [provider, setProvider] = useState('');
   const [jobs, setJobs] = useState<StudioJob[] | null>(null);
   const [mode, setMode] = useState<Mode>('reference');
   const [prompt, setPrompt] = useState('');
@@ -100,32 +101,39 @@ export function StudioPage({
     }
   }, [model.id]);
 
-  const inited = useRef(false);
+  // Load options for one provider (the model's default-connected one, or the one you switch to) and
+  // set sensible defaults for it. Switching provider just refetches — your saved keys do the rest.
+  const loadOptions = useCallback(
+    (providerId?: string) => {
+      api
+        .modelStudioOptions(model.id, providerId)
+        .then((o) => {
+          setOptions(o);
+          setProvider(o.provider);
+          const modes = o.modes.map((x) => x.id);
+          setMode(modes.includes('reference') ? 'reference' : (modes[0] as Mode));
+          setGenModel(o.models[0]?.id ?? '');
+          setResolution(o.kind === 'video' ? o.resolutions[o.resolutions.length - 1] : o.resolutions[1] ?? o.resolutions[0]);
+          setRatio(o.ratios[0] ?? '9:16');
+          setDuration(o.durations.default || 5);
+          setAutoLength(o.durations.auto);
+        })
+        .catch(() => {});
+    },
+    [model.id]
+  );
+
   useEffect(() => {
-    inited.current = false;
-    api
-      .modelStudioOptions(model.id)
-      .then((o) => {
-        setOptions(o);
-        // Set sensible defaults for this provider, once.
-        const modes = o.modes.map((x) => x.id);
-        setMode(modes.includes('reference') ? 'reference' : (modes[0] as Mode));
-        setGenModel(o.models[0]?.id ?? '');
-        setResolution(o.kind === 'video' ? o.resolutions[o.resolutions.length - 1] : o.resolutions[1] ?? o.resolutions[0]);
-        setRatio(o.ratios[0] ?? '9:16');
-        setDuration(o.durations.default || 5);
-        setAutoLength(o.durations.auto);
-        inited.current = true;
-      })
-      .catch(() => {});
+    loadOptions();
     load();
-  }, [load, model.id]);
+  }, [loadOptions, load]);
 
   const kind = options?.kind ?? 'video';
   const connected = options?.connected ?? false;
   const needsWorkspace = options?.needsWorkspace ?? false;
   const providerName = options?.providerName ?? 'a provider';
   const isImage = kind === 'image';
+  const connectedProviders = (options?.providers ?? []).filter((p) => p.connected);
 
   // Sent here from Reel Finder or the library.
   const handled = useRef(0);
@@ -162,13 +170,13 @@ export function StudioPage({
     }
     let live = true;
     api
-      .studioPrice(model.id, genModel, resolution, estSeconds, 1)
+      .studioPrice(model.id, genModel, resolution, estSeconds, 1, provider)
       .then((r) => live && setPrice(r.price))
       .catch(() => live && setPrice(null));
     return () => {
       live = false;
     };
-  }, [connected, genModel, resolution, estSeconds, model.id]);
+  }, [connected, genModel, resolution, estSeconds, model.id, provider]);
 
   const maxVideos = options?.maxVideos ?? 5;
   const maxPhotos = options?.maxPhotos ?? 10;
@@ -195,6 +203,7 @@ export function StudioPage({
     setError(null);
     try {
       const job = await api.createStudioJob(model.id, {
+        provider,
         mode,
         prompt,
         model: genModel,
@@ -231,18 +240,40 @@ export function StudioPage({
         </span>
       </div>
 
+      {connectedProviders.length > 1 && (
+        <div className="stack" style={{ marginBottom: 12 }}>
+          <span className="small muted">Provider — switch any time, each uses its own saved key</span>
+          <div className="segmented" role="radiogroup" aria-label="Provider">
+            {connectedProviders.map((p) => (
+              <button
+                key={p.id}
+                type="button"
+                role="radio"
+                aria-checked={provider === p.id}
+                className={provider === p.id ? 'on' : ''}
+                onClick={() => loadOptions(p.id)}
+              >
+                {p.name}
+                {p.kind === 'image' ? ' · images' : ''}
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
+
       {!connected && (
         <section className="card stack studio-connect">
           <h2>{needsWorkspace ? 'Add your workspace ID' : 'Connect a video or image provider'}</h2>
           <p className="small" style={{ margin: 0 }}>
-            AI Studio makes new videos and images of {model.name}. Each model picks its own provider and key — Alibaba{' '}
-            <strong>Wan</strong> or ByteDance <strong>Seedance</strong> for video, ByteDance <strong>Seedream</strong> for
-            images — so every model can be a separate paid account.
+            AI Studio makes new videos and images of {model.name}. Connect a key for any provider — Alibaba{' '}
+            <strong>Wan</strong>, ByteDance <strong>Seedance</strong>, WaveSpeed or VideoRouter for video, ByteDance{' '}
+            <strong>Seedream</strong> or ArgoLink for images. Connect several and switch between them here; each is its own
+            paid account.
           </p>
           <p className="small muted" style={{ margin: 0 }}>
             {needsWorkspace
-              ? `${model.name}'s Wan key is saved, but Wan is served only on your workspace's own address — add the Model Studio workspace ID in Settings → Models → ${model.name}'s AI Studio key to finish.`
-              : `Set ${model.name}'s provider and key in Settings → Models → ${model.name}'s AI Studio key.`}
+              ? `${model.name}'s Wan key is saved, but Wan is served only on your workspace's own address — add the Model Studio workspace ID in Settings → ${model.name} → AI Studio keys to finish.`
+              : `Connect ${model.name}'s keys in Settings → ${model.name} → AI Studio keys.`}
           </p>
           <div className="row">
             <button className="btn primary" onClick={onSettings}>

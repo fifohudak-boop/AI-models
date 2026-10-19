@@ -98,8 +98,9 @@ async def status() -> dict:
         "build": installed_commit()[:7] or "dev",
         "updateAvailable": update_watch.available,
         "engine": engine,
-        "studio": {"connected": studio.connected(), "hasKey": studio.has_key(),
-                   "needsWorkspace": studio.has_key() and not (s.get("alibabaWorkspace") or "").strip(),
+        # The shared default Wan key's state (per-model keys are reported by the studio key endpoint).
+        "studio": {"connected": studio.connected(None, "wan"), "hasKey": studio.has_key(None, "wan"),
+                   "needsWorkspace": studio.has_key(None, "wan") and not (s.get("alibabaWorkspace") or "").strip(),
                    "region": s.get("alibabaRegion", "intl")},
         "sharing": {"enabled": bool(s.get("sharingEnabled")), "host": s.get("shareHost", "")},
         "activeModel": s.get("activeModel") or "",

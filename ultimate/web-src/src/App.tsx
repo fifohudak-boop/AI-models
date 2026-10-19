@@ -405,6 +405,7 @@ export function App() {
             onModels={(list) => setModels(list)}
             onSelectModel={selectModel}
             onCreateModel={createModel}
+            onGoAccounts={() => go('accounts')}
           />
         )}
       </main>

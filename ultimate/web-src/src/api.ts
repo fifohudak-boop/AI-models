@@ -178,15 +178,17 @@ export const api = {
 
   // ---- AI Studio ----
   studioOptions: () => request<StudioOptions>('/api/studio/options'),
-  modelStudioOptions: (model: string) => request<StudioOptions>(`${m(model)}/studio/options`),
+  modelStudioOptions: (model: string, provider?: string) =>
+    request<StudioOptions>(`${m(model)}/studio/options${provider ? `?provider=${enc(provider)}` : ''}`),
   modelStudioKey: (model: string) => request<ModelStudioKey>(`${m(model)}/studio/key`),
   // apiKey null keeps the saved key; '' removes this model's own key (back to the shared default).
   saveModelStudioKey: (model: string, provider: string, apiKey: string | null, region: string, workspace: string) =>
     request<ModelStudioKey>(`${m(model)}/studio/key`, { method: 'PUT', body: { provider, apiKey, region, workspace } }),
   // The automatic price for one generation with these settings.
-  studioPrice: (model: string, genModel: string, resolution: string, seconds: number, images = 1) =>
+  studioPrice: (model: string, genModel: string, resolution: string, seconds: number, images = 1, provider?: string) =>
     request<{ price: number | null; currency: string }>(
-      `${m(model)}/studio/price?model=${enc(genModel)}&resolution=${enc(resolution)}&seconds=${seconds}&images=${images}`
+      `${m(model)}/studio/price?model=${enc(genModel)}&resolution=${enc(resolution)}&seconds=${seconds}&images=${images}` +
+        (provider ? `&provider=${enc(provider)}` : '')
     ),
   studioJobs: (model: string) => request<StudioJob[]>(`${m(model)}/studio/jobs`),
   createStudioJob: (model: string, body: Record<string, unknown>) =>
