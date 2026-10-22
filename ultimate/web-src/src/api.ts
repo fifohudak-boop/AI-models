@@ -243,6 +243,16 @@ export function uploadReference(model: string, file: File): Promise<Reference> {
   return sendFile<Reference>(`${m(model)}/reels/references/upload?name=${enc(file.name)}`, file);
 }
 
+// A picture or reference video dragged onto the AI Studio page. Saved into the model's drop area and
+// returned as a path, usable in Generate exactly like a library file.
+export function uploadStudioFile(
+  model: string,
+  file: File,
+  onProgress?: (fraction: number) => void
+): Promise<{ path: string; name: string; kind: 'image' | 'video' | null }> {
+  return sendFile(`${m(model)}/studio/upload?name=${enc(file.name)}`, file, onProgress);
+}
+
 export function uploadMusic(model: string, file: File): Promise<{ name: string; path: string; size: number }> {
   return sendFile(`${m(model)}/edit/music?name=${enc(file.name)}`, file);
 }

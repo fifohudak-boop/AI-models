@@ -490,6 +490,11 @@ export interface StudioJob {
   audio?: boolean;
   photos: string[];
   videos: string[];
+  batch?: boolean; // reference images: a whole folder recreated at once
+  total?: number; // batch: how many pictures to recreate
+  done?: number; // batch: how many are finished
+  failedCount?: number; // batch: how many couldn't be recreated
+  files?: string[]; // every saved output (a batch has many)
   sentPrompt?: string;
   referenceSeconds?: number;
   seconds?: number | null;

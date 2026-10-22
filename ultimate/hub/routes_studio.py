@@ -2,11 +2,13 @@
 
 from __future__ import annotations
 
+from pathlib import Path
+
 import httpx
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel
 
-from . import personas, providers, settings, studio
+from . import library, personas, providers, settings, studio
 
 router = APIRouter()
 
@@ -164,3 +166,30 @@ async def create(model_id: str, body: dict) -> dict:
         return studio.create_job(model_id, body)
     except studio.StudioError as exc:
         raise HTTPException(exc.status, str(exc)) from exc
+
+
+@router.post("/api/m/{model_id}/studio/upload", status_code=201)
+async def upload(model_id: str, request: Request, name: str = "file") -> dict:
+    """A picture or reference video dragged straight onto the AI Studio page (one file per request —
+    a whole folder is many of these). The bytes are the raw request body. Saved into the model's drop
+    area so it's usable and served like any library file. Returns its path, so Generate can use it."""
+    personas.require(model_id)
+    if library.media_kind(Path(name)) is None:
+        raise HTTPException(415, f"{Path(name).name} isn't a picture or video.")
+    target = studio.staged_upload_path(model_id, name)
+    size = 0
+    try:
+        with target.open("wb") as fh:
+            async for chunk in request.stream():
+                size += len(chunk)
+                if size > studio.MAX_UPLOAD_BYTES:
+                    raise HTTPException(413, "That file is too big (over 4 GB).")
+                fh.write(chunk)
+    except BaseException:
+        target.unlink(missing_ok=True)
+        raise
+    if size == 0:
+        target.unlink(missing_ok=True)
+        raise HTTPException(400, "No file received.")
+    studio.forget_old_uploads(model_id)
+    return {"path": str(target), "name": Path(name).name, "kind": library.media_kind(target)}

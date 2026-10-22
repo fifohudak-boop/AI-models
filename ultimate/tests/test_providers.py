@@ -200,25 +200,25 @@ def test_argolink_makes_an_image(client, tmp_path):
 
         opts = client.get(f"/api/m/{mid}/studio/options").json()
         assert opts["provider"] == "argolink" and opts["kind"] == "image"
-        assert opts["resolutions"] == ["1K", "2K"]
+        assert opts["resolutions"] == ["1K", "2K", "4K"]
 
         jobs = lambda: client.get(f"/api/m/{mid}/studio/jobs").json()  # noqa: E731
         # text → /images/generations (URL response, downloaded)
         res = client.post(f"/api/m/{mid}/studio/jobs", headers=H, json={
-            "mode": "text", "prompt": "portrait of Mia", "model": "seedream-5.0-pro", "resolution": "2K", "ratio": "9:16"})
+            "mode": "text", "prompt": "portrait of Mia", "model": "nano-banana-pro", "resolution": "2K", "ratio": "9:16"})
         assert res.status_code == 201, res.text
         job = wait_for(lambda: jobs()[0], lambda j: j["status"] in ("saved", "failed"))
         assert job["status"] == "saved", job
         assert Path(job["file"]).suffix == ".png" and Path(job["file"]).read_bytes() == PNG_BYTES
         assert job["cost"] == 0.03 and job["provider"] == "argolink"
         gen = argo.generations[-1]
-        assert gen["model"] == "seedream-5.0-pro" and gen["resolution"] == "2k" and gen["aspect_ratio"] == "9:16"
+        assert gen["model"] == "nano-banana-pro" and gen["resolution"] == "2k" and gen["aspect_ratio"] == "9:16"
 
         # photo → /images/edits with the reference image inline (base64 response, decoded)
         folders = next(m["folders"] for m in client.get("/api/models").json() if m["id"] == mid)
         face = str(Path(folders["references"]) / "face.jpg")
         res = client.post(f"/api/m/{mid}/studio/jobs", headers=H, json={
-            "mode": "image", "photos": [face], "model": "seedream-5.0-pro", "resolution": "1K", "ratio": "1:1"})
+            "mode": "image", "photos": [face], "model": "nano-banana-pro", "resolution": "1K", "ratio": "1:1"})
         assert res.status_code == 201, res.text
         job = wait_for(lambda: jobs()[0], lambda j: j["status"] in ("saved", "failed"))
         assert job["status"] == "saved", job
@@ -253,7 +253,7 @@ def test_argolink_recreates_a_picture_with_the_model(client, tmp_path):
 
         res = client.post(f"/api/m/{mid}/studio/jobs", headers=H, json={
             "mode": "reference", "videos": [scene], "photos": [face],
-            "model": "seedream-5.0-pro", "resolution": "2K", "ratio": "9:16", "prompt": "golden hour light"})
+            "model": "nano-banana-pro", "resolution": "2K", "ratio": "9:16", "prompt": "golden hour light"})
         assert res.status_code == 201, res.text
         job = wait_for(lambda: client.get(f"/api/m/{mid}/studio/jobs").json()[0], lambda j: j["status"] in ("saved", "failed"))
         assert job["status"] == "saved", job
@@ -352,3 +352,75 @@ def test_bad_provider_or_region_is_rejected(client, fake, tmp_path):
     # a wrong key is caught on the ByteDance host
     assert client.put(f"/api/m/{mid}/studio/key", headers=H,
                       json={"provider": "seedance", "apiKey": "byte-wrong", "region": "intl"}).status_code == 400
+
+
+def test_a_whole_folder_is_recreated_as_a_batch(client, tmp_path):
+    """Drop a folder of pictures to recreate: each is rebuilt with the same model photos and prompt,
+    tracked on one job, with one total price (0.03 each → e.g. 5 = 0.15)."""
+    from fakeargo import GOOD_KEY as ARGO_KEY, PNG_BYTES, FakeArgoLink  # noqa: PLC0415
+
+    argo = FakeArgoLink()
+    studio.set_transport(argo.transport())
+    try:
+        mid = _model_with_photo(client, "BatchRef", tmp_path)
+        client.put(f"/api/m/{mid}/studio/key", headers=H,
+                   json={"provider": "argolink", "apiKey": ARGO_KEY, "region": "global"})
+        folders = next(m["folders"] for m in client.get("/api/models").json() if m["id"] == mid)
+        refs = Path(folders["references"])
+        scenes = []
+        for i in range(5):
+            Image.new("RGB", (640, 800), (40 * i, 90, 120)).save(refs / f"scene{i}.jpg")
+            scenes.append(str(refs / f"scene{i}.jpg"))
+        face = str(refs / "face.jpg")
+
+        res = client.post(f"/api/m/{mid}/studio/jobs", headers=H, json={
+            "mode": "reference", "videos": scenes, "photos": [face],
+            "model": "nano-banana-pro", "resolution": "2K", "ratio": "9:16", "prompt": "golden hour"})
+        assert res.status_code == 201, res.text
+        job = wait_for(lambda: client.get(f"/api/m/{mid}/studio/jobs").json()[0],
+                       lambda j: j["status"] in ("saved", "failed"))
+        assert job["status"] == "saved", job
+        assert job["batch"] is True and job["total"] == 5 and job["done"] == 5 and job.get("failedCount") == 0
+        # one output per reference, all distinct files, each a real image
+        assert len(job["files"]) == 5 and len(set(job["files"])) == 5
+        assert all(Path(f).suffix == ".png" and Path(f).read_bytes() == PNG_BYTES for f in job["files"])
+        assert job["file"] in job["files"]
+        # billed per picture, one total
+        assert job["cost"] == 0.15 and job["provider"] == "argolink"
+        # the provider was called once per reference, each with [scene, face] kept in order
+        assert len(argo.edits) == 5
+        assert all(len(e["images"]) == 2 for e in argo.edits)
+        # the prompt is the same for every picture in the batch
+        assert "Image 1" in job["sentPrompt"] and "golden hour" in job["sentPrompt"]
+    finally:
+        studio.set_transport(None)
+        settings.save({"studioKeys": {}})
+
+
+def test_a_dropped_picture_is_saved_and_usable(client, fake, tmp_path):
+    """A picture dragged straight onto the page is stored in the model's drop area and can be used in
+    a generation (and served) exactly like a library file — no folder needs connecting."""
+    import io  # noqa: PLC0415
+
+    mid = _model_with_photo(client, "DropMei", tmp_path)
+    _connect(client, mid, "seedream")
+    buf = io.BytesIO()
+    Image.new("RGB", (512, 640), (120, 60, 160)).save(buf, format="PNG")
+    up = client.post(f"/api/m/{mid}/studio/upload?name=dropped.png", headers=H, content=buf.getvalue())
+    assert up.status_code == 201, up.text
+    drop = up.json()
+    assert drop["kind"] == "image" and drop["path"].endswith(".png") and "/uploads/" in drop["path"].replace("\\", "/")
+    # it's served like any library file (inside_folders accepts the drop area)
+    assert client.get(f"/api/m/{mid}/library/file?path={drop['path']}").status_code == 200
+    # and a generation can start from it
+    res = client.post(f"/api/m/{mid}/studio/jobs", headers=H,
+                      json={"mode": "image", "photos": [drop["path"]], "resolution": "2K", "ratio": "1:1"})
+    assert res.status_code == 201, res.text
+    job = wait_for(lambda: client.get(f"/api/m/{mid}/studio/jobs").json()[0], lambda j: j["status"] in ("saved", "failed"))
+    assert job["status"] == "saved", job
+
+
+def test_a_non_media_upload_is_refused(client, fake, tmp_path):
+    mid = _model_with_photo(client, "DropBad", tmp_path)
+    bad = client.post(f"/api/m/{mid}/studio/upload?name=notes.txt", headers=H, content=b"hello")
+    assert bad.status_code == 415

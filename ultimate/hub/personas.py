@@ -192,13 +192,27 @@ def folders_of(persona: dict) -> dict[str, Path]:
     return {kind: Path(v).expanduser() for kind, v in persona["folders"].items() if v}
 
 
+def uploads_dir(persona: dict) -> Path | None:
+    """App-managed drop area for files dragged straight into the app (e.g. AI Studio pictures or a
+    whole folder of them). It belongs to the model and is always counted as one of its folders, so
+    dropped files are served and usable exactly like library files — without connecting a folder."""
+    pid = persona.get("id") if isinstance(persona, dict) else None
+    if not valid_id(pid or ""):
+        return None
+    return data_dir(pid) / "uploads"
+
+
 def inside_folders(persona: dict, path: Path) -> bool:
-    """Is this file inside one of the model's folders? (Only those files are served or used.)"""
+    """Is this file inside one of the model's folders, or its drop area? (Only those files are
+    served or used.)"""
     try:
         resolved = path.expanduser().resolve()
     except OSError:
         return False
-    for root in folders_of(persona).values():
+    roots = list(folders_of(persona).values())
+    if (drop := uploads_dir(persona)) is not None:
+        roots.append(drop)
+    for root in roots:
         try:
             resolved.relative_to(root.resolve())
             return True
