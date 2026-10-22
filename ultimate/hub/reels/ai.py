@@ -89,6 +89,22 @@ def _describe(c: Candidate) -> str:
     )
 
 
+# Reel Finder collects reference clips to recreate with an AI model (a solo virtual influencer), so
+# searches and scoring are steered toward that: one real person as the clear main subject, filmed
+# like a solo short-form creator, in the viral TikTok/Reels look the user described — and away from
+# the kinds of results that keep polluting hunts (teams, groups, tutorials, news, foreign talking
+# clips, stock/ads, compilations). Gender-neutral on purpose: a persona can be a man or a woman.
+MODEL_FOCUS = (
+    "This clip will be recreated with ONE AI model (a single virtual influencer). The ideal clip has "
+    "one real person as the clear main subject, filmed like a solo short-form creator (handheld or "
+    "selfie, everyday / home / real settings), in the viral TikTok or Reels look the user described. "
+    "Strongly avoid, and treat as the wrong kind of clip: sports teams, matches or broadcasts; groups "
+    "or crowds; tutorials or how-to; news, interviews or talking-head clips; clips that are mostly "
+    "foreign-language talking; stock, corporate or advert footage; compilations; and text or meme "
+    "slideshows. Prefer the English words and hashtags real creators actually use."
+)
+
+
 class KeywordBrain:
     """No-AI fallback: plans from your keywords and scores by word overlap."""
 
@@ -186,13 +202,15 @@ class OllamaBrain:
                          "aesthetic references (e.g. 'cinematic night drift', 'moody car photography')",
         }
         prompt = (
-            "You plan searches for a tool that finds short-form reference videos for a video editor.\n"
+            "You plan searches for a tool that finds short-form reference clips to recreate with an AI model.\n"
             f"They want: {description or '(see keywords)'}\n"
             f"Keywords they gave: {keywords or 'none'}\n\n"
+            + MODEL_FOCUS + "\n\n"
             f"Write {per_platform} search queries for each of these platforms:\n"
             + "".join(f"- {p}: {styles[p]}\n" for p in platforms)
-            + "Each query must find exactly this kind of video: keep the main subject in every query, and "
-            "vary the angle (style, mood, setting, technique, the slang and niche words creators use). "
+            + "Each query must find exactly this kind of clip: keep the main subject in every query, and "
+            "vary the angle (style, mood, setting, technique, the slang and niche words real creators use). "
+            "Lean toward a single person / solo creator rather than teams, groups or professional productions. "
             "Start with the most direct, literal searches; put wider ones at the end. "
             + (f"Don't repeat any of these, they were already searched: {', '.join(avoid)}. " if avoid else "")
             + 'Answer as JSON: {"tiktok": [...], "instagram": [...], "pinterest": [...]} '
@@ -209,17 +227,20 @@ class OllamaBrain:
         else:
             what, seen = "video", "The image is the video's cover frame.\n"
         prompt = (
-            f"You rate {what}s for a video editor who is collecting reference material.\n"
+            f"You rate {what}s to be recreated with one AI model.\n"
             f"What they want: {description or keywords}\n"
             + (f"It should involve: {keywords}\n" if keywords and description else "")
+            + "\n" + MODEL_FOCUS + "\n"
             + f"\nThe {what}:\n{_describe(c)}\n"
             + (seen if image and self.can_see else "")
             + "\nHow well does it match what they want? Score 0-100:\n"
-            "90-100 exactly it: right subject AND the style/details they asked for\n"
-            "70-89 right subject, most details match\n"
-            "45-69 the subject is there but the style or details differ\n"
+            "90-100 exactly it: one person as the clear main subject AND the style/details they asked for\n"
+            "70-89 right subject with a solo-creator feel, most details match\n"
+            "45-69 the subject is there but the feel is off (too produced, a group, or wrong style)\n"
             "20-44 only loosely related\n"
-            "0-19 unrelated, an ad, or a text/meme slideshow\n"
+            "0-19 one of the wrong kinds to avoid above (a team/match, group/crowd, tutorial, news/interview, "
+            "mostly foreign-language talking, stock/ad, compilation or text/meme slideshow) — score low even "
+            "when the topic matches — or anything unrelated\n"
             "Judge mostly by what the image shows; use the caption to confirm (hashtag spam proves nothing).\n"
             'Answer as JSON: {"score": <int>, "reason": "<max 15 words>"}'
         )
@@ -247,8 +268,8 @@ class OllamaBrain:
             '- "description": 1-2 sentences covering the main subject and action, the setting and time of day, '
             "the camera work (angle, shot size, movement), lighting and colours, and the editing style "
             "(cuts, slow motion, text on screen).\n"
-            '- "search_queries": 8 short searches (2-4 words each) that would find videos like this on TikTok, '
-            "Instagram and Pinterest; the most literal first.\n"
+            '- "search_queries": 8 short searches (2-4 words each) that would find more solo-creator clips like '
+            "this (one real person, viral short-form) on TikTok, Instagram and Pinterest; the most literal first.\n"
             '- "hashtags": 6 hashtags creators use for this kind of video, without the # sign.'
         )
         if not self.can_see:
