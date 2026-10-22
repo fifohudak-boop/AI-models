@@ -4,8 +4,11 @@ import type { Handoff } from '../App';
 import { api } from '../api';
 import { useLive } from '../live';
 import { LibraryPicker } from '../components/LibraryPicker';
+import { DropZone } from '../components/DropZone';
 
 type Mode = 'text' | 'image' | 'reference';
+
+const BATCH_MAX = 200; // mirrors studio.MAX_BATCH — a folder of pictures to recreate at once
 
 const RATIO_LABEL: Record<string, string> = {
   '9:16': '9:16 (Reels, TikTok, Shorts)',
@@ -162,7 +165,14 @@ export function StudioPage({
     if (job.status === 'saved') toast(`AI Studio saved ${job.kind === 'image' ? 'an image' : 'a video'} for ${model.name}`);
   });
 
-  // The automatic price, from the provider's rates, for the current settings.
+  const maxVideos = options?.maxVideos ?? 5;
+  const maxPhotos = options?.maxPhotos ?? 10;
+  const modes = options?.modes ?? [{ id: 'text', name: 'From a prompt' }];
+
+  // Recreating a folder: one output per reference picture, so the price (and the count) scale with it.
+  const batchCount = isImage && mode === 'reference' ? Math.max(1, videos.length) : 1;
+
+  // The automatic price, from the provider's rates, for the current settings (× the batch count).
   const estSeconds = isImage ? 0 : autoLength ? options?.estimateSeconds ?? 5 : duration;
   useEffect(() => {
     if (!connected || !genModel || !resolution) {
@@ -171,17 +181,19 @@ export function StudioPage({
     }
     let live = true;
     api
-      .studioPrice(model.id, genModel, resolution, estSeconds, 1, provider)
+      .studioPrice(model.id, genModel, resolution, estSeconds, batchCount, provider)
       .then((r) => live && setPrice(r.price))
       .catch(() => live && setPrice(null));
     return () => {
       live = false;
     };
-  }, [connected, genModel, resolution, estSeconds, model.id, provider]);
+  }, [connected, genModel, resolution, estSeconds, batchCount, model.id, provider]);
 
-  const maxVideos = options?.maxVideos ?? 5;
-  const maxPhotos = options?.maxPhotos ?? 10;
-  const modes = options?.modes ?? [{ id: 'text', name: 'From a prompt' }];
+  // Files chosen in any way (dragged in, a folder, or picked from the library) all land here.
+  const addVideos = (paths: string[]) =>
+    setVideos((v) => [...v, ...paths.filter((p) => !v.includes(p))].slice(-(isImage ? BATCH_MAX : maxVideos)));
+  const addPhotos = (paths: string[]) =>
+    setPhotos((p) => (mode === 'image' ? paths.slice(-1) : [...p, ...paths.filter((x) => !p.includes(x))].slice(-maxPhotos)));
 
   function choose(next: Mode) {
     setMode(next);
@@ -190,18 +202,18 @@ export function StudioPage({
 
   function pick(item: LibraryItem) {
     if (picking === 'videos') {
+      // Image providers: the "reference" slot holds the picture(s) to recreate (kept separate from
+      // the model photos). Video providers: reference videos.
       if (isImage) {
-        // Image providers: the "reference" slot is the one picture to recreate (one image, kept
-        // separate from the model photos).
         if (item.kind !== 'image') return toast('Pick an image here.');
-        setVideos([item.path]);
+        addVideos([item.path]);
       } else {
         if (item.kind !== 'video') return toast('Pick a video here.');
-        setVideos((v) => (v.includes(item.path) ? v : [...v, item.path].slice(-maxVideos)));
+        addVideos([item.path]);
       }
     } else {
       if (item.kind !== 'image') return toast('Pick a photo here.');
-      setPhotos((p) => (mode === 'image' ? [item.path] : p.includes(item.path) ? p : [...p, item.path].slice(-maxPhotos)));
+      addPhotos([item.path]);
     }
     setPicking(null);
   }
@@ -223,7 +235,13 @@ export function StudioPage({
         videos: mode === 'reference' ? videos : [],
       });
       setJobs((list) => [job, ...(list ?? []).filter((j) => j.id !== job.id)]);
-      toast(isImage ? 'Making the image…' : 'Sent — it usually takes a few minutes.');
+      toast(
+        isImage
+          ? batchCount > 1
+            ? `Recreating ${batchCount} pictures…`
+            : 'Making the image…'
+          : 'Sent — it usually takes a few minutes.'
+      );
     } catch (err) {
       setError((err as Error).message);
     } finally {
@@ -326,47 +344,51 @@ export function StudioPage({
 
         {mode === 'reference' && showReference && (
           <div className="stack">
-            <div className="row">
-              <strong className="small">{isImage ? 'Picture to recreate' : `Reference video${videos.length > 1 ? 's' : ''}`}</strong>
-              <button type="button" className="btn small" onClick={() => setPicking('videos')}>
-                Choose…
-              </button>
-            </div>
-            {isImage && (
-              <span className="muted small" style={{ marginTop: -4 }}>
-                The picture whose pose, scene and style you want to copy — kept separate from {model.name}'s photos below.
-              </span>
-            )}
+            <strong className="small dz-label">
+              {isImage
+                ? `Picture${videos.length === 1 ? '' : 's'} to recreate${videos.length > 1 ? ` · ${videos.length}` : ''}`
+                : `Reference video${videos.length > 1 ? 's' : ''}`}
+            </strong>
+            <span className="muted small" style={{ marginTop: -4 }}>
+              {isImage
+                ? `The picture whose pose, scene and style you want to copy. Drop one — or a whole folder to recreate every picture in it as ${model.name}, same prompt for all. Kept separate from ${model.name}'s photos below.`
+                : `The video whose moves, camera and timing you want — e.g. one Reel Finder found. Up to 15 s is used.`}
+            </span>
+            <DropZone
+              model={model}
+              accept={isImage ? 'image' : 'video'}
+              multiple
+              label={isImage ? 'Drag pictures or a whole folder here' : 'Drag a reference video here'}
+              hint="or click to choose"
+              onAdd={addVideos}
+              onBrowse={() => setPicking('videos')}
+            />
             <Picked model={model} paths={videos} onRemove={(p) => setVideos((v) => v.filter((x) => x !== p))} />
           </div>
         )}
         {(mode === 'image' || mode === 'reference') && (
           <div className="stack">
-            <div className="row">
-              <strong className="small">
-                {mode === 'reference'
-                  ? `Photos of ${model.name} (up to ${maxPhotos})`
-                  : `Photo of ${model.name}${isImage ? ' to start from' : ' (the first frame)'}`}
-              </strong>
-              <button type="button" className="btn small" onClick={() => setPicking('photos')}>
-                Choose…
-              </button>
-              {!model.folders.photos && (
-                <span className="muted small">
-                  Tip: connect {model.name}'s photo folder in{' '}
-                  <button type="button" className="btn link small" onClick={onSettings}>
-                    Settings
-                  </button>
-                </span>
-              )}
-            </div>
+            <strong className="small dz-label">
+              {mode === 'reference'
+                ? `Photos of ${model.name}${photos.length > 1 ? ` · ${photos.length}` : ''} (up to ${maxPhotos})`
+                : `Photo of ${model.name}${isImage ? ' to start from' : ' (the first frame)'}`}
+            </strong>
             {mode === 'reference' && (
               <span className="muted small" style={{ marginTop: -4 }}>
                 {isImage
-                  ? `${model.name}'s face, hair, body and look — put into the recreated picture (kept separate from the reference above).`
+                  ? `${model.name}'s face, hair, body and look — put into every recreated picture (kept separate from the reference above).`
                   : `These are the person Wan puts into the reference — ${model.name}'s face, hair, body and look.`}
               </span>
             )}
+            <DropZone
+              model={model}
+              accept="image"
+              multiple={mode !== 'image'}
+              label={mode === 'image' ? 'Drag a photo here' : `Drag ${model.name}'s photos (or a folder) here`}
+              hint="or click to choose"
+              onAdd={addPhotos}
+              onBrowse={() => setPicking('photos')}
+            />
             <Picked model={model} paths={photos} onRemove={(p) => setPhotos((v) => v.filter((x) => x !== p))} />
           </div>
         )}
@@ -469,7 +491,9 @@ export function StudioPage({
                 <span className="cost-amount">{money(price)}</span>
                 <span className="muted small">
                   {isImage
-                    ? 'per image, automatic from the provider’s price'
+                    ? batchCount > 1
+                      ? `for ${batchCount} pictures · ${money(price / batchCount)} each, automatic from the provider’s price`
+                      : 'per image, automatic from the provider’s price'
                     : autoLength
                       ? `about, for ~${estSeconds}s (auto length — final depends on the ${verb} made)`
                       : `for ${duration}s at ${resolution}, automatic from the provider’s price`}
@@ -488,13 +512,15 @@ export function StudioPage({
               ? 'Sending…'
               : mode === 'reference' && videos.length === 0
                 ? isImage
-                  ? 'Choose a picture to recreate'
+                  ? 'Add a picture (or folder) to recreate'
                   : 'Choose a reference video'
                 : mode === 'image' && photos.length === 0
                   ? `Choose a photo of ${model.name}`
                   : mode === 'text' && !prompt.trim()
                     ? `Describe the ${verb}`
-                    : `Make ${isImage ? 'the image' : 'it'} for ${model.name}`}
+                    : isImage && mode === 'reference' && batchCount > 1
+                      ? `Recreate ${batchCount} pictures for ${model.name}`
+                      : `Make ${isImage ? 'the image' : 'it'} for ${model.name}`}
         </button>
       </section>
 
@@ -516,7 +542,15 @@ export function StudioPage({
                 <div className="account-main">
                   <div className="account-name">
                     {job.kind === 'image'
-                      ? `${job.mode === 'reference' ? 'Recreated picture' : job.mode === 'image' ? 'From a photo' : 'Image'} · ${job.ratio} · ${job.resolution}`
+                      ? `${
+                          job.mode === 'reference'
+                            ? (job.total ?? 1) > 1
+                              ? `Recreated ${job.done ?? job.total} of ${job.total} pictures`
+                              : 'Recreated picture'
+                            : job.mode === 'image'
+                              ? 'From a photo'
+                              : 'Image'
+                        } · ${job.ratio} · ${job.resolution}`
                       : `${job.mode === 'text' ? 'From a prompt' : job.mode === 'image' ? 'From a photo' : 'Like a reference video'} · ${
                           job.seconds ? `${job.seconds}s` : job.duration === -1 ? 'auto length' : `${job.duration}s`
                         } · ${job.ratio} · ${job.resolution}`}
@@ -526,6 +560,9 @@ export function StudioPage({
                     {job.prompt || (job.videos[0] ? fileName(job.videos[0]) : job.photos[0] ? fileName(job.photos[0]) : '')}
                   </div>
                   {job.status !== 'saved' && job.status !== 'failed' && job.step && <div className="muted small">{job.step}…</div>}
+                  {job.status === 'saved' && (job.failedCount ?? 0) > 0 && (
+                    <div className="muted small">{job.failedCount} couldn’t be recreated</div>
+                  )}
                   {job.error && <div className="batch-error">{job.error}</div>}
                 </div>
                 <div className="account-side stack">

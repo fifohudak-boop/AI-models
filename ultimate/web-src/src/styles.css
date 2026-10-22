@@ -1816,6 +1816,62 @@ details > summary {
 .studio-connect {
   border-color: var(--accent);
 }
+.dz-label {
+  display: block;
+}
+.dropzone-wrap {
+  gap: 6px;
+}
+.dropzone {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  text-align: center;
+  padding: 18px 16px;
+  min-height: 92px;
+  border: 2px dashed var(--border);
+  border-radius: 12px;
+  background: var(--surface-2);
+  color: var(--muted);
+  cursor: pointer;
+  transition: border-color 0.12s, background 0.12s, color 0.12s;
+}
+.dropzone:hover,
+.dropzone:focus-visible {
+  border-color: var(--accent);
+  color: var(--text);
+  outline: none;
+}
+.dropzone.over {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+  color: var(--text);
+}
+.dropzone.busy {
+  cursor: default;
+  border-style: solid;
+}
+.dropzone.disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+.dropzone-plus {
+  font-size: 26px;
+  font-weight: 600;
+  line-height: 1;
+  color: var(--accent);
+}
+.dropzone-label {
+  font-weight: 500;
+  color: var(--text);
+}
+.dropzone-actions {
+  flex-wrap: wrap;
+  gap: 4px 14px;
+}
+
 .picked {
   display: flex;
   flex-wrap: wrap;

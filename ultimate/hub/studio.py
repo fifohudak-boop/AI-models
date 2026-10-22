@@ -67,6 +67,9 @@ WORKSPACE_ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9-]{1,63}$")
 
 MAX_PHOTOS = 10
 MAX_VIDEOS = 5
+MAX_BATCH = 200  # image "recreate" mode: how many reference pictures one folder-batch may hold
+BATCH_CONCURRENCY = 3  # recreate at most this many pictures at once (kind to the provider and the Mac)
+MAX_UPLOAD_BYTES = 4 * 1024 * 1024 * 1024  # a dragged-in file (picture or reference video)
 REFERENCE_TOTAL_S = 15.0
 OUTPUT_PLUS_INPUT_S = 30
 MIN_S, MAX_S = 2, 30
@@ -543,11 +546,12 @@ async def argolink_run(job: dict, images: list[Path]) -> dict:
     return items[0]
 
 
-def _save_b64_image(job: dict, b64: str) -> str:
+def _save_b64_image(job: dict, b64: str, index: int | None = None) -> str:
     persona = personas.require(job["modelId"])
     folder = personas.folder(persona, "generated") or Path(personas.default_folder(persona["name"], "generated"))
     folder.mkdir(parents=True, exist_ok=True)
-    target = folder / f"{time.strftime('%Y-%m-%d %H.%M')} {job['mode']} {job['id'][:6]}.png"
+    tag = f" {index + 1}" if index is not None else ""
+    target = folder / f"{time.strftime('%Y-%m-%d %H.%M')} {job['mode']} {job['id'][:6]}{tag}.png"
     target.write_bytes(base64.b64decode(b64))
     return str(target)
 
@@ -720,6 +724,35 @@ def default_image_prompt(photos: int, extra: str) -> str:
     return f"{base} {extra}".strip()
 
 
+# ---------------------------------------------------------------- dragged-in files (drop area)
+
+def staged_upload_path(model_id: str, name: str) -> Path:
+    """Where a file dragged into AI Studio is saved — the model's own drop area, so it's usable and
+    served like any library file (personas.inside_folders counts it)."""
+    persona = personas.require(model_id)
+    drop = personas.uploads_dir(persona)
+    if drop is None:
+        raise StudioError("Unknown model.")
+    drop.mkdir(parents=True, exist_ok=True)
+    safe = re.sub(r"[^\w.-]", "_", Path(name).name).strip("._")[-60:] or "file"
+    return drop / f"{uuid.uuid4().hex[:8]}-{safe}"
+
+
+def forget_old_uploads(model_id: str, hours: int = 48) -> None:
+    """Dragged-in files are inputs, not results — tidy ones older than a couple of days."""
+    persona = personas.require(model_id)
+    drop = personas.uploads_dir(persona)
+    if drop is None or not drop.is_dir():
+        return
+    cutoff = time.time() - hours * 3600
+    for item in drop.iterdir():
+        try:
+            if item.is_file() and item.stat().st_mtime < cutoff:
+                item.unlink()
+        except OSError:
+            continue
+
+
 # ---------------------------------------------------------------- jobs (one per "Generate")
 
 def _now() -> str:
@@ -776,10 +809,15 @@ def validate_request(model_id: str, req: dict) -> dict:
         duration = SMART if duration == SMART else max(MIN_S, min(MAX_S, duration))
 
     inputs: dict[str, Any] = {}
-    for field, limit in (("photos", MAX_PHOTOS), ("videos", MAX_VIDEOS)):
+    # On an image provider in "recreate" mode the "videos" slot holds the reference pictures, and a
+    # whole folder of them can be dropped in — each is recreated separately (a batch). Everywhere
+    # else it's the usual small cap.
+    videos_limit = MAX_BATCH if (kind == "image" and mode == "reference") else MAX_VIDEOS
+    for field, limit in (("photos", MAX_PHOTOS), ("videos", videos_limit)):
         paths = [Path(p).expanduser() for p in (req.get(field) or [])]
         if len(paths) > limit:
-            raise StudioError(f"Up to {limit} {field} at a time.")
+            what = "pictures to recreate" if field == "videos" and kind == "image" and mode == "reference" else field
+            raise StudioError(f"Up to {limit} {what} at a time.")
         for p in paths:
             if not p.is_file() or not personas.inside_folders(persona, p):
                 raise StudioError(f"{p.name} isn't in this model's folders.")
@@ -792,10 +830,9 @@ def validate_request(model_id: str, req: dict) -> dict:
         inputs = {"photos": inputs["photos"][:1], "videos": []}
     elif mode == "reference":
         if not inputs["videos"]:
-            raise StudioError("Pick the picture you want to recreate." if kind == "image"
+            raise StudioError("Add the picture(s) you want to recreate." if kind == "image"
                               else "Pick a reference video (for example one Reel Finder found).")
-        if kind == "image":
-            inputs["videos"] = inputs["videos"][:1]  # one reference picture to recreate (the model's photos stay separate)
+        # image: keep every reference picture (one each, or a folder for a batch); the model's photos stay separate
     # On an image provider the reference is a picture too, so check it's an image alongside the photos.
     for p in inputs["photos"] + (inputs["videos"] if kind == "image" else []):
         if Path(p).suffix.lower() not in IMAGE_SUFFIXES:
@@ -816,6 +853,11 @@ def create_job(model_id: str, req: dict) -> dict:
         base_url(model_id)  # fail early if the workspace ID is missing
     job = {"id": uuid.uuid4().hex, "modelId": model_id, "createdAt": _now(), "status": "starting",
            "step": "Getting your files ready", "error": None, "taskId": None, "file": None, "images": 1, **clean}
+    # A folder of pictures to recreate becomes a batch — one output per reference, same model photos
+    # and same prompt — tracked on the one job so it stays a single card with a single total price.
+    if clean["kind"] == "image" and clean["mode"] == "reference":
+        total = len(clean["videos"])
+        job.update(batch=total > 1, total=total, done=0, failedCount=0, files=[], images=total)
     _save(job)
     _tasks.add(task := asyncio.create_task(_run_job(job)))
     task.add_done_callback(_tasks.discard)
@@ -837,10 +879,8 @@ async def _run_job(job: dict) -> None:
             await _start_wavespeed(job, work)
         elif job["provider"] == "videorouter":
             await _start_videorouter(job, work)
-        elif job["provider"] == "seedream":
-            await _run_seedream(job, work)
-        elif job["provider"] == "argolink":
-            await _run_argolink(job, work)
+        elif job["provider"] in ("seedream", "argolink"):
+            await _run_image(job, work)
     except Exception as exc:  # noqa: BLE001 - shown on the page
         log.warning("AI Studio job %s failed to start: %s", job["id"], exc)
         job.update(status="failed", error=str(exc) or type(exc).__name__, step="")
@@ -910,43 +950,82 @@ async def _start_videorouter(job: dict, work: Path) -> None:
     _save(job)
 
 
-async def _prepare_images(job: dict, work: Path) -> tuple[list[Path], str]:
-    """The input images and the prompt for an image generation. In 'reference' mode the first image is
-    the picture to recreate and the rest are the model's photos — kept in that order so the two are
-    never confused — and the prompt tells the model to rebuild the reference with that person."""
-    if job["mode"] == "reference":
-        reference = await asyncio.to_thread(prepare_photo, Path(job["videos"][0]), work)
-        photos = [await asyncio.to_thread(prepare_photo, Path(p), work) for p in job["photos"]]
-        return [reference, *photos], default_image_prompt(len(photos), job["prompt"])
-    if job["mode"] == "image" and job["photos"]:
-        return [await asyncio.to_thread(prepare_photo, Path(job["photos"][0]), work)], job["prompt"] or "A photo."
-    return [], job["prompt"] or "A photo."
-
-
-async def _run_seedream(job: dict, work: Path) -> None:
-    images, prompt = await _prepare_images(job, work)
-    job.update(step="Making the image", status="RUNNING", sentPrompt=prompt)
-    _save(job)
-    urls = await seedream_run(job, images)
-    job.update(status="downloading", step="Saving the image")
-    _save(job)
-    job["file"] = await _download(job, urls[0], suffix=".png")
-    job.update(status="saved", step="Saved", error=None, images=1, seconds=0,
-               cost=_job_cost({**job, "images": 1}), costCurrency=currency())
-    _save(job)
-
-
-async def _run_argolink(job: dict, work: Path) -> None:
-    images, prompt = await _prepare_images(job, work)
-    job.update(step="Making the image", status="RUNNING", sentPrompt=prompt)
-    _save(job)
+async def _generate_image(job: dict, images: list[Path], work: Path, index: int | None = None) -> str:
+    """Run the image provider once for one set of inputs, save the result, return the saved path. In
+    'reference' mode `images` is [picture-to-recreate, model-photo, …] in order; the prompt (already
+    on job['sentPrompt']) assigns the roles. `index` numbers the file when it's one of a batch."""
+    if job["provider"] == "seedream":
+        urls = await seedream_run(job, images)
+        return await _download(job, urls[0], suffix=".png", index=index)
     item = await argolink_run(job, images)
-    job.update(status="downloading", step="Saving the image")
+    if item.get("url"):
+        return await _download(job, item["url"], suffix=".png", index=index)
+    return await asyncio.to_thread(_save_b64_image, job, item["b64_json"], index)
+
+
+async def _run_image(job: dict, work: Path) -> None:
+    """Seedream / ArgoLink images. 'reference' mode recreates each reference picture with the model's
+    photos (a folder of them is a batch); 'text'/'image' make a single image as before."""
+    photos = [await asyncio.to_thread(prepare_photo, Path(p), work) for p in job["photos"]]
+    if job["mode"] == "reference":
+        prompt = default_image_prompt(len(photos), job["prompt"])
+        refs = [Path(p) for p in job["videos"]]
+        job.update(sentPrompt=prompt, status="RUNNING",
+                   step=f"Recreating {len(refs)} pictures" if len(refs) > 1 else "Making the image")
+        _save(job)
+        await _run_image_batch(job, work, refs, photos)
+        return
+    images = ([await asyncio.to_thread(prepare_photo, Path(job["photos"][0]), work)]
+              if job["mode"] == "image" and job["photos"] else [])
+    job.update(sentPrompt=job["prompt"] or "A photo.", status="RUNNING", step="Making the image")
     _save(job)
-    job["file"] = await _download(job, item["url"], suffix=".png") if item.get("url") \
-        else await asyncio.to_thread(_save_b64_image, job, item["b64_json"])
-    job.update(status="saved", step="Saved", error=None, images=1, seconds=0,
+    path = await _generate_image(job, images, work)
+    job.update(status="saved", step="Saved", error=None, file=path, files=[path],
+               images=1, done=1, total=1, seconds=0,
                cost=_job_cost({**job, "images": 1}), costCurrency=currency())
+    _save(job)
+
+
+async def _run_image_batch(job: dict, work: Path, refs: list[Path], photos: list[Path]) -> None:
+    """Recreate every reference picture with the same model photos and prompt, a few at a time, saving
+    each as it lands and reporting progress on the one job. Billed for the pictures that succeed."""
+    total = len(refs)
+    many = total > 1
+    files: list[str] = []
+    errors: list[str] = []
+    sem = asyncio.Semaphore(BATCH_CONCURRENCY)
+    lock = asyncio.Lock()
+
+    def _note() -> str:
+        return f"Recreated {len(files)} of {total}" + (f" · {len(errors)} failed" if errors else "")
+
+    async def one(i: int, ref: Path) -> None:
+        try:
+            async with sem:
+                ref_img = await asyncio.to_thread(prepare_photo, ref, work)
+                path = await _generate_image(job, [ref_img, *photos], work, index=i if many else None)
+        except Exception as exc:  # noqa: BLE001 - one bad picture shouldn't sink the batch
+            async with lock:
+                errors.append(f"{ref.name}: {exc}")
+                job.update(failedCount=len(errors), step=_note())
+                _save(job)
+            return
+        async with lock:
+            files.append(path)
+            job.update(done=len(files), files=list(files), file=job.get("file") or path, step=_note())
+            _save(job)
+
+    await asyncio.gather(*(one(i, ref) for i, ref in enumerate(refs)))
+
+    done = len(files)
+    if done == 0:
+        job.update(status="failed", step="",
+                   error="None of the pictures could be recreated." + (f" {errors[0]}" if errors else ""))
+    else:
+        job.update(status="saved", step=_note() if many else "Saved", images=done, done=done, total=total,
+                   seconds=0, file=job.get("file") or files[0], files=files,
+                   error=("Some couldn't be recreated: " + "; ".join(errors[:3])) if errors else None,
+                   cost=_job_cost({**job, "images": done}), costCurrency=currency())
     _save(job)
 
 
@@ -1003,11 +1082,12 @@ async def poll_once() -> None:
         _save(job)
 
 
-async def _download(job: dict, url: str, suffix: str = ".mp4") -> str:
+async def _download(job: dict, url: str, suffix: str = ".mp4", index: int | None = None) -> str:
     persona = personas.require(job["modelId"])
     folder = personas.folder(persona, "generated") or Path(personas.default_folder(persona["name"], "generated"))
     folder.mkdir(parents=True, exist_ok=True)
-    target = folder / f"{time.strftime('%Y-%m-%d %H.%M')} {job['mode']} {job['id'][:6]}{suffix}"
+    tag = f" {index + 1}" if index is not None else ""
+    target = folder / f"{time.strftime('%Y-%m-%d %H.%M')} {job['mode']} {job['id'][:6]}{tag}{suffix}"
     partial = target.with_suffix(suffix + ".part")
     async with _client(900) as client:
         async with client.stream("GET", url) as resp:
