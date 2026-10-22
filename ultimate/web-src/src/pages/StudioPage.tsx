@@ -293,8 +293,8 @@ export function StudioPage({
           <p className="small" style={{ margin: 0 }}>
             AI Studio makes new videos and images of {model.name}. Connect a key for any provider — Alibaba{' '}
             <strong>Wan</strong>, ByteDance <strong>Seedance</strong>, WaveSpeed or VideoRouter for video, ByteDance{' '}
-            <strong>Seedream</strong> or ArgoLink for images. Connect several and switch between them here; each is its own
-            paid account.
+            <strong>Seedream</strong> or ArgoLink (<strong>Nano Banana Pro</strong>) for images. Connect several and switch
+            between them here; each is its own paid account.
           </p>
           <p className="small muted" style={{ margin: 0 }}>
             {needsWorkspace

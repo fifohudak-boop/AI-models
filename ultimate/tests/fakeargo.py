@@ -35,7 +35,7 @@ class FakeArgoLink:
             return self._json(401, {"error": {"message": "Invalid API key", "code": "invalid_api_key"}})
         path = url.path
         if path == "/v1/models" and request.method == "GET":
-            return self._json(200, {"data": [{"id": "seedream-5.0-pro"}]})
+            return self._json(200, {"data": [{"id": "nano-banana-pro"}]})
         if path == "/v1/images/generations" and request.method == "POST":
             self.generations.append(json.loads(request.content))
             n = len(self.generations)

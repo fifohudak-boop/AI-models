@@ -105,9 +105,11 @@ def wavespeed_path(model: str, mode: str) -> str:
 
 # ---------------------------------------------------------------- ArgoLink (images)
 
-# OpenAI-style image API (argolink.io/v1/images/generations · /images/edits), synchronous.
+# OpenAI-style image API (argolink.io/v1/images/generations · /images/edits), synchronous. ArgoLink
+# dropped Seedream 5.0, so the model is now Google's Nano Banana Pro (same endpoints and request
+# shape — model, prompt, resolution 1k/2k/4k, aspect_ratio, n, response_format, images for edits).
 ARGOLINK_HOST = "https://argolink.io/v1"
-ARGOLINK_USD_PER_IMAGE = {"seedream-5.0-pro": 0.03}  # 1K and 2K both $0.03
+ARGOLINK_USD_PER_IMAGE = {"nano-banana-pro": 0.03}  # 1K, 2K and 4K all $0.03/image
 
 
 def argolink_price(model: str, images: int = 1) -> float | None:
@@ -182,13 +184,13 @@ PROVIDERS: dict[str, dict] = {
     },
     "argolink": {
         "id": "argolink",
-        "name": "ArgoLink (Seedream 5.0)",
+        "name": "ArgoLink (Nano Banana Pro)",
         "kind": "image",
         "needsWorkspace": False,
         "keyHint": "ArgoLink API key (argolink.io → Console → API Keys). One key, one account.",
         "regions": [{"id": "global", "name": "Global"}],
-        "models": [{"id": "seedream-5.0-pro", "name": "Seedream 5.0 Pro"}],
-        "sizes": ["1K", "2K"],
+        "models": [{"id": "nano-banana-pro", "name": "Nano Banana Pro"}],
+        "sizes": ["1K", "2K", "4K"],
         "ratios": ["9:16", "3:4", "1:1", "4:3", "16:9", "2:3", "3:2", "5:4", "4:5", "21:9"],
         "modes": ["text", "image", "reference"],
         "console": "https://argolink.io/",

@@ -200,25 +200,25 @@ def test_argolink_makes_an_image(client, tmp_path):
 
         opts = client.get(f"/api/m/{mid}/studio/options").json()
         assert opts["provider"] == "argolink" and opts["kind"] == "image"
-        assert opts["resolutions"] == ["1K", "2K"]
+        assert opts["resolutions"] == ["1K", "2K", "4K"]
 
         jobs = lambda: client.get(f"/api/m/{mid}/studio/jobs").json()  # noqa: E731
         # text → /images/generations (URL response, downloaded)
         res = client.post(f"/api/m/{mid}/studio/jobs", headers=H, json={
-            "mode": "text", "prompt": "portrait of Mia", "model": "seedream-5.0-pro", "resolution": "2K", "ratio": "9:16"})
+            "mode": "text", "prompt": "portrait of Mia", "model": "nano-banana-pro", "resolution": "2K", "ratio": "9:16"})
         assert res.status_code == 201, res.text
         job = wait_for(lambda: jobs()[0], lambda j: j["status"] in ("saved", "failed"))
         assert job["status"] == "saved", job
         assert Path(job["file"]).suffix == ".png" and Path(job["file"]).read_bytes() == PNG_BYTES
         assert job["cost"] == 0.03 and job["provider"] == "argolink"
         gen = argo.generations[-1]
-        assert gen["model"] == "seedream-5.0-pro" and gen["resolution"] == "2k" and gen["aspect_ratio"] == "9:16"
+        assert gen["model"] == "nano-banana-pro" and gen["resolution"] == "2k" and gen["aspect_ratio"] == "9:16"
 
         # photo → /images/edits with the reference image inline (base64 response, decoded)
         folders = next(m["folders"] for m in client.get("/api/models").json() if m["id"] == mid)
         face = str(Path(folders["references"]) / "face.jpg")
         res = client.post(f"/api/m/{mid}/studio/jobs", headers=H, json={
-            "mode": "image", "photos": [face], "model": "seedream-5.0-pro", "resolution": "1K", "ratio": "1:1"})
+            "mode": "image", "photos": [face], "model": "nano-banana-pro", "resolution": "1K", "ratio": "1:1"})
         assert res.status_code == 201, res.text
         job = wait_for(lambda: jobs()[0], lambda j: j["status"] in ("saved", "failed"))
         assert job["status"] == "saved", job
@@ -253,7 +253,7 @@ def test_argolink_recreates_a_picture_with_the_model(client, tmp_path):
 
         res = client.post(f"/api/m/{mid}/studio/jobs", headers=H, json={
             "mode": "reference", "videos": [scene], "photos": [face],
-            "model": "seedream-5.0-pro", "resolution": "2K", "ratio": "9:16", "prompt": "golden hour light"})
+            "model": "nano-banana-pro", "resolution": "2K", "ratio": "9:16", "prompt": "golden hour light"})
         assert res.status_code == 201, res.text
         job = wait_for(lambda: client.get(f"/api/m/{mid}/studio/jobs").json()[0], lambda j: j["status"] in ("saved", "failed"))
         assert job["status"] == "saved", job
@@ -375,7 +375,7 @@ def test_a_whole_folder_is_recreated_as_a_batch(client, tmp_path):
 
         res = client.post(f"/api/m/{mid}/studio/jobs", headers=H, json={
             "mode": "reference", "videos": scenes, "photos": [face],
-            "model": "seedream-5.0-pro", "resolution": "2K", "ratio": "9:16", "prompt": "golden hour"})
+            "model": "nano-banana-pro", "resolution": "2K", "ratio": "9:16", "prompt": "golden hour"})
         assert res.status_code == 201, res.text
         job = wait_for(lambda: client.get(f"/api/m/{mid}/studio/jobs").json()[0],
                        lambda j: j["status"] in ("saved", "failed"))
