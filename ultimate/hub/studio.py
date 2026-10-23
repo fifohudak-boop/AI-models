@@ -127,15 +127,14 @@ def model_keys(model_id: str | None, s: dict | None = None) -> dict:
 
 
 def creds(model_id: str | None, provider_id: str) -> dict:
-    """This model's key + region (+ workspace for Wan) for one provider: its own if set, else — for
-    Wan only — the shared default key."""
+    """This model's own key + region (+ workspace for Wan) for one provider. There is no shared
+    fallback: every model uses its own key, so each one's generations bill to its own account and the
+    billing stays separate per model (a model with no key of its own simply isn't connected)."""
     pc = model_keys(model_id).get(provider_id) or {}
     if pc.get("apiKey"):
         return {"provider": provider_id, "apiKey": pc.get("apiKey") or "",
                 "region": pc.get("region") or _default_region(provider_id),
                 "workspace": (pc.get("workspace") or "").strip()}
-    if provider_id == "wan":
-        return _default_creds()
     return {"provider": provider_id, "apiKey": "", "region": _default_region(provider_id), "workspace": ""}
 
 
@@ -184,8 +183,6 @@ def default_provider(model_id: str | None) -> str:
 
 def any_connected() -> bool:
     s = settings.get()
-    if _default_creds(s)["apiKey"]:
-        return True
     for entry in (s.get("studioKeys") or {}).values():
         if not isinstance(entry, dict):
             continue

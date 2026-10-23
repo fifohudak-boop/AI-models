@@ -56,27 +56,31 @@ def test_each_model_uses_its_own_key(owner, fake):
     assert studio.base_url(b["id"]) == "https://ws-bbb-222.eu-central-1.maas.aliyuncs.com"
 
 
-def test_the_default_key_is_the_fallback(owner, fake):
+def test_each_model_needs_its_own_key_no_shared_fallback(owner, fake):
+    """Billing stays separate per model: there is no shared-default fallback, so a model is connected
+    only through its own key — a model with none can't generate (and bills nobody by accident)."""
     c = owner.post("/api/models", json={"name": "KeyC"}, headers=H).json()
 
-    # No own key and no default yet → not connected.
+    # No own key → not connected.
     wan = owner.get(f"/api/m/{c['id']}/studio/key").json()["keys"]["wan"]
-    assert wan["hasKey"] is False and wan["usingDefault"] is False  # no default set yet
+    assert wan["hasKey"] is False and wan["usingDefault"] is False
     assert owner.get(f"/api/m/{c['id']}/studio/options").json()["connected"] is False
 
-    # The shared default makes it connected (via the fallback).
+    # A shared default key does NOT connect the model — nothing is shared in the background.
     owner.put("/api/settings/studio", headers=H,
               json={"apiKey": GOOD_KEY, "region": "intl", "workspace": "ws-def-999"})
-    assert owner.get(f"/api/m/{c['id']}/studio/options").json()["connected"] is True
-    assert studio.base_url(c["id"]) == "https://ws-def-999.ap-southeast-1.maas.aliyuncs.com"
+    assert owner.get(f"/api/m/{c['id']}/studio/options").json()["connected"] is False
+    assert owner.get(f"/api/m/{c['id']}/studio/key").json()["keys"]["wan"]["usingDefault"] is False
 
-    # Its own key overrides the default…
+    # Only its own key connects it, on its own account's address.
     owner.put(f"/api/m/{c['id']}/studio/key", headers=H,
               json={"apiKey": GOOD_KEY, "region": "intl", "workspace": "ws-own-333"})
+    assert owner.get(f"/api/m/{c['id']}/studio/options").json()["connected"] is True
     assert studio.base_url(c["id"]) == "https://ws-own-333.ap-southeast-1.maas.aliyuncs.com"
-    # …and removing it falls back to the default again.
+
+    # Removing its own key disconnects it again — it never falls back to the shared default.
     owner.put(f"/api/m/{c['id']}/studio/key", headers=H, json={"apiKey": ""})
-    assert studio.base_url(c["id"]) == "https://ws-def-999.ap-southeast-1.maas.aliyuncs.com"
+    assert owner.get(f"/api/m/{c['id']}/studio/options").json()["connected"] is False
 
 
 def test_a_model_keeps_a_key_per_provider(owner, fake):

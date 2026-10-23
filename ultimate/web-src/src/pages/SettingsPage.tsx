@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from 'react';
-import type { Account, AppSettings, AppStatus, FolderKind, Model, ModelStudioKey, ProviderKeyInfo, ProviderMeta, Person, Preferences } from '../types';
+import type { Account, AppStatus, FolderKind, Model, ModelStudioKey, ProviderKeyInfo, ProviderMeta, Person, Preferences } from '../types';
 import { api } from '../api';
 import { AccountAvatar } from '../components/AccountAvatar';
 import { EngineSetup } from '../components/EngineSetup';
@@ -433,119 +433,27 @@ function ModelSettings({
   );
 }
 
-// Where your Model Studio key was made (the key, the region and the workspace must all match).
-const STUDIO_REGIONS: { id: string; name: string }[] = [
-  { id: 'intl', name: 'Singapore (international)' },
-  { id: 'cn', name: 'China (Beijing)' },
-  { id: 'us', name: 'US (Virginia)' },
-  { id: 'eu', name: 'Germany (Frankfurt)' },
-  { id: 'jp', name: 'Japan (Tokyo)' },
-  { id: 'hk', name: 'China (Hong Kong)' },
-];
-
-function StudioKeyCard({ settings, onSaved, toast }: { settings: AppSettings; onSaved: (s: AppSettings) => void; toast: (m: string) => void }) {
-  const [key, setKey] = useState('');
-  const [region, setRegion] = useState(settings.alibabaRegion || 'intl');
-  const [workspace, setWorkspace] = useState(settings.alibabaWorkspace || '');
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const changedPlace = region !== (settings.alibabaRegion || 'intl') || workspace.trim() !== (settings.alibabaWorkspace || '');
-  // Wan 3.0 is only served on your workspace's own address, so the workspace ID is always required.
-  const canSave = Boolean((key.trim() || (settings.alibabaKey && changedPlace)) && workspace.trim());
+// AI Studio keys live per model (each model → AI Studio key), so every model bills to its own account
+// and the billing stays separate. There is no shared default key.
+function StudioKeyCard() {
   return (
     <section className="card stack" id="studio">
-      <div className="card-head" style={{ marginBottom: 0 }}>
-        <h2>Default AI Studio key</h2>
-        <span className={`chip ${settings.alibabaKey ? 'published' : ''}`}>{settings.alibabaKey ? 'key saved' : 'no key yet'}</span>
-      </div>
+      <h2>AI Studio keys are per model</h2>
       <p className="small" style={{ margin: 0 }}>
-        The <strong>shared default</strong> key — any model that doesn't have its own uses this one. To put a model on its
-        own Alibaba account, give it a key in that model's own settings (pick the model above, then <em>AI Studio key</em>).
-        Make keys in the{' '}
+        Each model uses its <strong>own</strong> AI Studio key, so a model's videos and images always bill to that
+        model's own account — the billing stays separate, with nothing shared in the background. Set a key in a model's
+        own settings: pick a model above, then <em>AI Studio key</em>. Give <strong>each</strong> model its own Alibaba
+        (Wan) key from a <strong>different account</strong> to keep their bills apart (ArgoLink / Nano Banana Pro can reuse
+        one key across models if you like). Make keys in the{' '}
         <a href="https://modelstudio.console.alibabacloud.com/" target="_blank" rel="noreferrer">
           Model Studio console
         </a>
-        ; Wan 3.0 is served only on your workspace's own address, so the key, region and workspace ID must all be from
-        the same place.
+        ; for Wan the key, region and workspace ID must all be from the same account.
       </p>
-      <form
-        className="stack"
-        onSubmit={async (e) => {
-          e.preventDefault();
-          setBusy(true);
-          setError(null);
-          try {
-            onSaved(await api.saveStudioKey(key.trim() ? key : null, region, workspace.trim()));
-            setKey('');
-            toast(key.trim() ? 'Alibaba key saved' : 'Saved');
-          } catch (err) {
-            setError((err as Error).message);
-          } finally {
-            setBusy(false);
-          }
-        }}
-      >
-        <div className="row2">
-          <label className="field">
-            <span>API key {settings.alibabaKey && <span className="muted small">(saved: {settings.alibabaKey})</span>}</span>
-            <input
-              type="password"
-              autoComplete="off"
-              placeholder={settings.alibabaKey ? 'Paste a new key to replace it' : 'sk-…'}
-              value={key}
-              onChange={(e) => setKey(e.target.value)}
-            />
-          </label>
-          <label className="field">
-            <span>Region</span>
-            <select value={region} onChange={(e) => setRegion(e.target.value)}>
-              {STUDIO_REGIONS.map((r) => (
-                <option key={r.id} value={r.id}>
-                  {r.name}
-                </option>
-              ))}
-            </select>
-          </label>
-        </div>
-        <label className="field">
-          <span>
-            Workspace ID <span className="muted small">(required)</span>
-          </span>
-          <input
-            type="text"
-            autoComplete="off"
-            spellCheck={false}
-            placeholder="Your Model Studio workspace ID"
-            value={workspace}
-            onChange={(e) => setWorkspace(e.target.value)}
-          />
-        </label>
-        <p className="muted small" style={{ margin: 0 }}>
-          Where to find it:{' '}
-          <a href="https://help.aliyun.com/en/model-studio/obtain-the-app-id-and-workspace-id" target="_blank" rel="noreferrer">
-            Alibaba's guide
-          </a>
-          . With it, AI Studio uses your workspace's own address, which Wan 3.0 is documented with.
-        </p>
-        {error && <div className="notice error small">{error}</div>}
-        <div className="row">
-          <button className="btn primary small" disabled={busy || !canSave}>
-            {busy ? 'Checking…' : key.trim() ? 'Save key' : 'Save'}
-          </button>
-          {settings.alibabaKey && (
-            <button
-              type="button"
-              className="btn link small"
-              onClick={async () => {
-                onSaved(await api.saveStudioKey('', region, workspace.trim()));
-                toast('Alibaba key removed');
-              }}
-            >
-              Remove key
-            </button>
-          )}
-        </div>
-      </form>
+      <p className="muted small" style={{ margin: 0 }}>
+        Tip: to keep costs down, pick <strong>720p</strong> (or 480p) and a <strong>Germany (Frankfurt)</strong> key — the
+        same video is roughly 4× cheaper than 1080p on Singapore — and set a short length for test runs.
+      </p>
     </section>
   );
 }
@@ -927,21 +835,17 @@ function PeopleCard({ models, toast }: { models: Model[]; toast: (m: string) => 
 function GeneralSettings({
   status,
   models,
-  settings,
   prefs,
   onStatus,
   reload,
-  setSettings,
   savePrefs,
   toast,
 }: {
   status: AppStatus;
   models: Model[];
-  settings: AppSettings | null;
   prefs: Preferences | null;
   onStatus: () => void;
   reload: () => void;
-  setSettings: (s: AppSettings) => void;
   savePrefs: (patch: Partial<Preferences>) => void;
   toast: (m: string) => void;
 }) {
@@ -964,7 +868,7 @@ function GeneralSettings({
         </div>
       )}
 
-      {settings && <StudioKeyCard settings={settings} onSaved={(s) => { setSettings(s); onStatus(); }} toast={toast} />}
+      <StudioKeyCard />
 
       {prefs ? (
         <>
@@ -1016,7 +920,6 @@ export function SettingsPage({
   onCreateModel: (name: string) => Promise<void>;
   onGoAccounts?: () => void;
 }) {
-  const [settings, setSettings] = useState<AppSettings | null>(null);
   const [prefs, setPrefs] = useState<Preferences | null>(null);
   // Which panel is showing: a model's id, or 'general' for the shared owner settings.
   const [view, setView] = useState<string>(current.id);
@@ -1025,7 +928,6 @@ export function SettingsPage({
   const [error, setError] = useState<string | null>(null);
 
   const load = useCallback(() => {
-    api.settings().then(setSettings).catch((err) => setError(err.message));
     if (status.engine.state === 'ok') api.preferences().then(setPrefs).catch(() => {});
   }, [status.engine.state]);
 
@@ -1138,11 +1040,9 @@ export function SettingsPage({
         <GeneralSettings
           status={status}
           models={models}
-          settings={settings}
           prefs={prefs}
           onStatus={onStatus}
           reload={load}
-          setSettings={setSettings}
           savePrefs={savePrefs}
           toast={toast}
         />

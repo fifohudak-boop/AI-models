@@ -287,21 +287,24 @@ def test_ai_studio_makes_a_video_with_wan(client, tmp_path):
     mia = state["mia"]
     jobs = lambda: client.get(f"/api/m/{mia}/studio/jobs").json()  # noqa: E731
     try:
-        # Wan 3.0 is served only on your workspace's own address, so the key is checked against that
-        # address (region + workspace) before it's kept — and a key with no workspace isn't live yet.
-        bad = client.put("/api/settings/studio", json={"apiKey": "sk-wrong", "region": "intl", "workspace": "ws-test-123"},
+        # Each model uses its own key (there's no shared fallback, so billing stays per-model). Give
+        # Mia her own Wan key. Wan 3.0 is served only on your workspace's own address, so the key is
+        # checked against that address (region + workspace) before it's kept — and a key with no
+        # workspace isn't live yet.
+        K = f"/api/m/{mia}/studio/key"
+        bad = client.put(K, json={"provider": "wan", "apiKey": "sk-wrong", "region": "intl", "workspace": "ws-test-123"},
                          headers=H)
         assert bad.status_code == 400 and "didn't accept" in bad.json()["error"]
-        half = client.put("/api/settings/studio", json={"apiKey": GOOD_KEY, "region": "intl"}, headers=H)
+        half = client.put(K, json={"provider": "wan", "apiKey": GOOD_KEY, "region": "intl"}, headers=H)
         assert half.status_code == 200 and GOOD_KEY not in half.text  # key saved, but…
-        assert client.get("/api/status").json()["studio"] == {"connected": False, "hasKey": True,
-                                                               "needsWorkspace": True, "region": "intl"}
-        assert client.put("/api/settings/studio", json={"region": "intl", "workspace": "x.evil.com/"}, headers=H).status_code == 400
-        ok = client.put("/api/settings/studio", json={"apiKey": GOOD_KEY, "region": "intl", "workspace": "ws-test-123"},
+        wan = client.get(K).json()["keys"]["wan"]
+        assert wan["hasKey"] is True and wan["connected"] is False and wan["usingDefault"] is False  # needs workspace
+        assert client.put(K, json={"provider": "wan", "region": "intl", "workspace": "x.evil.com/"}, headers=H).status_code == 400
+        ok = client.put(K, json={"provider": "wan", "apiKey": GOOD_KEY, "region": "intl", "workspace": "ws-test-123"},
                         headers=H)
         assert ok.status_code == 200, ok.text
         assert fake.hosts[-1] == "ws-test-123.ap-southeast-1.maas.aliyuncs.com"  # checked on Wan's own address
-        assert client.get("/api/studio/options").json()["connected"] is True
+        assert client.get(f"/api/m/{mia}/studio/options").json()["connected"] is True
         fake.policies.clear()  # forget the getPolicy from the key check
 
         # "Make this video with Mia": a 20 s find + a photo of her.
@@ -357,7 +360,7 @@ def test_ai_studio_makes_a_video_with_wan(client, tmp_path):
         assert client.get(f"/api/m/{state['mike']}/studio/jobs").json() == []
     finally:
         studio.set_transport(None)
-        settings.save({"alibabaApiKey": "", "alibabaRegion": "intl", "alibabaWorkspace": ""})
+        settings.save({"alibabaApiKey": "", "alibabaRegion": "intl", "alibabaWorkspace": "", "studioKeys": {}})
 
 
 def test_removing_a_model_keeps_your_files(client):

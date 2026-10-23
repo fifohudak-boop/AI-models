@@ -116,7 +116,9 @@ export function StudioPage({
           const modes = o.modes.map((x) => x.id);
           setMode(modes.includes('reference') ? 'reference' : (modes[0] as Mode));
           setGenModel(o.models[0]?.id ?? '');
-          setResolution(o.kind === 'video' ? o.resolutions[o.resolutions.length - 1] : o.resolutions[1] ?? o.resolutions[0]);
+          // Default to a mid quality (720p for video, 2K for images), not the priciest top tier — a
+          // 1080p clip can cost ~2× a 720p one, so top quality is a deliberate choice, not the default.
+          setResolution(o.resolutions[1] ?? o.resolutions[0]);
           setRatio(o.ratios[0] ?? '9:16');
           setDuration(o.durations.default || 5);
           setAutoLength(o.durations.auto);
@@ -495,7 +497,7 @@ export function StudioPage({
                       ? `for ${batchCount} pictures · ${money(price / batchCount)} each, automatic from the provider’s price`
                       : 'per image, automatic from the provider’s price'
                     : autoLength
-                      ? `about, for ~${estSeconds}s (auto length — final depends on the ${verb} made)`
+                      ? `rough, for ~${estSeconds}s — auto length lets the model choose, up to ${options?.durations.max ?? 30}s, so it can cost several × this (≈${money((price / Math.max(estSeconds, 1)) * (options?.durations.max ?? 30))} at the longest)`
                       : `for ${duration}s at ${resolution}, automatic from the provider’s price`}
                 </span>
               </>
