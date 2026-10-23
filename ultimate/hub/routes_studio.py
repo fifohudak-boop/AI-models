@@ -85,8 +85,6 @@ async def get_model_key(model_id: str) -> dict:
     personas.require(model_id)
     s = settings.get()
     mk = studio.model_keys(model_id, s)  # {provider: {apiKey, region, workspace}}
-    default = studio._default_creds(s)
-    default_ok = bool(default["apiKey"]) and bool(default["workspace"])
     keys = {}
     for pid in providers.PROVIDERS:
         c = studio.creds(model_id, pid)
@@ -97,10 +95,10 @@ async def get_model_key(model_id: str) -> dict:
             "region": c["region"],
             "workspace": c["workspace"],
             "connected": studio.connected(model_id, pid),
-            "usingDefault": pid == "wan" and not own.get("apiKey") and default_ok,
+            "usingDefault": False,  # no shared fallback — each model uses its own key, so billing is separate
         }
     return {
-        "defaultConnected": default_ok,
+        "defaultConnected": False,
         "keys": keys,
         "providers": [{"id": p["id"], "name": p["name"], "kind": p["kind"], "needsWorkspace": p["needsWorkspace"],
                        "regions": p["regions"], "keyHint": p["keyHint"], "console": p["console"]}
