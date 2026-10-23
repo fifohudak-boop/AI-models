@@ -119,6 +119,24 @@ def argolink_price(model: str, images: int = 1) -> float | None:
     return round(per * max(1, images), 4)
 
 
+# ArgoLink also serves VIDEO (async: POST /v1/videos/generations → poll GET /v1/videos/{id}, URL in
+# video.url). Per-second USD by resolution (argolink.io/en/models, checked Oct 2026). Uses the same
+# ArgoLink key as the images above.
+ARGOLINK_VIDEO_MIN_S, ARGOLINK_VIDEO_MAX_S = 4, 30
+ARGOLINK_VIDEO_USD_PER_S = {
+    "seedance-2.5": {"480p": 0.0874, "720p": 0.196, "1080p": 0.483},
+    "wan-3": {"480p": 0.038, "720p": 0.075, "1080p": 0.15},
+}
+
+
+def argolink_video_price(model: str, resolution: str, seconds: float) -> float | None:
+    rail = ARGOLINK_VIDEO_USD_PER_S.get(model)
+    rate = rail.get(resolution) if rail else None
+    if rate is None or not seconds or seconds <= 0:
+        return None
+    return round(rate * seconds, 4)
+
+
 # ---------------------------------------------------------------- VideoRouter (aggregator, video)
 
 # VideoRouter (videorouter.sh) is an OpenAI-style router with an async video API: POST /api/v1/videos,
@@ -193,6 +211,23 @@ PROVIDERS: dict[str, dict] = {
         "sizes": ["1K", "2K", "4K"],
         "ratios": ["9:16", "3:4", "1:1", "4:3", "16:9", "2:3", "3:2", "5:4", "4:5", "21:9"],
         "modes": ["text", "image", "reference"],
+        "console": "https://argolink.io/",
+    },
+    "argolink-video": {
+        "id": "argolink-video",
+        "name": "ArgoLink video (Seedance 2.5 · Wan 3.0)",
+        "kind": "video",
+        "needsWorkspace": False,
+        "sharesKeyWith": "argolink",  # reuses this model's own ArgoLink key — no separate key to enter
+        "keyHint": "Uses your ArgoLink key — the same one as ArgoLink images.",
+        "regions": [{"id": "global", "name": "Global"}],
+        "models": [
+            {"id": "seedance-2.5", "name": "Seedance 2.5"},
+            {"id": "wan-3", "name": "Wan 3.0 (cheaper)"},
+        ],
+        "resolutions": ["480p", "720p", "1080p"],
+        "ratios": ["9:16", "3:4", "1:1", "4:3", "16:9", "21:9"],
+        "modes": ["text", "image"],  # text-to-video and image-to-video (first frame)
         "console": "https://argolink.io/",
     },
     "seedream": {
@@ -280,6 +315,8 @@ def price(provider_id: str, model: str, region: str, resolution: str,
         return seedream_price(model, images)
     if provider_id == "argolink":
         return argolink_price(model, images)
+    if provider_id == "argolink-video":
+        return argolink_video_price(model, resolution, float(seconds or 0))
     if provider_id == "wavespeed":
         return wavespeed_price(model, resolution, float(seconds or 0))
     if provider_id == "videorouter":

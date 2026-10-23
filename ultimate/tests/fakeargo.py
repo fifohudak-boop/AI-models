@@ -1,5 +1,6 @@
 """A stand-in for ArgoLink's OpenAI-style image API: synchronous POST /v1/images/generations
-(returns a URL) and /v1/images/edits (returns base64), plus GET /v1/models for the key check."""
+(returns a URL) and /v1/images/edits (returns base64), plus GET /v1/models for the key check — and
+its async video API: POST /v1/videos/generations → poll GET /v1/videos/{id} (url in video.url)."""
 
 from __future__ import annotations
 
@@ -10,7 +11,9 @@ import httpx
 
 GOOD_KEY = "argo-test-good"
 IMAGE_URL = "https://cdn.argolink.io/out/{n}.png"
+VIDEO_URL = "https://cdn.argolink.io/vid/{n}.mp4"
 PNG_BYTES = b"\x89PNG\r\n\x1a\n an argolink image"
+MP4_BYTES = b"\x00\x00\x00\x18ftypmp42 an argolink video"
 
 
 class FakeArgoLink:
@@ -18,6 +21,7 @@ class FakeArgoLink:
         self.hosts: list[str] = []
         self.generations: list[dict] = []
         self.edits: list[dict] = []
+        self.videos: dict[str, dict] = {}
 
     def transport(self) -> httpx.MockTransport:
         return httpx.MockTransport(self.handle)
@@ -29,7 +33,8 @@ class FakeArgoLink:
     def handle(self, request: httpx.Request) -> httpx.Response:
         url = request.url
         if url.host.startswith("cdn.argolink"):
-            return httpx.Response(200, content=PNG_BYTES, headers={"Content-Type": "image/png"})
+            body = MP4_BYTES if url.path.endswith(".mp4") else PNG_BYTES
+            return httpx.Response(200, content=body, headers={"Content-Type": "application/octet-stream"})
         self.hosts.append(url.host)
         if request.headers.get("Authorization") != f"Bearer {GOOD_KEY}":
             return self._json(401, {"error": {"message": "Invalid API key", "code": "invalid_api_key"}})
@@ -44,4 +49,13 @@ class FakeArgoLink:
             self.edits.append(json.loads(request.content))
             # exercise the base64 path
             return self._json(200, {"created": 1, "data": [{"b64_json": base64.b64encode(PNG_BYTES).decode()}]})
+        # ---- async video ----
+        if path == "/v1/videos/generations" and request.method == "POST":
+            rid = f"argo-vid-{len(self.videos) + 1}"
+            self.videos[rid] = {"body": json.loads(request.content)}
+            return self._json(200, {"request_id": rid, "status": "pending"})
+        if path.startswith("/v1/videos/") and request.method == "GET":
+            rid = path.rsplit("/", 1)[-1]
+            n = int(rid.rsplit("-", 1)[-1]) if rid in self.videos else 1
+            return self._json(200, {"status": "done", "video": {"url": VIDEO_URL.format(n=n)}})
         return self._json(404, {"error": {"message": f"no route {request.method} {path}"}})
