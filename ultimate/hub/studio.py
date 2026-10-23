@@ -76,6 +76,7 @@ MIN_S, MAX_S = 2, 30
 SEEDANCE_MIN_S, SEEDANCE_MAX_S = 4, 15
 WAVESPEED_MIN_S, WAVESPEED_MAX_S = providers.WAVESPEED_MIN_S, providers.WAVESPEED_MAX_S
 VIDEOROUTER_MIN_S, VIDEOROUTER_MAX_S = providers.VIDEOROUTER_MIN_S, providers.VIDEOROUTER_MAX_S
+ARGOLINK_VIDEO_MIN_S, ARGOLINK_VIDEO_MAX_S = providers.ARGOLINK_VIDEO_MIN_S, providers.ARGOLINK_VIDEO_MAX_S
 SMART = -1
 ESTIMATE_SECONDS = 5
 POLL_EVERY_S = 15
@@ -128,13 +129,19 @@ def model_keys(model_id: str | None, s: dict | None = None) -> dict:
 
 def creds(model_id: str | None, provider_id: str) -> dict:
     """This model's own key + region (+ workspace for Wan) for one provider. There is no shared
-    fallback: every model uses its own key, so each one's generations bill to its own account and the
-    billing stays separate per model (a model with no key of its own simply isn't connected)."""
-    pc = model_keys(model_id).get(provider_id) or {}
+    fallback between models, so each model's generations bill to its own account and billing stays
+    separate per model. The one exception is a provider that shares another's key within the SAME
+    model (ArgoLink video reuses this model's own ArgoLink key — same account, still per-model)."""
+    keys = model_keys(model_id)
+    pc = keys.get(provider_id) or {}
     if pc.get("apiKey"):
         return {"provider": provider_id, "apiKey": pc.get("apiKey") or "",
                 "region": pc.get("region") or _default_region(provider_id),
                 "workspace": (pc.get("workspace") or "").strip()}
+    shares = providers.provider(provider_id).get("sharesKeyWith")
+    if shares and (sc := keys.get(shares) or {}).get("apiKey"):
+        return {"provider": provider_id, "apiKey": sc["apiKey"],
+                "region": _default_region(provider_id), "workspace": ""}
     return {"provider": provider_id, "apiKey": "", "region": _default_region(provider_id), "workspace": ""}
 
 
@@ -636,6 +643,48 @@ async def videorouter_get(task_id: str, model_id: str) -> dict:
     return {"task_status": status, "video_url": url, "message": msg or "", "code": ""}
 
 
+# ---------------------------------------------------------------- ArgoLink video (Seedance 2.5 / Wan 3.0)
+
+_ARGO_VIDEO_STATUS = {"queued": "RUNNING", "pending": "RUNNING", "processing": "RUNNING", "running": "RUNNING",
+                      "done": "SUCCEEDED", "succeeded": "SUCCEEDED", "completed": "SUCCEEDED",
+                      "failed": "FAILED", "error": "FAILED", "expired": "FAILED", "cancelled": "CANCELED"}
+
+
+async def argolink_video_create(job: dict, first_frame: Path | None) -> str:
+    """ArgoLink video is async: submit returns a request_id to poll. Same ArgoLink key as the images."""
+    body: dict[str, Any] = {"model": job["model"], "prompt": job["sentPrompt"][:20000],
+                            "duration": job["duration"], "resolution": job["resolution"].lower(),
+                            "aspect_ratio": job["ratio"], "generate_audio": bool(job.get("audio")), "n": 1}
+    if first_frame is not None:
+        body["start_image"] = {"url": _data_uri(first_frame)}
+    async with _client(60) as client:
+        resp = await client.post(f"{providers.ARGOLINK_HOST}/videos/generations",
+                                 headers=_headers({"Content-Type": "application/json"}, model_id=job["modelId"],
+                                                  provider_id="argolink-video"),
+                                 json=body)
+    if resp.status_code >= 400:
+        raise StudioError(_message(resp, "ArgoLink"), 502)
+    data = resp.json() or {}
+    task_id = data.get("request_id") or data.get("id")
+    if not task_id:
+        raise StudioError("ArgoLink didn't start the video.", 502)
+    return task_id
+
+
+async def argolink_video_get(task_id: str, model_id: str) -> dict:
+    async with _client(30) as client:
+        resp = await client.get(f"{providers.ARGOLINK_HOST}/videos/{task_id}",
+                                headers=_headers(model_id=model_id, provider_id="argolink-video"))
+    if resp.status_code >= 400:
+        raise StudioError(_message(resp, "ArgoLink"), 502)
+    data = resp.json() or {}
+    status = _ARGO_VIDEO_STATUS.get(str(data.get("status") or "").lower(), "RUNNING")
+    url = ((data.get("video") or {}).get("url")) or data.get("url") or ""
+    err = data.get("error") if isinstance(data.get("error"), dict) else {}
+    msg = err.get("message") or (data.get("error") if isinstance(data.get("error"), str) else "") or data.get("message") or ""
+    return {"task_status": status, "video_url": url, "message": msg, "code": err.get("code") or ""}
+
+
 # ---------------------------------------------------------------- preparing files for Wan
 
 def _run(args: list[str], timeout: float = 600) -> None:
@@ -785,14 +834,17 @@ def validate_request(model_id: str, req: dict) -> dict:
         raise StudioError("Describe what you want." if kind == "image" else "Describe the video you want.")
     model = req.get("model") if req.get("model") in providers.model_ids(prov_id) else providers.model_ids(prov_id)[0]
     res_choices = providers.resolutions(prov_id)
-    resolution = req.get("resolution") if req.get("resolution") in res_choices else res_choices[-1 if kind == "video" else 1]
+    # Default to a mid tier (720p / 2K), not the priciest top one — top quality is a deliberate pick.
+    default_res = res_choices[1] if len(res_choices) > 1 else res_choices[0]
+    resolution = req.get("resolution") if req.get("resolution") in res_choices else default_res
     ratio = req.get("ratio") if req.get("ratio") in prov["ratios"] else prov["ratios"][0]
 
     if kind == "image":
         duration = None
-    elif prov_id in ("seedance", "wavespeed", "videorouter"):
+    elif prov_id in ("seedance", "wavespeed", "videorouter", "argolink-video"):
         lo, hi = {"wavespeed": (WAVESPEED_MIN_S, WAVESPEED_MAX_S),
-                  "videorouter": (VIDEOROUTER_MIN_S, VIDEOROUTER_MAX_S)}.get(prov_id, (SEEDANCE_MIN_S, SEEDANCE_MAX_S))
+                  "videorouter": (VIDEOROUTER_MIN_S, VIDEOROUTER_MAX_S),
+                  "argolink-video": (ARGOLINK_VIDEO_MIN_S, ARGOLINK_VIDEO_MAX_S)}.get(prov_id, (SEEDANCE_MIN_S, SEEDANCE_MAX_S))
         try:
             duration = int(req.get("duration") if req.get("duration") is not None else 5)
         except (TypeError, ValueError):
@@ -876,6 +928,8 @@ async def _run_job(job: dict) -> None:
             await _start_wavespeed(job, work)
         elif job["provider"] == "videorouter":
             await _start_videorouter(job, work)
+        elif job["provider"] == "argolink-video":
+            await _start_argolink_video(job, work)
         elif job["provider"] in ("seedream", "argolink"):
             await _run_image(job, work)
     except Exception as exc:  # noqa: BLE001 - shown on the page
@@ -944,6 +998,17 @@ async def _start_videorouter(job: dict, work: Path) -> None:
                sentPrompt=job["prompt"] or "A short, natural video.")
     _save(job)
     job["taskId"] = await videorouter_create(job, first_frame)
+    _save(job)
+
+
+async def _start_argolink_video(job: dict, work: Path) -> None:
+    first_frame = None
+    if job["mode"] == "image" and job["photos"]:
+        first_frame = await asyncio.to_thread(prepare_photo, Path(job["photos"][0]), work)
+    job.update(step="Waiting for ArgoLink", status="PENDING",
+               sentPrompt=job["prompt"] or "A short, natural video.")
+    _save(job)
+    job["taskId"] = await argolink_video_create(job, first_frame)
     _save(job)
 
 
@@ -1046,13 +1111,16 @@ async def poll_once() -> None:
         job = json.loads(row["data"])
         if job["status"] in FINAL or not job.get("taskId"):
             continue
-        getter = {"seedance": seedance_get, "wavespeed": wavespeed_get,
-                  "videorouter": videorouter_get}.get(job.get("provider"), get_task)
+        getter = {"seedance": seedance_get, "wavespeed": wavespeed_get, "videorouter": videorouter_get,
+                  "argolink-video": argolink_video_get}.get(job.get("provider"), get_task)
         try:
             out = await getter(job["taskId"], job["modelId"])
         except Exception as exc:  # noqa: BLE001
             if _age_s(job) > 24 * 3600:
-                job.update(status="failed", step="", error="The result expired (it's kept for 24 hours).")
+                job.update(status="failed", step="",
+                           error="The result expired before it could be saved — the provider only keeps it 24 hours. "
+                                 "If it had finished it may still have been billed, so keep Fifofarm open and online "
+                                 "until your videos finish downloading.")
                 _save(job)
             else:
                 log.warning("Checking task %s failed: %s", job["taskId"], exc)
@@ -1069,7 +1137,10 @@ async def poll_once() -> None:
                 job.update(status="saved", step="Saved", error=None, seconds=secs,
                            cost=_job_cost({**job, "seconds": float(secs or 0)}), costCurrency=currency())
             except Exception as exc:  # noqa: BLE001
-                job.update(status="SUCCEEDED", step="Saving the video", error=f"Couldn't save the video yet: {exc}")
+                # It finished on the provider (so it was billed) — keep it non-final so the next poll
+                # retries the download; only an expiry (above) gives up.
+                job.update(status="SUCCEEDED", step="Finished on the provider — retrying the download",
+                           error=f"Finished (and billed) but couldn't be saved yet, retrying: {exc}")
         elif status in ("FAILED", "CANCELED", "UNKNOWN"):
             why = out.get("message") or {"CANCELED": "The task was canceled.",
                                           "UNKNOWN": "The provider doesn't know this task any more."}.get(status, "")

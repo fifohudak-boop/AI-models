@@ -22,6 +22,8 @@ def _durations(provider_id: str) -> dict:
         return {"min": studio.WAVESPEED_MIN_S, "max": studio.WAVESPEED_MAX_S, "auto": False, "default": 5}
     if provider_id == "videorouter":
         return {"min": studio.VIDEOROUTER_MIN_S, "max": studio.VIDEOROUTER_MAX_S, "auto": False, "default": 5}
+    if provider_id == "argolink-video":
+        return {"min": studio.ARGOLINK_VIDEO_MIN_S, "max": studio.ARGOLINK_VIDEO_MAX_S, "auto": False, "default": 5}
     return {"min": studio.MIN_S, "max": studio.MAX_S, "auto": True, "default": 5}
 
 
@@ -86,7 +88,9 @@ async def get_model_key(model_id: str) -> dict:
     s = settings.get()
     mk = studio.model_keys(model_id, s)  # {provider: {apiKey, region, workspace}}
     keys = {}
-    for pid in providers.PROVIDERS:
+    for pid, p in providers.PROVIDERS.items():
+        if p.get("sharesKeyWith"):
+            continue  # no key of its own — it reuses another provider's key for this model
         c = studio.creds(model_id, pid)
         own = mk.get(pid) or {}
         keys[pid] = {
@@ -102,7 +106,7 @@ async def get_model_key(model_id: str) -> dict:
         "keys": keys,
         "providers": [{"id": p["id"], "name": p["name"], "kind": p["kind"], "needsWorkspace": p["needsWorkspace"],
                        "regions": p["regions"], "keyHint": p["keyHint"], "console": p["console"]}
-                      for p in providers.PROVIDERS.values()],
+                      for p in providers.PROVIDERS.values() if not p.get("sharesKeyWith")],
     }
 
 

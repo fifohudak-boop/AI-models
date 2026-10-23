@@ -424,3 +424,44 @@ def test_a_non_media_upload_is_refused(client, fake, tmp_path):
     mid = _model_with_photo(client, "DropBad", tmp_path)
     bad = client.post(f"/api/m/{mid}/studio/upload?name=notes.txt", headers=H, content=b"hello")
     assert bad.status_code == 415
+
+
+def test_argolink_also_makes_video_with_the_same_key(client, tmp_path):
+    """ArgoLink video (Seedance 2.5 / Wan 3.0) reuses the model's own ArgoLink key — so one key gives
+    both images and video — and it's async (submit → poll → download), billed per second."""
+    from fakeargo import GOOD_KEY as ARGO_KEY, MP4_BYTES, FakeArgoLink  # noqa: PLC0415
+
+    argo = FakeArgoLink()
+    studio.set_transport(argo.transport())
+    try:
+        mid = _model_with_photo(client, "ArgoVid", tmp_path)
+        # Only the ArgoLink (images) key is set — nothing for argolink-video.
+        client.put(f"/api/m/{mid}/studio/key", headers=H,
+                   json={"provider": "argolink", "apiKey": ARGO_KEY, "region": "global"})
+
+        # The video provider shows up, connected, on that same key — and it has no key card of its own.
+        opts = client.get(f"/api/m/{mid}/studio/options?provider=argolink-video").json()
+        assert opts["provider"] == "argolink-video" and opts["kind"] == "video" and opts["connected"] is True
+        assert opts["durations"] == {"min": 4, "max": 30, "auto": False, "default": 5}
+        assert {m["id"] for m in opts["models"]} == {"seedance-2.5", "wan-3"}
+        assert "argolink-video" not in client.get(f"/api/m/{mid}/studio/key").json()["keys"]
+        assert "argolink-video" in [p["id"] for p in opts["providers"] if p["connected"]]
+
+        jobs = lambda: client.get(f"/api/m/{mid}/studio/jobs").json()  # noqa: E731
+        res = client.post(f"/api/m/{mid}/studio/jobs", headers=H, json={
+            "provider": "argolink-video", "mode": "text", "prompt": "Mia dancing",
+            "model": "seedance-2.5", "resolution": "720p", "duration": 6})
+        assert res.status_code == 201, res.text
+        wait_for(lambda: jobs()[0], lambda j: j["status"] != "starting")
+        rid = list(argo.videos)[-1]
+        body = argo.videos[rid]["body"]
+        assert body["model"] == "seedance-2.5" and body["duration"] == 6 and body["resolution"] == "720p"
+
+        client.portal.call(studio.poll_once)  # pending → done → downloaded
+        job = jobs()[0]
+        assert job["status"] == "saved", job
+        assert Path(job["file"]).suffix == ".mp4" and Path(job["file"]).read_bytes() == MP4_BYTES
+        assert job["cost"] == 1.176 and job["provider"] == "argolink-video"  # 0.196/s × 6s at 720p
+    finally:
+        studio.set_transport(None)
+        settings.save({"studioKeys": {}})
