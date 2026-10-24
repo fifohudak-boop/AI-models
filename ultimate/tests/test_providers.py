@@ -465,3 +465,53 @@ def test_argolink_also_makes_video_with_the_same_key(client, tmp_path):
     finally:
         studio.set_transport(None)
         settings.save({"studioKeys": {}})
+
+
+def test_argolink_recreates_a_video_with_the_model(client, tmp_path):
+    """ArgoLink "edit" mode: a reference video + the model's photo → recreate the video as the model
+    (optionally changing outfit/background via the prompt). The clip and photo are uploaded to
+    ArgoLink first (its video API only takes hosted files), then the edit runs — billed ~2x the clip."""
+    import subprocess  # noqa: PLC0415
+    from fakeargo import GOOD_KEY as ARGO_KEY, MP4_BYTES, FakeArgoLink  # noqa: PLC0415
+    from hub.mediainfo import find_ffmpeg  # noqa: PLC0415
+
+    argo = FakeArgoLink()
+    studio.set_transport(argo.transport())
+    try:
+        mid = _model_with_photo(client, "ArgoEdit", tmp_path)
+        client.put(f"/api/m/{mid}/studio/key", headers=H,
+                   json={"provider": "argolink", "apiKey": ARGO_KEY, "region": "global"})
+        refs = Path(next(m["folders"] for m in client.get("/api/models").json() if m["id"] == mid)["references"])
+        clip = refs / "find.mp4"
+        subprocess.run([find_ffmpeg(), "-y", "-v", "error", "-f", "lavfi",
+                        "-i", "testsrc=size=320x568:rate=30:duration=3", "-f", "lavfi",
+                        "-i", "sine=frequency=440:duration=3", "-c:v", "libx264", "-pix_fmt", "yuv420p",
+                        "-c:a", "aac", "-shortest", str(clip)], check=True)
+        face = str(refs / "face.jpg")
+
+        jobs = lambda: client.get(f"/api/m/{mid}/studio/jobs").json()  # noqa: E731
+        res = client.post(f"/api/m/{mid}/studio/jobs", headers=H, json={
+            "provider": "argolink-video", "mode": "reference", "videos": [str(clip)], "photos": [face],
+            "model": "wan-3", "resolution": "720p", "prompt": "change the background to a beach"})
+        assert res.status_code == 201, res.text
+        wait_for(lambda: jobs()[0], lambda j: j["status"] != "starting")
+
+        # the clip and the photo were both uploaded to ArgoLink (hosted), carrying the model id
+        assert [u["type"] for u in argo.uploads] == ["video", "image"]
+        assert all(u["model"] == "wan-3" for u in argo.uploads)
+        # then the edit ran, referencing the hosted files in order
+        body = argo.videos[list(argo.videos)[-1]]["body"]
+        assert body["model"] == "wan-3" and body["omni_reference_task_type"] == "edit"
+        assert body["reference_videos"][0]["url"].startswith("https://media.argolink.io/")
+        assert body["reference_images"][0]["url"].startswith("https://media.argolink.io/")
+        assert "@Image 1" in body["prompt"] and "beach" in body["prompt"]
+        assert "duration" not in body and "aspect_ratio" not in body  # edit keeps the clip's own
+
+        client.portal.call(studio.poll_once)
+        job = jobs()[0]
+        assert job["status"] == "saved" and Path(job["file"]).read_bytes() == MP4_BYTES
+        # billed ~2x the clip: wan-3 720p $0.075/s × (clip seconds × 2)
+        assert job["cost"] == round(0.075 * job["referenceSeconds"] * 2, 4) and job["cost"] > 0
+    finally:
+        studio.set_transport(None)
+        settings.save({"studioKeys": {}})

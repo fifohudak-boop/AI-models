@@ -685,6 +685,64 @@ async def argolink_video_get(task_id: str, model_id: str) -> dict:
     return {"task_status": status, "video_url": url, "message": msg, "code": err.get("code") or ""}
 
 
+async def argolink_upload(path: Path, media_type: str, content_type: str, model_id: str, model: str) -> str:
+    """ArgoLink's video API only takes hosted files, so upload a local file (two steps: get a ticket,
+    then PUT the bytes to it) and return the media_url to reference. It's readable for 7 days."""
+    size = path.stat().st_size
+    data = await asyncio.to_thread(path.read_bytes)
+    async with _client(300) as client:
+        ticket = await client.post(f"{providers.ARGOLINK_HOST}/media/uploads",
+                                   headers=_headers({"Content-Type": "application/json"}, model_id=model_id,
+                                                    provider_id="argolink-video"),
+                                   json={"model": model, "type": media_type,
+                                         "content_type": content_type, "size_bytes": size})
+        if ticket.status_code >= 400:
+            raise StudioError(_message(ticket, "ArgoLink"), 502)
+        info = ticket.json() or {}
+        upload_url, media_url = info.get("upload_url"), info.get("media_url")
+        if not upload_url or not media_url:
+            raise StudioError("ArgoLink didn't give an upload address.", 502)
+        put = await client.put(upload_url, content=data, headers={"Content-Type": content_type})
+        if put.status_code >= 400:
+            raise StudioError(f"Uploading {path.name} to ArgoLink failed (HTTP {put.status_code}).", 502)
+    return media_url
+
+
+async def argolink_video_edit(job: dict, video_url: str, image_urls: list[str]) -> str:
+    """ArgoLink "edit" mode: recreate reference_videos[0] with the person in reference_images, guided
+    by the prompt. The edit keeps the source's length and ratio, so duration/aspect_ratio are omitted."""
+    body: dict[str, Any] = {"model": job["model"], "prompt": job["sentPrompt"][:20000],
+                            "omni_reference_task_type": "edit", "resolution": job["resolution"].lower(),
+                            "reference_videos": [{"url": video_url}],
+                            "reference_images": [{"url": u} for u in image_urls],
+                            "generate_audio": bool(job.get("audio"))}
+    async with _client(60) as client:
+        resp = await client.post(f"{providers.ARGOLINK_HOST}/videos/generations",
+                                 headers=_headers({"Content-Type": "application/json"}, model_id=job["modelId"],
+                                                  provider_id="argolink-video"),
+                                 json=body)
+    if resp.status_code >= 400:
+        raise StudioError(_message(resp, "ArgoLink"), 502)
+    data = resp.json() or {}
+    task_id = data.get("request_id") or data.get("id")
+    if not task_id:
+        raise StudioError("ArgoLink didn't start the video.", 502)
+    return task_id
+
+
+def default_edit_prompt(photos: int, extra: str) -> str:
+    """ArgoLink edit prompt: @Video 1 is the clip being recreated, @Image 1… the person to put in."""
+    if photos == 0:
+        base = "Recreate @Video 1, keeping its motion, camera and timing."
+    elif photos == 1:
+        base = ("Recreate @Video 1 with the person shown in @Image 1 — their face, hair, body and look — "
+                "keeping the original motion, camera and timing.")
+    else:
+        base = (f"Recreate @Video 1 with the person shown in @Image 1 to @Image {photos} (all the same person) — "
+                "their face, hair, body and look — keeping the original motion, camera and timing.")
+    return f"{base} {extra}".strip()
+
+
 # ---------------------------------------------------------------- preparing files for Wan
 
 def _run(args: list[str], timeout: float = 600) -> None:
@@ -1002,6 +1060,21 @@ async def _start_videorouter(job: dict, work: Path) -> None:
 
 
 async def _start_argolink_video(job: dict, work: Path) -> None:
+    if job["mode"] == "reference":
+        # Recreate a reference video with the model (ArgoLink edit mode). The clip + photos have to be
+        # uploaded to ArgoLink first (its video API only takes hosted files), then the edit is run.
+        clip, seconds = await asyncio.to_thread(prepare_video, Path(job["videos"][0]), work, REFERENCE_TOTAL_S)
+        photos = [await asyncio.to_thread(prepare_photo, Path(p), work) for p in job["photos"]]
+        job.update(step="Uploading to ArgoLink", status="PENDING", referenceSeconds=round(seconds, 1),
+                   sentPrompt=default_edit_prompt(len(photos), job["prompt"]))
+        _save(job)
+        video_url = await argolink_upload(clip, "video", "video/mp4", job["modelId"], job["model"])
+        image_urls = [await argolink_upload(p, "image", "image/jpeg", job["modelId"], job["model"]) for p in photos]
+        job.update(step="Waiting for ArgoLink")
+        _save(job)
+        job["taskId"] = await argolink_video_edit(job, video_url, image_urls)
+        _save(job)
+        return
     first_frame = None
     if job["mode"] == "image" and job["photos"]:
         first_frame = await asyncio.to_thread(prepare_photo, Path(job["photos"][0]), work)
@@ -1132,10 +1205,15 @@ async def poll_once() -> None:
             try:
                 job["file"] = await _download(job, out["video_url"], suffix=".mp4")
                 secs = (out.get("usage") or {}).get("output_video_duration")
-                if not secs and job.get("duration") not in (None, SMART):
-                    secs = job["duration"]
+                argo_edit = job.get("provider") == "argolink-video" and job["mode"] == "reference"
+                if not secs:  # fall back: an ArgoLink edit keeps the clip's length, others use the asked length
+                    secs = job.get("referenceSeconds") if argo_edit \
+                        else (job["duration"] if job.get("duration") not in (None, SMART) else None)
+                billed = float(secs or 0)
+                if argo_edit:
+                    billed *= 2  # ArgoLink edit bills the source twice — once as input, once as output
                 job.update(status="saved", step="Saved", error=None, seconds=secs,
-                           cost=_job_cost({**job, "seconds": float(secs or 0)}), costCurrency=currency())
+                           cost=_job_cost({**job, "seconds": billed}), costCurrency=currency())
             except Exception as exc:  # noqa: BLE001
                 # It finished on the provider (so it was billed) — keep it non-final so the next poll
                 # retries the download; only an expiry (above) gives up.

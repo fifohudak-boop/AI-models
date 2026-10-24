@@ -22,6 +22,7 @@ class FakeArgoLink:
         self.generations: list[dict] = []
         self.edits: list[dict] = []
         self.videos: dict[str, dict] = {}
+        self.uploads: list[dict] = []  # media/uploads tickets requested
 
     def transport(self) -> httpx.MockTransport:
         return httpx.MockTransport(self.handle)
@@ -35,6 +36,8 @@ class FakeArgoLink:
         if url.host.startswith("cdn.argolink"):
             body = MP4_BYTES if url.path.endswith(".mp4") else PNG_BYTES
             return httpx.Response(200, content=body, headers={"Content-Type": "application/octet-stream"})
+        if url.host.startswith("up.argolink"):  # the presigned PUT target (no auth)
+            return httpx.Response(200)
         self.hosts.append(url.host)
         if request.headers.get("Authorization") != f"Bearer {GOOD_KEY}":
             return self._json(401, {"error": {"message": "Invalid API key", "code": "invalid_api_key"}})
@@ -49,6 +52,12 @@ class FakeArgoLink:
             self.edits.append(json.loads(request.content))
             # exercise the base64 path
             return self._json(200, {"created": 1, "data": [{"b64_json": base64.b64encode(PNG_BYTES).decode()}]})
+        # ---- media uploads (hosted references for video edit) ----
+        if path == "/v1/media/uploads" and request.method == "POST":
+            self.uploads.append(json.loads(request.content))
+            n = len(self.uploads)
+            return self._json(200, {"upload_url": f"https://up.argolink.io/u/{n}",
+                                    "media_url": f"https://media.argolink.io/m/{n}"})
         # ---- async video ----
         if path == "/v1/videos/generations" and request.method == "POST":
             rid = f"argo-vid-{len(self.videos) + 1}"
