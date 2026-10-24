@@ -506,6 +506,12 @@ export function StudioPage({
             )}
           </div>
         )}
+        {provider === 'argolink-video' && mode === 'reference' && (
+          <p className="muted small" style={{ margin: 0 }}>
+            Recreate keeps your clip’s length and bills about <strong>2×</strong> it — ArgoLink counts your clip as both
+            the input and the output. The exact cost is shown once it’s made. Wan 3.0 is the cheapest for this.
+          </p>
+        )}
         {error && <div className="notice error small">{error}</div>}
         <button type="button" className="btn primary big" disabled={!ready} onClick={generate}>
           {!connected

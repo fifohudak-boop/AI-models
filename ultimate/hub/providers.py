@@ -227,7 +227,9 @@ PROVIDERS: dict[str, dict] = {
         ],
         "resolutions": ["480p", "720p", "1080p"],
         "ratios": ["9:16", "3:4", "1:1", "4:3", "16:9", "21:9"],
-        "modes": ["text", "image"],  # text-to-video and image-to-video (first frame)
+        # text-to-video, image-to-video (first frame), and "reference" = recreate a reference video
+        # with your model + a prompt (ArgoLink's edit mode).
+        "modes": ["text", "image", "reference"],
         "console": "https://argolink.io/",
     },
     "seedream": {
