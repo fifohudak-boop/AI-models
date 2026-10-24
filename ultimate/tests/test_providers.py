@@ -515,3 +515,38 @@ def test_argolink_recreates_a_video_with_the_model(client, tmp_path):
     finally:
         studio.set_transport(None)
         settings.save({"studioKeys": {}})
+
+
+def test_argolink_video_from_a_photo_uploads_the_frame(client, tmp_path):
+    """Image-to-video on ArgoLink: the starting photo must be uploaded (a hosted URL), not sent inline
+    — ArgoLink rejects data: URLs for video references. Regression for the "must use HTTP or HTTPS"
+    failure seen on a from-a-photo generation."""
+    from fakeargo import GOOD_KEY as ARGO_KEY, MP4_BYTES, FakeArgoLink  # noqa: PLC0415
+
+    argo = FakeArgoLink()
+    studio.set_transport(argo.transport())
+    try:
+        mid = _model_with_photo(client, "ArgoI2V", tmp_path)
+        client.put(f"/api/m/{mid}/studio/key", headers=H,
+                   json={"provider": "argolink", "apiKey": ARGO_KEY, "region": "global"})
+        face = str(Path(next(m["folders"] for m in client.get("/api/models").json()
+                             if m["id"] == mid)["references"]) / "face.jpg")
+
+        jobs = lambda: client.get(f"/api/m/{mid}/studio/jobs").json()  # noqa: E731
+        res = client.post(f"/api/m/{mid}/studio/jobs", headers=H, json={
+            "provider": "argolink-video", "mode": "image", "photos": [face],
+            "model": "wan-3", "resolution": "720p", "duration": 5, "prompt": "she waves"})
+        assert res.status_code == 201, res.text
+        wait_for(lambda: jobs()[0], lambda j: j["status"] != "starting")
+
+        assert [u["type"] for u in argo.uploads] == ["image"]  # the frame was uploaded, not inlined
+        body = argo.videos[list(argo.videos)[-1]]["body"]
+        assert body["start_image"]["url"].startswith("https://media.argolink.io/")
+        assert not body["start_image"]["url"].startswith("data:")  # the bug: data URLs are rejected
+        assert body["duration"] == 5 and body["model"] == "wan-3"  # not edit mode — keeps the asked length
+
+        client.portal.call(studio.poll_once)
+        assert jobs()[0]["status"] == "saved"
+    finally:
+        studio.set_transport(None)
+        settings.save({"studioKeys": {}})

@@ -650,13 +650,15 @@ _ARGO_VIDEO_STATUS = {"queued": "RUNNING", "pending": "RUNNING", "processing": "
                       "failed": "FAILED", "error": "FAILED", "expired": "FAILED", "cancelled": "CANCELED"}
 
 
-async def argolink_video_create(job: dict, first_frame: Path | None) -> str:
-    """ArgoLink video is async: submit returns a request_id to poll. Same ArgoLink key as the images."""
+async def argolink_video_create(job: dict, start_image_url: str | None) -> str:
+    """ArgoLink video is async: submit returns a request_id to poll. Same ArgoLink key as the images.
+    A first-frame photo must be a hosted URL (uploaded first), not inline data — ArgoLink rejects
+    data: URLs for video references."""
     body: dict[str, Any] = {"model": job["model"], "prompt": job["sentPrompt"][:20000],
                             "duration": job["duration"], "resolution": job["resolution"].lower(),
                             "aspect_ratio": job["ratio"], "generate_audio": bool(job.get("audio")), "n": 1}
-    if first_frame is not None:
-        body["start_image"] = {"url": _data_uri(first_frame)}
+    if start_image_url:
+        body["start_image"] = {"url": start_image_url}
     async with _client(60) as client:
         resp = await client.post(f"{providers.ARGOLINK_HOST}/videos/generations",
                                  headers=_headers({"Content-Type": "application/json"}, model_id=job["modelId"],
@@ -1075,13 +1077,18 @@ async def _start_argolink_video(job: dict, work: Path) -> None:
         job["taskId"] = await argolink_video_edit(job, video_url, image_urls)
         _save(job)
         return
-    first_frame = None
+    start_image_url = None
     if job["mode"] == "image" and job["photos"]:
+        # The first-frame photo has to be hosted too (ArgoLink's video API only takes URLs, not inline
+        # data), so upload it first and pass the media_url.
         first_frame = await asyncio.to_thread(prepare_photo, Path(job["photos"][0]), work)
+        job.update(step="Uploading to ArgoLink", status="PENDING")
+        _save(job)
+        start_image_url = await argolink_upload(first_frame, "image", "image/jpeg", job["modelId"], job["model"])
     job.update(step="Waiting for ArgoLink", status="PENDING",
                sentPrompt=job["prompt"] or "A short, natural video.")
     _save(job)
-    job["taskId"] = await argolink_video_create(job, first_frame)
+    job["taskId"] = await argolink_video_create(job, start_image_url)
     _save(job)
 
 
