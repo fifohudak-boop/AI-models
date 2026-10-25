@@ -365,6 +365,7 @@ export function App() {
             toast={toast}
             onPost={(path) => handOff('post', path)}
             onSettings={() => go('settings')}
+            canManage={canManage}
           />
         )}
         {tab === 'studio-spending' && <SpendingPage key={model.id} model={model} onSettings={() => go('settings')} />}
