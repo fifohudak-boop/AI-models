@@ -71,12 +71,14 @@ export function StudioPage({
   toast,
   onPost,
   onSettings,
+  canManage = false,
 }: {
   model: Model;
   handoff: Handoff | null;
   toast: (m: string) => void;
   onPost: (path: string) => void;
   onSettings: () => void;
+  canManage?: boolean;
 }) {
   const [options, setOptions] = useState<StudioOptions | null>(null);
   const [provider, setProvider] = useState('');
@@ -200,6 +202,14 @@ export function StudioPage({
   function choose(next: Mode) {
     setMode(next);
     if (options) setAutoLength(next === 'reference' && options.durations.auto);
+  }
+
+  // "Edit" on a saved output: drop it straight back into the reference slot and switch to recreate
+  // mode, so a picture (or video) you just made can be refined without hunting for it in the library.
+  function reuse(file: string) {
+    choose('reference');
+    addVideos([file]);
+    window.scrollTo({ top: 0, behavior: 'smooth' });
   }
 
   function pick(item: LibraryItem) {
@@ -582,9 +592,16 @@ export function StudioPage({
                       <button className="btn primary small" onClick={() => onPost(job.file!)}>
                         Post
                       </button>
-                      <button className="btn link small" onClick={() => api.openFolder(job.file!).catch((e) => toast(e.message))}>
-                        Show
-                      </button>
+                      {showReference && (job.kind === 'image') === isImage && (
+                        <button className="btn small" onClick={() => reuse(job.file!)}>
+                          Edit
+                        </button>
+                      )}
+                      {canManage && (
+                        <button className="btn link small" onClick={() => api.openFolder(job.file!).catch((e) => toast(e.message))}>
+                          Show
+                        </button>
+                      )}
                     </div>
                   )}
                 </div>
