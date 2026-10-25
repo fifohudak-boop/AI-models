@@ -11,7 +11,6 @@ import httpx
 
 GOOD_KEY = "argo-test-good"
 IMAGE_URL = "https://cdn.argolink.io/out/{n}.png"
-VIDEO_URL = "https://cdn.argolink.io/vid/{n}.mp4"
 PNG_BYTES = b"\x89PNG\r\n\x1a\n an argolink image"
 MP4_BYTES = b"\x00\x00\x00\x18ftypmp42 an argolink video"
 
@@ -63,8 +62,13 @@ class FakeArgoLink:
             rid = f"argo-vid-{len(self.videos) + 1}"
             self.videos[rid] = {"body": json.loads(request.content)}
             return self._json(200, {"request_id": rid, "status": "pending"})
+        # The finished clip is served from ArgoLink's OWN authenticated API endpoint, which needs the
+        # key just like every call above (the top-level auth check already enforced it) — fetching it
+        # without the Bearer token is the real-world 401. Must come before the generic poll route.
+        if path.startswith("/v1/videos/") and path.endswith("/content") and request.method == "GET":
+            return httpx.Response(200, content=MP4_BYTES, headers={"Content-Type": "video/mp4"})
         if path.startswith("/v1/videos/") and request.method == "GET":
             rid = path.rsplit("/", 1)[-1]
-            n = int(rid.rsplit("-", 1)[-1]) if rid in self.videos else 1
-            return self._json(200, {"status": "done", "video": {"url": VIDEO_URL.format(n=n)}})
+            return self._json(200, {"status": "done",
+                                    "video": {"url": f"https://argolink.io/v1/videos/{rid}/content"}})
         return self._json(404, {"error": {"message": f"no route {request.method} {path}"}})

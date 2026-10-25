@@ -1242,8 +1242,17 @@ async def _download(job: dict, url: str, suffix: str = ".mp4", index: int | None
     tag = f" {index + 1}" if index is not None else ""
     target = folder / f"{time.strftime('%Y-%m-%d %H.%M')} {job['mode']} {job['id'][:6]}{tag}{suffix}"
     partial = target.with_suffix(suffix + ".part")
+    # ArgoLink hands back the finished clip as its own authenticated API endpoint
+    # (https://argolink.io/v1/videos/{id}/content), which needs the Bearer key just like every other
+    # ArgoLink call — fetching it bare returns 401. A presigned CDN link (cdn./media.argolink.io, or
+    # any other provider's host) must NOT carry the header, so key strictly on the API host.
+    headers: dict[str, str] = {}
+    if httpx.URL(url).host == "argolink.io":
+        key = creds(job["modelId"], "argolink-video")["apiKey"]
+        if key:
+            headers["Authorization"] = f"Bearer {key}"
     async with _client(900) as client:
-        async with client.stream("GET", url) as resp:
+        async with client.stream("GET", url, headers=headers) as resp:
             resp.raise_for_status()
             with partial.open("wb") as fh:
                 async for chunk in resp.aiter_bytes():
