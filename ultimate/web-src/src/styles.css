@@ -2312,3 +2312,33 @@ details > summary {
 .swatch { width: 22px; height: 22px; border-radius: 50%; border: 2px solid var(--border); cursor: pointer; padding: 0; }
 .swatch.on { border-color: var(--text); box-shadow: 0 0 0 2px var(--accent); }
 .empty button { margin-top: 10px; }
+
+/* Prompt Making: the generated prompt output + the breakdown grid */
+.prompt-out {
+  width: 100%;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 13px;
+  line-height: 1.5;
+  resize: vertical;
+}
+.prompt-grid {
+  margin: 8px 0 0;
+  display: grid;
+  gap: 8px;
+}
+.prompt-row {
+  display: grid;
+  grid-template-columns: 110px 1fr;
+  gap: 10px;
+  align-items: start;
+}
+.prompt-row dt,
+.prompt-row dd {
+  margin: 0;
+}
+@media (max-width: 560px) {
+  .prompt-row {
+    grid-template-columns: 1fr;
+    gap: 2px;
+  }
+}

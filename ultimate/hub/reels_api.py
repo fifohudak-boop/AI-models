@@ -24,7 +24,7 @@ from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import FileResponse, PlainTextResponse
 from pydantic import BaseModel
 
-from . import __version__, personas
+from . import __version__, library, personas
 from .config import REEL_FINDER_HOME
 from .events import bus
 from .reels.ai import model_installed, ollama_models, pick_brain, sees_images
@@ -127,6 +127,42 @@ def current_ai_model() -> str:
     if state.hunt:
         return state.hunt.s.model
     return HuntSettings().model
+
+
+class PromptMakerBody(BaseModel):
+    path: str
+    caption: str = ""
+
+
+@router.post("/api/m/{model_id}/prompt-maker")
+async def make_prompt(model_id: str, body: PromptMakerBody) -> dict:
+    """Prompt Making: read a reference clip (one of this model's own videos) and turn it into a
+    ready-to-generate text-to-video prompt, using the same local vision model Reel Finder uses —
+    no API, no cost. Paste the result into AI Studio's Wan model to recreate it with this model."""
+    persona = _model(model_id)
+    file = Path(body.path)
+    if not personas.inside_folders(persona, file) or not file.exists():
+        raise HTTPException(404, "That video isn't in this model's folders.")
+    if library.media_kind(file) != "video":
+        raise HTTPException(415, "Pick a video — prompt making reads a reference clip.")
+    downloader = Downloader(COOKIES_FILE)
+    media = await asyncio.to_thread(downloader.inspect, file)
+    frames = await asyncio.to_thread(downloader.extract_frames, file, media.duration, 8)
+    if not frames:
+        raise HTTPException(422, "Couldn't read frames from that video — is it a real video file?")
+    brain, warning = await pick_brain(current_ai_model())
+    make = getattr(brain, "generation_prompt", None)
+    if make is None:
+        raise HTTPException(503, "Prompt making needs a local vision model. Start Ollama and install "
+                                 "one (e.g. run: ollama pull qwen3-vl), then try again.")
+    try:
+        result = await make(frames, body.caption, media.duration)
+    except HTTPException:
+        raise
+    except Exception as exc:  # noqa: BLE001
+        raise HTTPException(502, f"The model couldn't make a prompt: {str(exc).splitlines()[0][:200]}") from exc
+    return {"prompt": result, "model": getattr(brain, "name", ""),
+            "seconds": round(media.duration) if media.duration else None, "warning": warning}
 
 
 @router.get("/api/m/{model_id}/reels/settings")

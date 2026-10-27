@@ -212,3 +212,51 @@ def test_editor_adds_the_edited_folder_to_every_model(client):
     mid = client.post("/api/models", json={"name": "Folders Check"}, headers=H).json()
     assert mid["folders"]["edited"].endswith("Edited reels")
     client.delete(f"/api/models/{mid['id']}", headers=H)
+
+
+# ---------------------------------------------------------------- Prompt Making (reference video → prompt)
+
+def test_prompt_maker_turns_a_video_into_a_generation_prompt(client, model, monkeypatch):
+    """Reads real frames from the clip, then the (stubbed) local vision model returns the prompt JSON."""
+    from hub.reels.ai import GENERATION_FIELDS  # noqa: PLC0415
+
+    clip = Path(personas.folder(personas.require(model), "references")) / "clip.mp4"
+
+    class StubBrain:
+        name = "qwen3-vl:8b"
+
+        async def generation_prompt(self, frames, caption="", seconds=None):
+            assert frames and all(isinstance(f, (bytes, bytearray)) for f in frames)  # real frames were read
+            return {**{f: "x" for f in GENERATION_FIELDS},
+                    "prompt": "A young woman in a sunlit kitchen pours coffee, handheld slow push-in.",
+                    "camera": "handheld medium shot, slow push-in"}
+
+    async def fake_pick(name):
+        return StubBrain(), None
+
+    monkeypatch.setattr("hub.reels_api.pick_brain", fake_pick)
+    res = client.post(f"/api/m/{model}/prompt-maker", json={"path": str(clip)}, headers=H)
+    assert res.status_code == 200, res.text
+    body = res.json()
+    assert set(body["prompt"]) == set(GENERATION_FIELDS)
+    assert body["prompt"]["prompt"].startswith("A young woman")
+    assert body["prompt"]["camera"] == "handheld medium shot, slow push-in"
+    assert body["model"] == "qwen3-vl:8b" and body["seconds"] == 2
+
+
+def test_prompt_maker_needs_a_local_vision_model(client, model, monkeypatch):
+    from hub.reels.ai import KeywordBrain  # noqa: PLC0415
+
+    clip = Path(personas.folder(personas.require(model), "references")) / "clip.mp4"
+
+    async def no_vision(name):
+        return KeywordBrain(), "Ollama isn't running"
+
+    monkeypatch.setattr("hub.reels_api.pick_brain", no_vision)
+    res = client.post(f"/api/m/{model}/prompt-maker", json={"path": str(clip)}, headers=H)
+    assert res.status_code == 503 and "vision model" in res.json()["detail"]
+
+
+def test_prompt_maker_rejects_a_file_outside_the_model(client, model):
+    res = client.post(f"/api/m/{model}/prompt-maker", json={"path": "/etc/hosts"}, headers=H)
+    assert res.status_code == 404
