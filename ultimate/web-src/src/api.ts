@@ -16,6 +16,7 @@ import type {
   Person,
   Platform,
   Preferences,
+  PromptResult,
   Reference,
   ReelsStatus,
   SelfTestState,
@@ -159,6 +160,10 @@ export const api = {
   reelsLogin: (platform: string) => request<{ ok: true }>(`/api/reels/login/${enc(platform)}`, { method: 'POST' }),
   closeAgentsBrowser: () => request<{ ok: true }>('/api/reels/browser/close', { method: 'POST' }),
   importLogins: () => request<{ ok: true }>('/api/reels/import-logins', { method: 'POST' }),
+
+  // ---- Prompt Making: a reference video → a ready-to-generate prompt (local vision model) ----
+  makePrompt: (model: string, path: string) =>
+    request<PromptResult>(`${m(model)}/prompt-maker`, { method: 'POST', body: { path } }),
   pullModel: (model: string) => request<{ ok: true }>('/api/reels/ollama/pull', { method: 'POST', body: { model } }),
   selfTest: (platform: string, settings: HuntSettings) =>
     request<{ ok: true; query: string }>(`/api/reels/selftest/${enc(platform)}`, { method: 'POST', body: { settings } }),

@@ -557,6 +557,30 @@ export interface MetaResult {
   failed: { path: string; name: string; error: string }[];
 }
 
+// ---- Prompt Making (a reference video → a ready-to-generate prompt) ----
+
+export interface GenerationPrompt {
+  subject: string;
+  wardrobe: string;
+  setting: string;
+  lighting: string;
+  action: string;
+  camera: string;
+  style: string;
+  mood: string;
+  pacing: string;
+  audio: string;
+  prompt: string;
+  negative: string;
+}
+
+export interface PromptResult {
+  prompt: GenerationPrompt;
+  model: string;
+  seconds: number | null;
+  warning: string | null;
+}
+
 // ---- Live updates ----
 
 export interface ServerEvent {

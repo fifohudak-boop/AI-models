@@ -4,7 +4,14 @@ import json
 
 import httpx
 
-from hub.reels.ai import KeywordBrain, OllamaBrain, parse_json_object, pick_brain, sees_images
+from hub.reels.ai import (
+    GENERATION_FIELDS,
+    KeywordBrain,
+    OllamaBrain,
+    parse_json_object,
+    pick_brain,
+    sees_images,
+)
 from hub.reels.models import Candidate
 
 
@@ -137,3 +144,34 @@ def test_ollama_describes_a_reference_from_its_frames():
     sent = fake.requests[0]
     assert len(sent["messages"][0]["images"]) == 3 and "Sunday #drift" in sent["messages"][0]["content"]
     assert sent["format"]["required"] == ["description", "search_queries", "hashtags"]
+
+
+def test_ollama_makes_a_generation_prompt_from_frames():
+    reply = json.dumps({
+        "subject": "a young woman", "wardrobe": "cropped top and jeans", "setting": "a sunlit kitchen",
+        "lighting": "warm morning light", "action": "she pours coffee, turns and smiles at the camera",
+        "camera": "handheld medium shot, slow push-in", "style": "clean vlog look, soft grade",
+        "mood": "upbeat and cozy", "pacing": "one continuous shot", "audio": "soft lo-fi beat",
+        "prompt": "A young woman in a sunlit kitchen pours coffee and smiles, handheld slow push-in.",
+        "negative": "blurry, distorted face, extra people, watermark, text overlay",
+    })
+    fake = FakeOllama([reply])
+    brain = OllamaBrain("qwen3-vl:8b", transport=fake.transport())
+    out = run(brain.generation_prompt([b"f1", b"f2", b"f3"], caption="morning routine", seconds=6))
+    assert set(out) == set(GENERATION_FIELDS)
+    assert out["prompt"].startswith("A young woman in a sunlit kitchen")
+    assert out["camera"] == "handheld medium shot, slow push-in"
+    sent = fake.requests[0]
+    assert len(sent["messages"][0]["images"]) == 3 and "about 6 seconds" in sent["messages"][0]["content"]
+    assert sent["format"]["required"] == ["subject", "action", "camera", "setting", "lighting", "style",
+                                          "prompt", "negative"]
+
+
+def test_generation_prompt_raises_when_the_model_gives_no_prompt():
+    fake = FakeOllama([json.dumps({"subject": "a woman", "action": "walks"})])  # no "prompt" field
+    brain = OllamaBrain("qwen3-vl:8b", transport=fake.transport())
+    try:
+        run(brain.generation_prompt([b"f1"]))
+        raise AssertionError("expected an error")
+    except ValueError:
+        pass

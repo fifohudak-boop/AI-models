@@ -12,6 +12,7 @@ import { AccountsPage } from './pages/AccountsPage';
 import { HistoryPage } from './pages/HistoryPage';
 import { AnalyticsPage } from './pages/AnalyticsPage';
 import { ReelFinderPage } from './pages/ReelFinderPage';
+import { PromptMakerPage } from './pages/PromptMakerPage';
 import { StudioPage } from './pages/StudioPage';
 import { SpendingPage } from './pages/SpendingPage';
 import { EditPage } from './pages/EditPage';
@@ -28,6 +29,7 @@ export type Tab =
   | 'analytics'
   | 'reels'
   | 'reels-library'
+  | 'prompt'
   | 'studio'
   | 'studio-library'
   | 'studio-spending'
@@ -36,7 +38,7 @@ export type Tab =
   | 'settings';
 
 const FIFOFARM_TABS: Tab[] = ['post', 'accounts', 'history', 'analytics'];
-const WIDE_TABS: Tab[] = ['reels', 'reels-library', 'studio-library', 'edit'];
+const WIDE_TABS: Tab[] = ['reels', 'reels-library', 'prompt', 'studio-library', 'edit'];
 const MODEL_KEY = 'ultimate.model';
 
 function tabFromHash(): Tab {
@@ -52,10 +54,12 @@ function rememberedModel(): string {
   }
 }
 
-// Something one tool hands to another: "post this file", "use this as a reference", "edit this"…
+// Something one tool hands to another: "post this file", "use this as a reference", "edit this",
+// or "generate from this prompt" (Prompt Making → AI Studio, which carries `prompt` instead of a file).
 export interface Handoff {
-  kind: 'post' | 'studio-video' | 'studio-photo' | 'edit';
+  kind: 'post' | 'studio-video' | 'studio-photo' | 'studio-prompt' | 'edit';
   path: string;
+  prompt?: string;
   at: number;
 }
 
@@ -208,8 +212,8 @@ export function App() {
   );
 
   const handOff = useCallback(
-    (kind: Handoff['kind'], path: string) => {
-      setHandoff({ kind, path, at: Date.now() });
+    (kind: Handoff['kind'], path: string, prompt?: string) => {
+      setHandoff({ kind, path, prompt, at: Date.now() });
       go(kind === 'post' ? 'post' : kind === 'edit' ? 'edit' : 'studio');
     },
     [go]
@@ -355,6 +359,14 @@ export function App() {
             onPost={(path) => handOff('post', path)}
             onStudio={(path) => handOff('studio-video', path)}
             onSettings={() => go('settings')}
+          />
+        )}
+        {tab === 'prompt' && (
+          <PromptMakerPage
+            key={model.id}
+            model={model}
+            toast={toast}
+            onUseInStudio={(prompt) => handOff('studio-prompt', '', prompt)}
           />
         )}
         {tab === 'studio' && (

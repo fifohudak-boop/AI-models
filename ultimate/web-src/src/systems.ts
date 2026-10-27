@@ -27,6 +27,7 @@ export const SYSTEMS: SystemDef[] = [
       { id: 'reels-library', label: 'Library' },
     ],
   },
+  { id: 'prompt', label: 'Prompt Making', tabs: [{ id: 'prompt', label: 'Make a prompt' }] },
   {
     id: 'studio',
     label: 'AI Studio',

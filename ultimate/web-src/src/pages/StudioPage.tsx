@@ -149,7 +149,12 @@ export function StudioPage({
     if (!handoff || handoff.at === handled.current || !options) return;
     handled.current = handoff.at;
     const modes = options.modes.map((x) => x.id);
-    if (handoff.kind === 'studio-video' && options.kind !== 'image' && modes.includes('reference')) {
+    if (handoff.kind === 'studio-prompt') {
+      // From Prompt Making: drop the generated prompt in and switch to "From a photo" (image-to-video),
+      // which is what carries this model's identity — the prompt only recreates the action and scene.
+      if (handoff.prompt) setPrompt(handoff.prompt);
+      setMode(modes.includes('image') ? 'image' : (modes[0] as Mode));
+    } else if (handoff.kind === 'studio-video' && options.kind !== 'image' && modes.includes('reference')) {
       setMode('reference');
       setAutoLength(options.durations.auto);
       setVideos((v) => (v.includes(handoff.path) ? v : [...v, handoff.path].slice(-5)));

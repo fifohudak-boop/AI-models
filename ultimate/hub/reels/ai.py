@@ -49,6 +49,16 @@ REFERENCE_SCHEMA = {
     "required": ["description", "search_queries", "hashtags"],
 }
 
+# Prompt Making: turn a reference clip into a ready-to-generate text-to-video prompt. The fields let
+# the user tweak; "prompt" is the paste-ready one, "negative" the things to steer away from.
+GENERATION_FIELDS = ("subject", "wardrobe", "setting", "lighting", "action", "camera",
+                     "style", "mood", "pacing", "audio", "prompt", "negative")
+GENERATION_SCHEMA = {
+    "type": "object",
+    "properties": {f: {"type": "string"} for f in GENERATION_FIELDS},
+    "required": ["subject", "action", "camera", "setting", "lighting", "style", "prompt", "negative"],
+}
+
 
 @dataclass
 class Verdict:
@@ -281,6 +291,40 @@ class OllamaBrain:
             "hashtags": _dedupe([h.lstrip("#").replace(" ", "") for h in data.get("hashtags") or []
                                  if isinstance(h, str)], 8),
         }
+
+    async def generation_prompt(self, frames: list[bytes], caption: str = "", seconds: float | None = None) -> dict:
+        """Turn a reference clip into a ready-to-GENERATE text-to-video prompt (not a description), so
+        pasting it into Wan/Seedance recreates the clip with the user's own model."""
+        length = f"about {round(seconds)} seconds long" if seconds else "a few seconds long"
+        prompt = (
+            f"These {len(frames)} images are frames, in order, from one short-form video ({length}).\n"
+            + (f"Its caption: {caption[:400]}\n" if caption else "")
+            + "Write a prompt a text-to-video AI (Wan or Seedance) can use to GENERATE a new, nearly "
+            "identical video — this is NOT a description of the clip, it is instructions to recreate it.\n"
+            "Rules, follow exactly:\n"
+            "- A DIFFERENT person will be generated (the user's own AI model), so describe the subject "
+            "generically — 'a young woman', never a specific, named or recognisable person — and never "
+            "mention a real person, celebrity, brand, or logo.\n"
+            "- Capture everything that makes the clip recreatable: the action and movement step by step; "
+            "the camera (shot size, angle, and any movement — handheld, pan, tilt, push-in, orbit, "
+            "static); the framing; the setting; the time of day and lighting; the colour grade and film "
+            "look; the mood; and the pacing (one continuous shot, cuts, slow motion).\n"
+            "- Write the 'prompt' field as generation directives in the present tense — concrete, "
+            "specific and vivid, one flowing paragraph, the kind that reliably yields realistic, "
+            "high-quality footage. Keep it one continuous shot matching the clip's length.\n"
+            "- Only describe what the frames actually show. Don't invent on-screen text or extra people.\n"
+            "Answer as JSON with these string fields: subject, wardrobe, setting, lighting, action, "
+            "camera, style, mood, pacing, audio (music/sound that fits), prompt (the full paste-ready "
+            "generation prompt), negative (comma-separated things to avoid, e.g. 'blurry, distorted "
+            "face, extra fingers, watermark, text overlay, extra people, warped background')."
+        )
+        if not self.can_see:
+            prompt = prompt.replace("These", "(You can't see the frames — work from the caption only.) These", 1)
+        data = await self._chat(prompt, GENERATION_SCHEMA, frames, max_tokens=1100)
+        out = {f: str(data.get(f) or "").strip() for f in GENERATION_FIELDS}
+        if not out["prompt"]:
+            raise ValueError("the model gave no usable prompt")
+        return out
 
 
 def _verdict(data: dict) -> Verdict:
