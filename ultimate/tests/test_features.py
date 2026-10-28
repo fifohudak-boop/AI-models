@@ -260,3 +260,52 @@ def test_prompt_maker_needs_a_local_vision_model(client, model, monkeypatch):
 def test_prompt_maker_rejects_a_file_outside_the_model(client, model):
     res = client.post(f"/api/m/{model}/prompt-maker", json={"path": "/etc/hosts"}, headers=H)
     assert res.status_code == 404
+
+
+# ---------------------------------------------------------------- FaceFusion (local face swap)
+
+def test_facefusion_local_face_swap(client, tmp_path):
+    """The FaceFusion provider runs a local command (no API, no key, $0). A stand-in command copies the
+    clip to the output, which proves the wiring end to end: it's connected when the command is set, the
+    job runs it, and the swapped clip is saved to the model's folder with a zero cost."""
+    import sys as _sys  # noqa: PLC0415
+    from PIL import Image  # noqa: PLC0415
+
+    folder = tmp_path / "ff"
+    folder.mkdir()
+    make_video(folder / "clip.mp4", seconds=1)
+    Image.new("RGB", (256, 256), (180, 140, 120)).save(folder / "face.jpg")
+    mid = client.post("/api/models", json={"name": "FaceFusion Test"}, headers=H).json()["id"]
+    client.put(f"/api/models/{mid}", json={"folders": {"references": str(folder)}}, headers=H)
+
+    # Before it's set up, FaceFusion isn't connected and a job is refused with a clear message.
+    assert client.get(f"/api/m/{mid}/studio/options?provider=facefusion").json()["connected"] is False
+    refused = client.post(f"/api/m/{mid}/studio/jobs", headers=H, json={
+        "provider": "facefusion", "mode": "reference",
+        "videos": [str(folder / "clip.mp4")], "photos": [str(folder / "face.jpg")]})
+    assert refused.status_code == 424 and "FaceFusion isn't set up" in refused.text
+
+    # A stand-in "FaceFusion": copy --target-path to --output-path, ignoring the rest.
+    script = tmp_path / "fakeff.py"
+    script.write_text("import sys, shutil\na = sys.argv\n"
+                      "shutil.copy(a[a.index('--target-path') + 1], a[a.index('--output-path') + 1])\n")
+    client.put("/api/settings/facefusion", json={"path": f"{_sys.executable} {script}"}, headers=H)
+
+    opts = client.get(f"/api/m/{mid}/studio/options?provider=facefusion").json()
+    assert opts["connected"] is True and opts["kind"] == "video" and opts["durations"]["max"] == 0
+    assert "facefusion" not in client.get(f"/api/m/{mid}/studio/key").json()["keys"]  # no key card
+
+    # A face is required (it's the whole point) — a clip alone is rejected.
+    assert client.post(f"/api/m/{mid}/studio/jobs", headers=H, json={
+        "provider": "facefusion", "mode": "reference", "videos": [str(folder / "clip.mp4")]}).status_code == 400
+
+    res = client.post(f"/api/m/{mid}/studio/jobs", headers=H, json={
+        "provider": "facefusion", "mode": "reference",
+        "videos": [str(folder / "clip.mp4")], "photos": [str(folder / "face.jpg")]})
+    assert res.status_code == 201, res.text
+    job = wait_job(lambda: client.get(f"/api/m/{mid}/studio/jobs").json())
+    assert job["status"] == "saved", job
+    assert job["cost"] == 0.0 and job["provider"] == "facefusion"
+    assert Path(job["file"]).exists() and Path(job["file"]).suffix == ".mp4"
+
+    client.put("/api/settings/facefusion", json={"path": ""}, headers=H)  # don't leak to other tests

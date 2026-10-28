@@ -869,6 +869,7 @@ function GeneralSettings({
       )}
 
       <StudioKeyCard />
+      <FaceFusionCard toast={toast} />
 
       {prefs ? (
         <>
@@ -896,6 +897,68 @@ function GeneralSettings({
         </p>
       </section>
     </>
+  );
+}
+
+// FaceFusion (AI Studio's local "Face swap"): one install on this Mac, shared by every model, no key.
+function FaceFusionCard({ toast }: { toast: (m: string) => void }) {
+  const [path, setPath] = useState('');
+  const [ready, setReady] = useState(false);
+  const [loaded, setLoaded] = useState(false);
+  const [busy, setBusy] = useState(false);
+
+  useEffect(() => {
+    api
+      .settings()
+      .then((s) => {
+        setPath(s.faceFusionPath || '');
+        setReady(!!s.faceFusionReady);
+      })
+      .finally(() => setLoaded(true));
+  }, []);
+
+  async function save() {
+    setBusy(true);
+    try {
+      const s = await api.saveFaceFusion(path.trim());
+      setReady(!!s.faceFusionReady);
+      toast(
+        s.faceFusionReady ? 'FaceFusion found ✓' : path.trim() ? "Saved — but that command wasn't found" : 'Cleared'
+      );
+    } catch (e) {
+      toast((e as Error).message);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <section className="card stack" id="facefusion">
+      <h2>FaceFusion (local face swap)</h2>
+      <p className="muted small" style={{ margin: 0 }}>
+        AI Studio’s “Face swap” provider runs FaceFusion on this Mac — free, no API key. Install FaceFusion, then paste
+        the command that runs it: everything <em>before</em> the arguments, e.g.{' '}
+        <span className="mono">/Users/you/facefusion/.venv/bin/python /Users/you/facefusion/facefusion.py</span>. Leave
+        it blank to use a <span className="mono">facefusion</span> command on your PATH.
+      </p>
+      <label className="field">
+        <span className="small">FaceFusion command</span>
+        <input
+          value={path}
+          onChange={(e) => setPath(e.target.value)}
+          placeholder="/path/to/python /path/to/facefusion.py"
+          spellCheck={false}
+          autoCapitalize="off"
+          autoCorrect="off"
+        />
+      </label>
+      <div className="row" style={{ alignItems: 'center', gap: 10 }}>
+        <button className="btn primary small" onClick={save} disabled={busy || !loaded}>
+          Save
+        </button>
+        {loaded && <span className={ready ? 'chip published' : 'chip'}>{ready ? 'FaceFusion found ✓' : 'not found yet'}</span>}
+      </div>
+    </section>
   );
 }
 

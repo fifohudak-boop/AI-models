@@ -14,7 +14,8 @@ router = APIRouter()
 
 
 def _durations(provider_id: str) -> dict:
-    if providers.kind_of(provider_id) == "image":
+    # Images have no duration; FaceFusion keeps the source clip's own length, so it has none either.
+    if providers.kind_of(provider_id) == "image" or provider_id == "facefusion":
         return {"min": 0, "max": 0, "auto": False, "default": 0}
     if provider_id == "seedance":
         return {"min": studio.SEEDANCE_MIN_S, "max": studio.SEEDANCE_MAX_S, "auto": False, "default": 5}
@@ -89,8 +90,8 @@ async def get_model_key(model_id: str) -> dict:
     mk = studio.model_keys(model_id, s)  # {provider: {apiKey, region, workspace}}
     keys = {}
     for pid, p in providers.PROVIDERS.items():
-        if p.get("sharesKeyWith"):
-            continue  # no key of its own — it reuses another provider's key for this model
+        if p.get("sharesKeyWith") or p.get("local"):
+            continue  # no key of its own — it reuses another provider's key, or runs locally (FaceFusion)
         c = studio.creds(model_id, pid)
         own = mk.get(pid) or {}
         keys[pid] = {
@@ -106,7 +107,7 @@ async def get_model_key(model_id: str) -> dict:
         "keys": keys,
         "providers": [{"id": p["id"], "name": p["name"], "kind": p["kind"], "needsWorkspace": p["needsWorkspace"],
                        "regions": p["regions"], "keyHint": p["keyHint"], "console": p["console"]}
-                      for p in providers.PROVIDERS.values() if not p.get("sharesKeyWith")],
+                      for p in providers.PROVIDERS.values() if not p.get("sharesKeyWith") and not p.get("local")],
     }
 
 

@@ -28,6 +28,7 @@ import logging
 import math
 import mimetypes
 import re
+import shlex
 import shutil
 import subprocess
 import sys
@@ -164,7 +165,30 @@ def save_creds(model_id: str, provider_id: str, api_key: str | None, region: str
     settings.save({"studioKeys": all_keys})
 
 
+FACEFUSION_TIMEOUT_S = 1800  # a face swap on a clip can take minutes; give it up to 30
+
+
+def facefusion_command() -> list[str] | None:
+    """How to run FaceFusion on this Mac: the command set in Settings (everything before the
+    arguments, split like a shell line), or a plain `facefusion` on PATH. None if it can't be found.
+    It's a command prefix, not a single file, so any install works — a venv python + facefusion.py,
+    a launcher, or a binary."""
+    configured = (settings.get().get("faceFusionPath") or "").strip()
+    if configured:
+        try:
+            parts = shlex.split(configured)
+        except ValueError:
+            parts = [configured]
+        if parts and Path(parts[0]).expanduser().exists():
+            return [str(Path(parts[0]).expanduser()), *parts[1:]]
+        return parts or None
+    found = shutil.which("facefusion")
+    return [found] if found else None
+
+
 def connected(model_id: str | None, provider_id: str) -> bool:
+    if providers.provider(provider_id).get("local"):
+        return facefusion_command() is not None if provider_id == "facefusion" else False
     c = creds(model_id, provider_id)
     if not c["apiKey"]:
         return False
@@ -942,6 +966,10 @@ def validate_request(model_id: str, req: dict) -> dict:
             raise StudioError("Add the picture(s) you want to recreate." if kind == "image"
                               else "Pick a reference video (for example one Reel Finder found).")
         # image: keep every reference picture (one each, or a folder for a batch); the model's photos stay separate
+        if prov_id == "facefusion":
+            if not inputs["photos"]:
+                raise StudioError("Pick a photo of the model — the face to swap into the video.")
+            inputs = {"photos": inputs["photos"][:1], "videos": inputs["videos"][:1]}  # one face, one clip
     # On an image provider the reference is a picture too, so check it's an image alongside the photos.
     for p in inputs["photos"] + (inputs["videos"] if kind == "image" else []):
         if Path(p).suffix.lower() not in IMAGE_SUFFIXES:
@@ -956,8 +984,11 @@ def create_job(model_id: str, req: dict) -> dict:
     clean = validate_request(model_id, req)
     prov_id = clean["provider"]
     if not connected(model_id, prov_id):
-        name = providers.provider(prov_id)["name"]
-        raise StudioError(f"Connect a {name} key for this model first (Settings → the model → AI Studio key).", 424)
+        prov = providers.provider(prov_id)
+        if prov.get("local"):
+            raise StudioError("FaceFusion isn't set up yet. Install it on this Mac, then set its command "
+                              "in Settings → FaceFusion.", 424)
+        raise StudioError(f"Connect a {prov['name']} key for this model first (Settings → the model → AI Studio key).", 424)
     if prov_id == "wan":
         base_url(model_id)  # fail early if the workspace ID is missing
     job = {"id": uuid.uuid4().hex, "modelId": model_id, "createdAt": _now(), "status": "starting",
@@ -990,6 +1021,8 @@ async def _run_job(job: dict) -> None:
             await _start_videorouter(job, work)
         elif job["provider"] == "argolink-video":
             await _start_argolink_video(job, work)
+        elif job["provider"] == "facefusion":
+            await _start_facefusion(job, work)
         elif job["provider"] in ("seedream", "argolink"):
             await _run_image(job, work)
     except Exception as exc:  # noqa: BLE001 - shown on the page
@@ -1089,6 +1122,38 @@ async def _start_argolink_video(job: dict, work: Path) -> None:
                sentPrompt=job["prompt"] or "A short, natural video.")
     _save(job)
     job["taskId"] = await argolink_video_create(job, start_image_url)
+    _save(job)
+
+
+async def _start_facefusion(job: dict, work: Path) -> None:
+    """Local face swap: put the model's face (a photo) into the reference clip with FaceFusion on this
+    Mac. No API and no cost; it keeps the clip's own length, resolution and aspect ratio."""
+    cmd = facefusion_command()
+    if not cmd:
+        raise StudioError("FaceFusion isn't set up yet. Install it on this Mac, then set its command in "
+                          "Settings → FaceFusion.", 424)
+    face = Path(job["photos"][0])
+    clip = Path(job["videos"][0])
+    out = work / "swapped.mp4"
+    seconds = round((await asyncio.to_thread(mediainfo.probe, clip)).duration) or None
+    job.update(status="RUNNING", step="Swapping the face with FaceFusion (runs on your Mac)…",
+               sentPrompt="FaceFusion face swap", seconds=seconds)
+    _save(job)
+    argv = [*cmd, "headless-run", "--source-paths", str(face), "--target-path", str(clip),
+            "--output-path", str(out), "--processors", "face_swapper"]
+    proc = await asyncio.to_thread(subprocess.run, argv, capture_output=True, text=True,
+                                   errors="replace", timeout=FACEFUSION_TIMEOUT_S)
+    if proc.returncode != 0 or not out.exists():
+        lines = (proc.stderr or proc.stdout or "").strip().splitlines()
+        why = lines[-1][:300] if lines else f"exit code {proc.returncode}"
+        raise StudioError(f"FaceFusion couldn't make the video: {why}")
+    persona = personas.require(job["modelId"])
+    folder = personas.folder(persona, "generated") or Path(personas.default_folder(persona["name"], "generated"))
+    folder.mkdir(parents=True, exist_ok=True)
+    final = folder / f"{time.strftime('%Y-%m-%d %H.%M')} faceswap {job['id'][:6]}.mp4"
+    await asyncio.to_thread(shutil.move, str(out), str(final))
+    job.update(status="saved", step="Saved", error=None, file=str(final), files=[str(final)],
+               cost=0.0, costCurrency=currency())
     _save(job)
 
 

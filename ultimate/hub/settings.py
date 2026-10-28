@@ -58,6 +58,11 @@ DEFAULTS: dict[str, Any] = {
         "wan3.0-video": {"480P": 0.0294, "720P": 0.0588, "1080P": 0.1176},
         "wan3.0-video-prime": {"480P": 0.063, "720P": 0.126, "1080P": 0.252},
     },
+    # FaceFusion (the local "Face swap" provider in AI Studio): the command that runs FaceFusion on
+    # this Mac, everything before the arguments — e.g. "/Users/you/facefusion/.venv/bin/python
+    # /Users/you/facefusion/facefusion.py". Left blank, we look for a `facefusion` command on PATH.
+    # Shared by all models (one install, not a per-model key); no cost.
+    "faceFusionPath": "",
     "preferences": DEFAULT_PREFERENCES,
     "activeModel": "",
     # Sharing: let people reach the app from outside this Mac (through a tunnel), with a login.
