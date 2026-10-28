@@ -2342,3 +2342,91 @@ details > summary {
     gap: 2px;
   }
 }
+
+/* AI Studio generations: prompt collapsed to one line, click to expand the full text */
+.studio-prompt {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  width: 100%;
+  margin: 2px 0 0;
+  padding: 0;
+  border: none;
+  background: none;
+  font: inherit;
+  font-size: 13px;
+  color: var(--muted);
+  text-align: left;
+  cursor: pointer;
+}
+.studio-prompt-text {
+  flex: 1;
+  min-width: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.studio-prompt.open .studio-prompt-text {
+  white-space: normal;
+  overflow: visible;
+  text-overflow: clip;
+}
+.studio-prompt-caret {
+  flex: none;
+  opacity: 0.55;
+  font-size: 12px;
+}
+.studio-prompt:hover {
+  color: var(--text);
+}
+
+/* ---- Phone: make cramped controls usable ---- */
+@media (max-width: 560px) {
+  /* Radio-style choosers (AI Studio "what to make" and the provider switcher) have long labels that
+     cram into 3 columns and wrap ugly. Stack them into full-width, tappable rows instead. */
+  .segmented[role='radiogroup'] {
+    display: flex;
+    flex-direction: column;
+    width: 100%;
+  }
+  .segmented[role='radiogroup'] button {
+    width: 100%;
+    text-align: left;
+    padding: 11px 14px;
+  }
+  .segmented[role='radiogroup'] button + button {
+    border-top: 1px solid var(--border);
+  }
+  /* Tab rows (library kinds, filters, period) stay a row but scroll instead of squashing. */
+  .segmented[role='tablist'],
+  .segmented[role='group'] {
+    max-width: 100%;
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+  }
+  .segmented[role='tablist'] button,
+  .segmented[role='group'] button {
+    flex: none;
+    white-space: nowrap;
+  }
+  /* Generation cards: give the thumbnail a fixed size and let the actions wrap under the text,
+     instead of three columns fighting for a narrow row. */
+  .studio-job {
+    align-items: flex-start;
+    flex-wrap: wrap;
+  }
+  .studio-job .account-side {
+    max-width: none;
+    width: 100%;
+    text-align: left;
+    margin-top: 2px;
+  }
+  .studio-job .account-side .row {
+    justify-content: flex-start;
+  }
+  /* Let the title wrap so the price tag at its end isn't clipped to "$…". */
+  .studio-job .account-name {
+    white-space: normal;
+    overflow: visible;
+  }
+}
