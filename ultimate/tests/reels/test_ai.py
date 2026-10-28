@@ -175,3 +175,31 @@ def test_generation_prompt_raises_when_the_model_gives_no_prompt():
         raise AssertionError("expected an error")
     except ValueError:
         pass
+
+
+def test_generation_prompt_caps_how_many_frames_it_sends():
+    # Some local models cap images per request / overflow their context, so we send at most 4.
+    fake = FakeOllama([json.dumps({"subject": "a woman", "action": "walks", "camera": "static",
+                                   "setting": "a room", "lighting": "soft", "style": "clean",
+                                   "prompt": "A woman walks across a room.", "negative": "blurry"})])
+    brain = OllamaBrain("qwen3-vl:8b", transport=fake.transport())
+    out = run(brain.generation_prompt([f"f{i}".encode() for i in range(8)], seconds=8))
+    assert out["prompt"].startswith("A woman walks")
+    assert len(fake.requests[0]["messages"][0]["images"]) == 4
+    assert "These 4 images" in fake.requests[0]["messages"][0]["content"]
+
+
+def test_generation_prompt_surfaces_the_models_real_error():
+    class Rejecting(FakeOllama):
+        def __call__(self, request):
+            if request.url.path == "/api/chat":
+                return httpx.Response(400, json={"error": "invalid format schema for this model"})
+            return super().__call__(request)
+
+    fake = Rejecting([])
+    brain = OllamaBrain("qwen3-vl:8b", transport=fake.transport())
+    try:
+        run(brain.generation_prompt([b"f1"]))
+        raise AssertionError("expected an error")
+    except RuntimeError as exc:
+        assert "invalid format schema" in str(exc)  # the real reason, not a bare "400 Bad Request"
