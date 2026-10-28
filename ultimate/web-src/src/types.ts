@@ -52,6 +52,8 @@ export interface AppSettings {
   alibabaKey: string;
   alibabaRegion: string;
   alibabaWorkspace: string;
+  faceFusionPath: string;
+  faceFusionReady: boolean;
 }
 
 export interface LibraryItem {

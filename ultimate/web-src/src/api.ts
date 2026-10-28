@@ -87,6 +87,8 @@ export const api = {
   // apiKey null keeps the saved key (to change only the region or workspace); '' removes it.
   saveStudioKey: (apiKey: string | null, region: string, workspace: string) =>
     request<AppSettings>('/api/settings/studio', { method: 'PUT', body: { apiKey, region, workspace } }),
+  saveFaceFusion: (path: string) =>
+    request<AppSettings>('/api/settings/facefusion', { method: 'PUT', body: { path } }),
   setActiveModel: (id: string) => request<{ ok: true }>('/api/active-model', { method: 'PUT', body: { id } }),
 
   models: () => request<Model[]>('/api/models'),

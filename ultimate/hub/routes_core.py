@@ -116,6 +116,8 @@ async def get_settings() -> dict:
         "alibabaKey": settings.mask(s["alibabaApiKey"]),
         "alibabaRegion": s["alibabaRegion"],
         "alibabaWorkspace": s.get("alibabaWorkspace", ""),
+        "faceFusionPath": s.get("faceFusionPath", ""),
+        "faceFusionReady": studio.facefusion_command() is not None,
     }
 
 
@@ -177,6 +179,19 @@ async def save_studio_key(body: StudioKeyBody) -> dict:
         except httpx.HTTPError:
             pass  # offline: keep it, it's checked again when you generate
     settings.save({"alibabaApiKey": key, "alibabaRegion": body.region, "alibabaWorkspace": workspace})
+    return await get_settings()
+
+
+class FaceFusionBody(BaseModel):
+    path: str = ""
+
+
+@router.put("/api/settings/facefusion")
+async def save_facefusion(body: FaceFusionBody) -> dict:
+    """The command that runs FaceFusion on this Mac for AI Studio's local face swap — everything before
+    the arguments, e.g. '/Users/you/facefusion/.venv/bin/python /Users/you/facefusion/facefusion.py'.
+    Blank clears it. We don't block on it: the Settings page shows whether the command was found."""
+    settings.save({"faceFusionPath": (body.path or "").strip()})
     return await get_settings()
 
 
