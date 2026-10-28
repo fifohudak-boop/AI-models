@@ -296,8 +296,12 @@ class OllamaBrain:
         """Turn a reference clip into a ready-to-GENERATE text-to-video prompt (not a description), so
         pasting it into Wan/Seedance recreates the clip with the user's own model."""
         length = f"about {round(seconds)} seconds long" if seconds else "a few seconds long"
+        # Keep the image count low: some local models cap how many images one request may carry, and too
+        # many frames can overflow a model's context (a 400 from /api/chat). Four evenly-spaced frames —
+        # what the reference describer sends — is plenty to read the action.
+        picks = frames if len(frames) <= 4 else [frames[i] for i in (0, len(frames) // 3, 2 * len(frames) // 3, -1)]
         prompt = (
-            f"These {len(frames)} images are frames, in order, from one short-form video ({length}).\n"
+            f"These {len(picks)} images are frames, in order, from one short-form video ({length}).\n"
             + (f"Its caption: {caption[:400]}\n" if caption else "")
             + "Write a prompt a text-to-video AI (Wan or Seedance) can use to GENERATE a new, nearly "
             "identical video — this is NOT a description of the clip, it is instructions to recreate it.\n"
@@ -320,7 +324,13 @@ class OllamaBrain:
         )
         if not self.can_see:
             prompt = prompt.replace("These", "(You can't see the frames — work from the caption only.) These", 1)
-        data = await self._chat(prompt, GENERATION_SCHEMA, frames, max_tokens=1100)
+        try:
+            data = await self._chat(prompt, GENERATION_SCHEMA, picks, max_tokens=1000)
+        except httpx.HTTPStatusError as exc:
+            # Surface what the local model actually said (e.g. "does not support images", a bad schema)
+            # instead of a bare "400 Bad Request", so the real cause is visible rather than hidden.
+            detail = (exc.response.text or "").strip()[:300] if exc.response is not None else ""
+            raise RuntimeError(detail or f"the local model returned HTTP {exc.response.status_code}") from exc
         out = {f: str(data.get(f) or "").strip() for f in GENERATION_FIELDS}
         if not out["prompt"]:
             raise ValueError("the model gave no usable prompt")
