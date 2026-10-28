@@ -151,6 +151,7 @@ export function StudioPage({
   const needsWorkspace = options?.needsWorkspace ?? false;
   const providerName = options?.providerName ?? 'a provider';
   const isImage = kind === 'image';
+  const faceSwap = options?.provider === 'facefusion';  // local face swap: no prompt, length or quality to pick
   const connectedProviders = (options?.providers ?? []).filter((p) => p.connected);
 
   // Sent here from Reel Finder or the library.
@@ -379,7 +380,9 @@ export function StudioPage({
             <span className="muted small" style={{ marginTop: -4 }}>
               {isImage
                 ? `The picture whose pose, scene and style you want to copy. Drop one — or a whole folder to recreate every picture in it as ${model.name}, same prompt for all. Kept separate from ${model.name}'s photos below.`
-                : `The video whose moves, camera and timing you want — e.g. one Reel Finder found. Up to 15 s is used.`}
+                : faceSwap
+                  ? `The clip to swap the face into — its scene, motion, timing and audio all stay; only the face becomes ${model.name}.`
+                  : `The video whose moves, camera and timing you want — e.g. one Reel Finder found. Up to 15 s is used.`}
             </span>
             <DropZone
               model={model}
@@ -396,15 +399,19 @@ export function StudioPage({
         {(mode === 'image' || mode === 'reference') && (
           <div className="stack">
             <strong className="small dz-label">
-              {mode === 'reference'
-                ? `Photos of ${model.name}${photos.length > 1 ? ` · ${photos.length}` : ''} (up to ${maxPhotos})`
-                : `Photo of ${model.name}${isImage ? ' to start from' : ' (the first frame)'}`}
+              {faceSwap
+                ? `Photo of ${model.name} — the face`
+                : mode === 'reference'
+                  ? `Photos of ${model.name}${photos.length > 1 ? ` · ${photos.length}` : ''} (up to ${maxPhotos})`
+                  : `Photo of ${model.name}${isImage ? ' to start from' : ' (the first frame)'}`}
             </strong>
             {mode === 'reference' && (
               <span className="muted small" style={{ marginTop: -4 }}>
                 {isImage
                   ? `${model.name}'s face, hair, body and look — put into every recreated picture (kept separate from the reference above).`
-                  : `These are the person Wan puts into the reference — ${model.name}'s face, hair, body and look.`}
+                  : faceSwap
+                    ? `${model.name}'s face — swapped into the clip above. One clear, front-facing photo works best.`
+                    : `These are the person Wan puts into the reference — ${model.name}'s face, hair, body and look.`}
               </span>
             )}
             <DropZone
@@ -420,6 +427,7 @@ export function StudioPage({
           </div>
         )}
 
+        {!faceSwap && (
         <label className="field">
           <span>{mode === 'text' ? `Describe the ${verb}` : 'Anything to add? (optional)'}</span>
           {mode === 'reference' && (
@@ -442,6 +450,7 @@ export function StudioPage({
             }
           />
         </label>
+        )}
 
         <div className="row2">
           <label className="field">
@@ -454,27 +463,31 @@ export function StudioPage({
               ))}
             </select>
           </label>
-          <label className="field">
-            <span className="small">Shape</span>
-            <select value={ratio} onChange={(e) => setRatio(e.target.value)}>
-              {(options?.ratios ?? ['9:16']).map((r) => (
-                <option key={r} value={r}>
-                  {RATIO_LABEL[r] ?? r}
-                </option>
-              ))}
-            </select>
-          </label>
-          <label className="field">
-            <span className="small">Quality</span>
-            <select value={resolution} onChange={(e) => setResolution(e.target.value)}>
-              {(options?.resolutions ?? []).map((r) => (
-                <option key={r} value={r}>
-                  {r}
-                </option>
-              ))}
-            </select>
-          </label>
-          {!isImage && (
+          {(options?.ratios?.length ?? 0) > 1 && (
+            <label className="field">
+              <span className="small">Shape</span>
+              <select value={ratio} onChange={(e) => setRatio(e.target.value)}>
+                {(options?.ratios ?? ['9:16']).map((r) => (
+                  <option key={r} value={r}>
+                    {RATIO_LABEL[r] ?? r}
+                  </option>
+                ))}
+              </select>
+            </label>
+          )}
+          {(options?.resolutions?.length ?? 0) > 1 && (
+            <label className="field">
+              <span className="small">Quality</span>
+              <select value={resolution} onChange={(e) => setResolution(e.target.value)}>
+                {(options?.resolutions ?? []).map((r) => (
+                  <option key={r} value={r}>
+                    {r}
+                  </option>
+                ))}
+              </select>
+            </label>
+          )}
+          {!isImage && (options?.durations.max ?? 0) > 0 && (
             <div className="field">
               <span className="small">
                 Length: {autoLength ? (mode === 'reference' ? 'like the reference' : 'auto') : `${duration} s`}
@@ -498,7 +511,7 @@ export function StudioPage({
             </div>
           )}
         </div>
-        {!isImage && (
+        {!isImage && (options?.durations.max ?? 0) > 0 && (
           <label className="check small">
             <input type="checkbox" checked={audio} onChange={(e) => setAudio(e.target.checked)} />
             <span>With sound (matching audio)</span>

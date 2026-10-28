@@ -280,6 +280,24 @@ PROVIDERS: dict[str, dict] = {
         "modes": ["text", "image"],
         "console": "https://videorouter.sh/",
     },
+    # FaceFusion: a LOCAL face-swap that runs on this Mac — no API, no key, no cost. One install is
+    # shared by every model (set its command in Settings, not a per-model key). "reference" mode takes
+    # a reference video (the clip) + the model's photo (the face) and swaps the face in. It keeps the
+    # source clip's length, resolution and aspect, so there's no duration/resolution to choose.
+    "facefusion": {
+        "id": "facefusion",
+        "name": "FaceFusion (face swap, on this Mac)",
+        "kind": "video",
+        "needsWorkspace": False,
+        "local": True,  # runs locally; connected when its command is found, not when a key is entered
+        "keyHint": "Runs FaceFusion on this Mac — install it, then set its command in Settings → FaceFusion.",
+        "regions": [{"id": "local", "name": "On this Mac"}],
+        "models": [{"id": "face_swapper", "name": "Face swap"}],
+        "resolutions": ["source"],
+        "ratios": ["source"],
+        "modes": ["reference"],
+        "console": "https://facefusion.io/",
+    },
 }
 
 DEFAULT_PROVIDER = "wan"
@@ -323,4 +341,6 @@ def price(provider_id: str, model: str, region: str, resolution: str,
         return wavespeed_price(model, resolution, float(seconds or 0))
     if provider_id == "videorouter":
         return videorouter_price(model, float(seconds or 0))
+    if provider_id == "facefusion":
+        return 0.0  # local, runs on the user's own machine — no per-video cost
     return None
