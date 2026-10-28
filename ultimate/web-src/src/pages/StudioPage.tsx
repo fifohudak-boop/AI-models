@@ -95,6 +95,16 @@ export function StudioPage({
   const [audio, setAudio] = useState(true);
   const [price, setPrice] = useState<number | null>(null);
   const [picking, setPicking] = useState<null | 'videos' | 'photos'>(null);
+  // Which saved generations have their full prompt expanded — collapsed to one line by default so the
+  // list stays short (a long prompt no longer blows up every card).
+  const [openPrompts, setOpenPrompts] = useState<Set<string>>(() => new Set());
+  const togglePrompt = (id: string) =>
+    setOpenPrompts((s) => {
+      const next = new Set(s);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -579,9 +589,23 @@ export function StudioPage({
                         } · ${job.ratio} · ${job.resolution}`}
                     {job.cost != null && <span className="cost-tag">{money(job.cost)}</span>}
                   </div>
-                  <div className="account-meta" title={job.sentPrompt || job.prompt}>
-                    {job.prompt || (job.videos[0] ? fileName(job.videos[0]) : job.photos[0] ? fileName(job.photos[0]) : '')}
-                  </div>
+                  {job.prompt ? (
+                    <button
+                      type="button"
+                      className={`studio-prompt${openPrompts.has(job.id) ? ' open' : ''}`}
+                      onClick={() => togglePrompt(job.id)}
+                      title={openPrompts.has(job.id) ? 'Hide the prompt' : 'Show the full prompt'}
+                    >
+                      <span className="studio-prompt-text">{job.prompt}</span>
+                      <span className="studio-prompt-caret" aria-hidden="true">
+                        {openPrompts.has(job.id) ? '⌃' : '⌄'}
+                      </span>
+                    </button>
+                  ) : (
+                    <div className="account-meta">
+                      {job.videos[0] ? fileName(job.videos[0]) : job.photos[0] ? fileName(job.photos[0]) : ''}
+                    </div>
+                  )}
                   {job.status !== 'saved' && job.status !== 'failed' && job.step && <div className="muted small">{job.step}…</div>}
                   {job.status === 'saved' && (job.failedCount ?? 0) > 0 && (
                     <div className="muted small">{job.failedCount} couldn’t be recreated</div>
