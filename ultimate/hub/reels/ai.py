@@ -169,17 +169,24 @@ class OllamaBrain:
         self.thinks = False  # set when the model reasons at length before answering (slow)
         self._send_think = True
 
-    async def _chat(self, prompt: str, schema: dict, images: list[bytes] | None = None, max_tokens: int = 300) -> dict:
+    async def _chat(self, prompt: str, schema: dict, images: list[bytes] | None = None, max_tokens: int = 300,
+                    num_ctx: int | None = None) -> dict:
         message: dict = {"role": "user", "content": prompt}
         if images and self.can_see:
             message["images"] = [base64.b64encode(img).decode() for img in images]
+        options: dict = {"temperature": 0, "num_predict": max_tokens}
+        # Images cost a lot of context tokens, so an image-heavy call (describe/prompt-make) asks for a
+        # bigger context window than Ollama's small default (often 4096) — otherwise the request can
+        # overflow it ("exceeds the available context size"). Harmless if the model's default is larger.
+        if num_ctx:
+            options["num_ctx"] = num_ctx
         payload: dict = {
             "model": self.model,
             "messages": [message],
             "stream": False,
             "format": schema,
             # A cap keeps a rambling model from stalling the hunt; answers need far fewer tokens.
-            "options": {"temperature": 0, "num_predict": max_tokens},
+            "options": options,
         }
         if self._send_think:
             payload["think"] = False
@@ -189,11 +196,11 @@ class OllamaBrain:
                 text = resp.text.lower()
                 if "think" in text and self._send_think:
                     self._send_think = False
-                    return await self._chat(prompt, schema, images, max_tokens)
+                    return await self._chat(prompt, schema, images, max_tokens, num_ctx)
                 if "image" in text and images and self.can_see:
                     # Text-only model: carry on with captions alone.
                     self.can_see = False
-                    return await self._chat(prompt, schema, None, max_tokens)
+                    return await self._chat(prompt, schema, None, max_tokens, num_ctx)
                 resp.raise_for_status()
             message = resp.json().get("message", {})
         if message.get("thinking"):
@@ -284,7 +291,7 @@ class OllamaBrain:
         )
         if not self.can_see:
             prompt = prompt.replace("These", "(You can't see the frames — go by the caption.) These", 1)
-        data = await self._chat(prompt, REFERENCE_SCHEMA, frames, max_tokens=600)
+        data = await self._chat(prompt, REFERENCE_SCHEMA, frames, max_tokens=600, num_ctx=8192)
         return {
             "description": str(data.get("description") or "").strip()[:600],
             "queries": _dedupe([q for q in data.get("search_queries") or [] if isinstance(q, str)], 10),
@@ -296,10 +303,11 @@ class OllamaBrain:
         """Turn a reference clip into a ready-to-GENERATE text-to-video prompt (not a description), so
         pasting it into Wan/Seedance recreates the clip with the user's own model."""
         length = f"about {round(seconds)} seconds long" if seconds else "a few seconds long"
-        # Keep the image count low: some local models cap how many images one request may carry, and too
-        # many frames can overflow a model's context (a 400 from /api/chat). Four evenly-spaced frames —
-        # what the reference describer sends — is plenty to read the action.
-        picks = frames if len(frames) <= 4 else [frames[i] for i in (0, len(frames) // 3, 2 * len(frames) // 3, -1)]
+        # Keep the image count low: images cost ~1000 context tokens each, and a small local model
+        # (a 4096-token window) overflows at four frames ("request exceeds the available context size").
+        # Three — start, middle, end — fits that window and still reads the action; we also ask for a
+        # bigger context below for models that allow it.
+        picks = frames if len(frames) <= 3 else [frames[0], frames[len(frames) // 2], frames[-1]]
         prompt = (
             f"These {len(picks)} images are frames, in order, from one short-form video ({length}).\n"
             + (f"Its caption: {caption[:400]}\n" if caption else "")
@@ -325,7 +333,7 @@ class OllamaBrain:
         if not self.can_see:
             prompt = prompt.replace("These", "(You can't see the frames — work from the caption only.) These", 1)
         try:
-            data = await self._chat(prompt, GENERATION_SCHEMA, picks, max_tokens=1000)
+            data = await self._chat(prompt, GENERATION_SCHEMA, picks, max_tokens=700, num_ctx=8192)
         except httpx.HTTPStatusError as exc:
             # Surface what the local model actually said (e.g. "does not support images", a bad schema)
             # instead of a bare "400 Bad Request", so the real cause is visible rather than hidden.

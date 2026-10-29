@@ -163,6 +163,7 @@ def test_ollama_makes_a_generation_prompt_from_frames():
     assert out["camera"] == "handheld medium shot, slow push-in"
     sent = fake.requests[0]
     assert len(sent["messages"][0]["images"]) == 3 and "about 6 seconds" in sent["messages"][0]["content"]
+    assert sent["options"]["num_ctx"] == 8192  # ask for a context big enough for the frames + prompt
     assert sent["format"]["required"] == ["subject", "action", "camera", "setting", "lighting", "style",
                                           "prompt", "negative"]
 
@@ -178,15 +179,15 @@ def test_generation_prompt_raises_when_the_model_gives_no_prompt():
 
 
 def test_generation_prompt_caps_how_many_frames_it_sends():
-    # Some local models cap images per request / overflow their context, so we send at most 4.
+    # Images cost ~1000 context tokens each, so a small model overflows — we send at most 3.
     fake = FakeOllama([json.dumps({"subject": "a woman", "action": "walks", "camera": "static",
                                    "setting": "a room", "lighting": "soft", "style": "clean",
                                    "prompt": "A woman walks across a room.", "negative": "blurry"})])
     brain = OllamaBrain("qwen3-vl:8b", transport=fake.transport())
     out = run(brain.generation_prompt([f"f{i}".encode() for i in range(8)], seconds=8))
     assert out["prompt"].startswith("A woman walks")
-    assert len(fake.requests[0]["messages"][0]["images"]) == 4
-    assert "These 4 images" in fake.requests[0]["messages"][0]["content"]
+    assert len(fake.requests[0]["messages"][0]["images"]) == 3
+    assert "These 3 images" in fake.requests[0]["messages"][0]["content"]
 
 
 def test_generation_prompt_surfaces_the_models_real_error():
