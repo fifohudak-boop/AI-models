@@ -152,6 +152,9 @@ export function StudioPage({
   const providerName = options?.providerName ?? 'a provider';
   const isImage = kind === 'image';
   const faceSwap = options?.provider === 'facefusion';  // local face swap: no prompt, length or quality to pick
+  // "From a photo" takes several reference pictures where the model reads them all — every image model,
+  // and ArgoLink video (reference-to-video). A plain video first frame stays a single picture.
+  const multiRef = isImage || options?.provider === 'argolink-video';
   const connectedProviders = (options?.providers ?? []).filter((p) => p.connected);
 
   // Sent here from Reel Finder or the library.
@@ -213,7 +216,11 @@ export function StudioPage({
   const addVideos = (paths: string[]) =>
     setVideos((v) => [...v, ...paths.filter((p) => !v.includes(p))].slice(-(isImage ? BATCH_MAX : maxVideos)));
   const addPhotos = (paths: string[]) =>
-    setPhotos((p) => (mode === 'image' ? paths.slice(-1) : [...p, ...paths.filter((x) => !p.includes(x))].slice(-maxPhotos)));
+    setPhotos((p) =>
+      mode === 'image' && !multiRef
+        ? paths.slice(-1)
+        : [...p, ...paths.filter((x) => !p.includes(x))].slice(-maxPhotos)
+    );
 
   function choose(next: Mode) {
     setMode(next);
@@ -259,7 +266,7 @@ export function StudioPage({
         ratio,
         duration: isImage ? null : autoLength ? -1 : duration,
         audio,
-        photos: mode === 'text' ? [] : mode === 'image' ? photos.slice(0, 1) : photos,
+        photos: mode === 'text' ? [] : mode === 'image' && !multiRef ? photos.slice(0, 1) : photos,
         videos: mode === 'reference' ? videos : [],
       });
       setJobs((list) => [job, ...(list ?? []).filter((j) => j.id !== job.id)]);
@@ -401,10 +408,16 @@ export function StudioPage({
             <strong className="small dz-label">
               {faceSwap
                 ? `Photo of ${model.name} — the face`
-                : mode === 'reference'
+                : mode === 'reference' || (mode === 'image' && multiRef)
                   ? `Photos of ${model.name}${photos.length > 1 ? ` · ${photos.length}` : ''} (up to ${maxPhotos})`
                   : `Photo of ${model.name}${isImage ? ' to start from' : ' (the first frame)'}`}
             </strong>
+            {mode === 'image' && multiRef && (
+              <span className="muted small" style={{ marginTop: -4 }}>
+                Add several pictures of {model.name} — different angles, outfits and expressions — and the
+                model uses them all as references, so it captures the look better than one photo.
+              </span>
+            )}
             {mode === 'reference' && (
               <span className="muted small" style={{ marginTop: -4 }}>
                 {isImage
@@ -417,8 +430,12 @@ export function StudioPage({
             <DropZone
               model={model}
               accept="image"
-              multiple={mode !== 'image'}
-              label={mode === 'image' ? 'Drag a photo here' : `Drag ${model.name}'s photos (or a folder) here`}
+              multiple={mode !== 'image' || multiRef}
+              label={
+                mode === 'image' && !multiRef
+                  ? 'Drag a photo here'
+                  : `Drag ${model.name}'s photos (or a folder) here`
+              }
               hint="or click to choose"
               onAdd={addPhotos}
               onBrowse={() => setPicking('photos')}

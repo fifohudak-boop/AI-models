@@ -550,3 +550,61 @@ def test_argolink_video_from_a_photo_uploads_the_frame(client, tmp_path):
     finally:
         studio.set_transport(None)
         settings.save({"studioKeys": {}})
+
+
+def test_argolink_image_takes_several_reference_photos(client, tmp_path):
+    """"From a photo" on an image model sends every photo (not just the first), so you can give it
+    several angles of the model to work from."""
+    from fakeargo import GOOD_KEY as ARGO_KEY, FakeArgoLink  # noqa: PLC0415
+
+    argo = FakeArgoLink()
+    studio.set_transport(argo.transport())
+    try:
+        mid = _model_with_photo(client, "ArgoMulti", tmp_path)
+        client.put(f"/api/m/{mid}/studio/key", headers=H,
+                   json={"provider": "argolink", "apiKey": ARGO_KEY, "region": "global"})
+        Image.new("RGB", (640, 1138), (200, 90, 120)).save(tmp_path / "ArgoMulti" / "face2.jpg")
+        faces = [str(tmp_path / "ArgoMulti" / "face.jpg"), str(tmp_path / "ArgoMulti" / "face2.jpg")]
+
+        jobs = lambda: client.get(f"/api/m/{mid}/studio/jobs").json()  # noqa: E731
+        res = client.post(f"/api/m/{mid}/studio/jobs", headers=H, json={
+            "mode": "image", "photos": faces, "model": "nano-banana-pro", "resolution": "2K", "ratio": "9:16"})
+        assert res.status_code == 201, res.text
+        job = wait_for(lambda: jobs()[0], lambda j: j["status"] in ("saved", "failed"))
+        assert job["status"] == "saved", job
+        assert len(argo.edits[-1]["images"]) == 2  # both reference photos sent, not just the first
+    finally:
+        studio.set_transport(None)
+        settings.save({"studioKeys": {}})
+
+
+def test_argolink_video_from_several_photos_uses_reference_images(client, tmp_path):
+    """Several photos in "from a photo" for ArgoLink video → reference-to-video: all are uploaded and
+    passed as reference_images (no single first frame), so the model sees the person from every angle.
+    One photo still uses the first-frame path (covered above)."""
+    from fakeargo import GOOD_KEY as ARGO_KEY, FakeArgoLink  # noqa: PLC0415
+
+    argo = FakeArgoLink()
+    studio.set_transport(argo.transport())
+    try:
+        mid = _model_with_photo(client, "ArgoRefVid", tmp_path)
+        client.put(f"/api/m/{mid}/studio/key", headers=H,
+                   json={"provider": "argolink", "apiKey": ARGO_KEY, "region": "global"})
+        Image.new("RGB", (640, 1138), (120, 200, 90)).save(tmp_path / "ArgoRefVid" / "face2.jpg")
+        faces = [str(tmp_path / "ArgoRefVid" / "face.jpg"), str(tmp_path / "ArgoRefVid" / "face2.jpg")]
+
+        jobs = lambda: client.get(f"/api/m/{mid}/studio/jobs").json()  # noqa: E731
+        res = client.post(f"/api/m/{mid}/studio/jobs", headers=H, json={
+            "provider": "argolink-video", "mode": "image", "photos": faces,
+            "model": "seedance-2.5", "resolution": "720p", "duration": 5, "prompt": "she dances"})
+        assert res.status_code == 201, res.text
+        wait_for(lambda: jobs()[0], lambda j: j["status"] != "starting")
+
+        assert [u["type"] for u in argo.uploads] == ["image", "image"]  # both uploaded (hosted URLs)
+        body = argo.videos[list(argo.videos)[-1]]["body"]
+        assert "start_image" not in body  # several photos → reference-to-video, not a single first frame
+        assert len(body["reference_images"]) == 2
+        assert all(r["url"].startswith("https://media.argolink.io/") for r in body["reference_images"])
+    finally:
+        studio.set_transport(None)
+        settings.save({"studioKeys": {}})
