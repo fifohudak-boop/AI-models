@@ -674,15 +674,19 @@ _ARGO_VIDEO_STATUS = {"queued": "RUNNING", "pending": "RUNNING", "processing": "
                       "failed": "FAILED", "error": "FAILED", "expired": "FAILED", "cancelled": "CANCELED"}
 
 
-async def argolink_video_create(job: dict, start_image_url: str | None) -> str:
+async def argolink_video_create(job: dict, start_image_url: str | None,
+                                reference_image_urls: list[str] | None = None) -> str:
     """ArgoLink video is async: submit returns a request_id to poll. Same ArgoLink key as the images.
-    A first-frame photo must be a hosted URL (uploaded first), not inline data — ArgoLink rejects
-    data: URLs for video references."""
+    Photos must be hosted URLs (uploaded first), not inline data — ArgoLink rejects data: URLs for
+    video references. `start_image_url` is a single first frame; `reference_image_urls` are several
+    reference pictures of the person (reference-to-video), so the model sees them from every angle."""
     body: dict[str, Any] = {"model": job["model"], "prompt": job["sentPrompt"][:20000],
                             "duration": job["duration"], "resolution": job["resolution"].lower(),
                             "aspect_ratio": job["ratio"], "generate_audio": bool(job.get("audio")), "n": 1}
     if start_image_url:
         body["start_image"] = {"url": start_image_url}
+    if reference_image_urls:
+        body["reference_images"] = [{"url": u} for u in reference_image_urls]
     async with _client(60) as client:
         resp = await client.post(f"{providers.ARGOLINK_HOST}/videos/generations",
                                  headers=_headers({"Content-Type": "application/json"}, model_id=job["modelId"],
@@ -960,7 +964,11 @@ def validate_request(model_id: str, req: dict) -> dict:
     elif mode == "image":
         if not inputs["photos"]:
             raise StudioError("Pick a photo of the model to start from.")
-        inputs = {"photos": inputs["photos"][:1], "videos": []}
+        # Image models (Nano Banana / Seedream) read several reference pictures at once, and ArgoLink
+        # video takes several too (reference-to-video) — so keep them all. A plain video's "first frame"
+        # is one picture, so the other video providers still use just the first.
+        multi = kind == "image" or prov_id == "argolink-video"
+        inputs = {"photos": inputs["photos"] if multi else inputs["photos"][:1], "videos": []}
     elif mode == "reference":
         if not inputs["videos"]:
             raise StudioError("Add the picture(s) you want to recreate." if kind == "image"
@@ -1111,17 +1119,23 @@ async def _start_argolink_video(job: dict, work: Path) -> None:
         _save(job)
         return
     start_image_url = None
+    reference_image_urls: list[str] | None = None
     if job["mode"] == "image" and job["photos"]:
-        # The first-frame photo has to be hosted too (ArgoLink's video API only takes URLs, not inline
-        # data), so upload it first and pass the media_url.
-        first_frame = await asyncio.to_thread(prepare_photo, Path(job["photos"][0]), work)
+        # Photos must be hosted (ArgoLink's video API only takes URLs, not inline data), so upload each
+        # first. One photo is the first frame, as before; several become reference images
+        # (reference-to-video) so the model sees the person from every angle.
+        prepared = [await asyncio.to_thread(prepare_photo, Path(p), work) for p in job["photos"]]
         job.update(step="Uploading to ArgoLink", status="PENDING")
         _save(job)
-        start_image_url = await argolink_upload(first_frame, "image", "image/jpeg", job["modelId"], job["model"])
+        uploaded = [await argolink_upload(p, "image", "image/jpeg", job["modelId"], job["model"]) for p in prepared]
+        if len(uploaded) == 1:
+            start_image_url = uploaded[0]
+        else:
+            reference_image_urls = uploaded
     job.update(step="Waiting for ArgoLink", status="PENDING",
                sentPrompt=job["prompt"] or "A short, natural video.")
     _save(job)
-    job["taskId"] = await argolink_video_create(job, start_image_url)
+    job["taskId"] = await argolink_video_create(job, start_image_url, reference_image_urls)
     _save(job)
 
 
@@ -1182,8 +1196,9 @@ async def _run_image(job: dict, work: Path) -> None:
         _save(job)
         await _run_image_batch(job, work, refs, photos)
         return
-    images = ([await asyncio.to_thread(prepare_photo, Path(job["photos"][0]), work)]
-              if job["mode"] == "image" and job["photos"] else [])
+    # "From a photo" now reads every photo given (Nano Banana / Seedream use them all as references),
+    # not just the first — so you can feed several angles of the model.
+    images = photos if job["mode"] == "image" else []
     job.update(sentPrompt=job["prompt"] or "A photo.", status="RUNNING", step="Making the image")
     _save(job)
     path = await _generate_image(job, images, work)
