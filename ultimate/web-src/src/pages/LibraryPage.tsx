@@ -3,7 +3,7 @@ import type { FolderKind, Library, Model } from '../types';
 import type { Handoff } from '../App';
 import { api } from '../api';
 import { LibraryGrid } from '../components/LibraryGrid';
-import { FOLDER_HINTS, FOLDER_LABELS } from '../folders';
+import { FOLDER_LABELS } from '../folders';
 
 const KINDS: FolderKind[] = ['found', 'generated', 'edited', 'references', 'photos'];
 
@@ -74,9 +74,11 @@ export function LibraryPage({
       {!library && !error && <p className="muted">Loading…</p>}
       {folder && (
         <section className="card stack">
-          <p className="muted small" style={{ margin: 0 }}>
-            {FOLDER_HINTS[kind]} {folder.connected && <span className="mono">{folder.folder}</span>}
-          </p>
+          {folder.connected && (
+            <p className="muted small mono" style={{ margin: 0 }}>
+              {folder.folder}
+            </p>
+          )}
           {!folder.connected ? (
             <div className="empty">
               <p>No folder connected for this yet.</p>

@@ -453,8 +453,6 @@ export function EditPage({
               <button className="btn small" onClick={() => setPicking(true)}>
                 Change clip
               </button>
-              <span className="spacer" />
-              <span className="muted small">Drag the yellow handles to cut. Tap the frame to play the cut.</span>
             </div>
           </div>
 
@@ -511,11 +509,6 @@ export function EditPage({
                   </button>
                 )}
               </div>
-              {captions.length === 0 && (
-                <p className="muted small" style={{ margin: 0 }}>
-                  Optional. Add text on the reel — you'll see it on the preview as you type.
-                </p>
-              )}
               {captions.map((cap, i) => (
                 <div key={i} className={`caption-edit${active === i ? ' on' : ''}`} onFocusCapture={() => setActive(i)}>
                   <textarea
@@ -617,9 +610,6 @@ export function EditPage({
                 <input type="checkbox" checked={fade} onChange={(e) => setFade(e.target.checked)} />
                 <span>Fade in and out</span>
               </label>
-              <p className="muted small" style={{ margin: 0 }}>
-                Use music you have the rights to — Instagram and TikTok also have in-app music you can add after posting.
-              </p>
             </section>
 
             {error && <div className="notice error small">{error}</div>}
@@ -633,7 +623,7 @@ export function EditPage({
       <section className="card" style={{ marginTop: 16 }}>
         <h2>{model.name}'s reels</h2>
         {jobs.length === 0 ? (
-          <p className="muted small">What you make here lands in the Edited folder and shows up below and in the library.</p>
+          <p className="muted small">Nothing made yet.</p>
         ) : (
           <div className="stack">
             {jobs.map((job) => (
@@ -670,7 +660,6 @@ export function EditPage({
       </section>
 
       <p className="muted small">
-        Everything here runs on your Mac with ffmpeg — free, no account.{' '}
         <button type="button" className="btn link small" onClick={onSettings}>
           Model folders
         </button>

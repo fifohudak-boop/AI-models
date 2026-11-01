@@ -145,9 +145,7 @@ function VideoDetailPanel({ model, postId }: { model: Model; postId: string }) {
             rows={history.map((h) => [formatDay(h.day), formatCount(h.views), formatCount(h.likes), formatCount(h.comments), formatCount(h.shares)])}
           />
         </>
-      ) : (
-        <p className="muted small">The growth chart appears after the numbers have been checked on two different days.</p>
-      )}
+      ) : null}
       {detail.metrics.length > 0 && (
         <div className="metric-list">
           {detail.metrics.map((m) => (
@@ -359,7 +357,6 @@ export function AnalyticsPage({ model }: { model: Model }) {
   const showOwner = false;
   const accounts = useMemo(() => [...(data?.accounts ?? [])].sort((a, b) => b.views - a.views), [data]);
   const labelEvery = days === 7 ? 1 : days === 30 ? 7 : 15;
-  const whose = `${model.name}'s accounts`;
 
   return (
     <div>
@@ -406,7 +403,6 @@ export function AnalyticsPage({ model }: { model: Model }) {
 
               <section className="card">
                 <h2>Views per day</h2>
-                <p className="muted small">Views the posts gained each day, across {whose}.</p>
                 <ColumnChart
                   ariaLabel={`Views per day for the last ${days} days`}
                   format={formatCount}
@@ -428,7 +424,6 @@ export function AnalyticsPage({ model }: { model: Model }) {
 
               <section className="card">
                 <h2>Accounts</h2>
-                <p className="muted small">Click an account for its followers, reach and more, straight from the network.</p>
                 <div className="stack">
                   {accounts.map((a) => (
                     <AccountCard
@@ -452,9 +447,7 @@ export function AnalyticsPage({ model }: { model: Model }) {
                   </select>
                 </div>
                 {videos.length === 0 ? (
-                  <p className="muted">
-                    Nothing posted in the last {days} days. Post something and its numbers appear here within about an hour.
-                  </p>
+                  <p className="muted">Nothing posted in the last {days} days.</p>
                 ) : (
                   <div className="stack">
                     {videos.slice(0, shownPosts).map((v) => (
@@ -480,9 +473,6 @@ export function AnalyticsPage({ model }: { model: Model }) {
               {byHour.count >= 5 && (
                 <section className="card">
                   <h2>Best time to post</h2>
-                  <p className="muted small">
-                    Average views by the hour a post went out (your time), from {byHour.count} posts in this period.
-                  </p>
                   <ColumnChart
                     ariaLabel="Average views by posting hour"
                     format={formatCount}
@@ -508,10 +498,6 @@ export function AnalyticsPage({ model }: { model: Model }) {
                 </section>
               )}
 
-              <p className="muted small">
-                Numbers come from each network: new posts are checked every hour, older ones less often. Some networks
-                (Bluesky, Mastodon, LinkedIn profiles) don't share numbers with apps.
-              </p>
             </>
           )}
         </div>

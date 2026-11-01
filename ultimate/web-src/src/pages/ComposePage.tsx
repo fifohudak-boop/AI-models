@@ -230,11 +230,6 @@ export function ComposePage({
             New post
           </button>
         </div>
-        <p className="muted">
-          {anyActive
-            ? 'You can leave this page — posting continues in the background. Check History any time.'
-            : 'Here is how it went on each account.'}
-        </p>
         <BatchCard model={model} batch={result} onChange={setResult} onDeleted={startOver} />
       </div>
     );
@@ -292,10 +287,6 @@ export function ComposePage({
               }}
             >
               <strong>Drop a video here, or click to choose</strong>
-              <span className="muted small">
-                MP4, MOV (iPhone), WebM… or a photo. It's converted to work everywhere. Or pick a Reel Finder find or an
-                AI Studio video from the library.
-              </span>
             </div>
             {media.phase === 'failed' && (
               <div className="notice error" style={{ marginTop: 10 }}>
@@ -364,7 +355,7 @@ export function ComposePage({
         {needsTitle && (
           <label className="field">
             <span>
-              Title <span className="muted small">(YouTube, Pinterest, Facebook — leave empty to use the first line)</span>
+              Title
             </span>
             <input type="text" value={title} maxLength={100} onChange={(e) => setTitle(e.target.value)} />
           </label>

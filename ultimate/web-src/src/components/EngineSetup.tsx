@@ -8,7 +8,6 @@ export function EngineSetup({
   status,
   onDone,
   toast,
-  compact = false,
 }: {
   status: AppStatus;
   onDone: () => void;
@@ -42,13 +41,6 @@ export function EngineSetup({
           <span className="chip failed">{state === 'bad-key' ? 'key not accepted' : "can't reach it"}</span>
         )}
       </div>
-      {!compact && (
-        <p className="small">
-          Fifofarm posts through its posting engine (Postiz) on your server. Connect Ultimate to the same engine and the
-          Post, Accounts, History and Analytics tabs work here too — with each model's own accounts. Fifofarm itself
-          stays exactly as it is.
-        </p>
-      )}
       {state === 'ok' && <p className="small muted">Connected to {status.engine.url}.</p>}
       {state !== 'ok' && status.engine.detail && <div className="notice warn small">{status.engine.detail}</div>}
       <form
@@ -111,8 +103,7 @@ export function EngineSetup({
               </label>
             </div>
             <p className="muted small">
-              Fifofarm shows this login under Settings → Posting engine → "Show the Postiz login". Ultimate signs in once,
-              reads the API key and forgets the password.
+              Fifofarm shows this login under Settings → Posting engine → "Show the Postiz login".
             </p>
           </>
         )}

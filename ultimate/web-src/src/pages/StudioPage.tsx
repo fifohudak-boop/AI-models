@@ -35,17 +35,6 @@ function fileName(path: string) {
   return path.split('/').pop() || path;
 }
 
-function modeHelp(mode: Mode, kind: 'video' | 'image', name: string): string {
-  if (kind === 'image') {
-    if (mode === 'text') return `Describe the image and the model makes it from scratch.`;
-    if (mode === 'image') return `Starts from a photo of ${name} and makes a new image from it.`;
-    return `Pick the picture you want to recreate, plus a few photos of ${name} — it rebuilds that picture as ${name}. The reference picture and ${name}'s photos stay separate, so they're never mixed up.`;
-  }
-  if (mode === 'text') return 'Describe the video and it is made from scratch.';
-  if (mode === 'image') return `Starts from a photo of ${name} (the first frame) and brings it to life.`;
-  return `Takes a reference video — e.g. one Reel Finder found — and makes it with ${name}: the moves, camera and timing are copied, with the person from the model photos. Up to 15 s of the reference is used.`;
-}
-
 function Picked({ model, paths, onRemove }: { model: Model; paths: string[]; onRemove: (p: string) => void }) {
   if (paths.length === 0) return null;
   return (
@@ -303,7 +292,6 @@ export function StudioPage({
 
       {connectedProviders.length > 1 && (
         <div className="stack" style={{ marginBottom: 12 }}>
-          <span className="small muted">Provider — switch any time, each uses its own saved key</span>
           <div className="segmented" role="radiogroup" aria-label="Provider">
             {connectedProviders.map((p) => (
               <button
@@ -325,12 +313,6 @@ export function StudioPage({
       {!connected && (
         <section className="card stack studio-connect">
           <h2>{needsWorkspace ? 'Add your workspace ID' : 'Connect a video or image provider'}</h2>
-          <p className="small" style={{ margin: 0 }}>
-            AI Studio makes new videos and images of {model.name}. Connect a key for any provider — Alibaba{' '}
-            <strong>Wan</strong>, ByteDance <strong>Seedance</strong>, WaveSpeed or VideoRouter for video, ByteDance{' '}
-            <strong>Seedream</strong> or ArgoLink (<strong>Nano Banana Pro</strong>) for images. Connect several and switch
-            between them here; each is its own paid account.
-          </p>
           <p className="small muted" style={{ margin: 0 }}>
             {needsWorkspace
               ? `${model.name}'s Wan key is saved, but Wan is served only on your workspace's own address — add the Model Studio workspace ID in Settings → ${model.name} → AI Studio keys to finish.`
@@ -373,9 +355,6 @@ export function StudioPage({
             ))}
           </div>
         )}
-        <p className="muted small" style={{ margin: 0 }}>
-          {modeHelp(mode, kind, model.name)}
-        </p>
 
         {mode === 'reference' && showReference && (
           <div className="stack">
@@ -384,13 +363,6 @@ export function StudioPage({
                 ? `Picture${videos.length === 1 ? '' : 's'} to recreate${videos.length > 1 ? ` · ${videos.length}` : ''}`
                 : `Reference video${videos.length > 1 ? 's' : ''}`}
             </strong>
-            <span className="muted small" style={{ marginTop: -4 }}>
-              {isImage
-                ? `The picture whose pose, scene and style you want to copy. Drop one — or a whole folder to recreate every picture in it as ${model.name}, same prompt for all. Kept separate from ${model.name}'s photos below.`
-                : faceSwap
-                  ? `The clip to swap the face into — its scene, motion, timing and audio all stay; only the face becomes ${model.name}.`
-                  : `The video whose moves, camera and timing you want — e.g. one Reel Finder found. Up to 15 s is used.`}
-            </span>
             <DropZone
               model={model}
               accept={isImage ? 'image' : 'video'}
@@ -412,21 +384,6 @@ export function StudioPage({
                   ? `Photos of ${model.name}${photos.length > 1 ? ` · ${photos.length}` : ''} (up to ${maxPhotos})`
                   : `Photo of ${model.name}${isImage ? ' to start from' : ' (the first frame)'}`}
             </strong>
-            {mode === 'image' && multiRef && (
-              <span className="muted small" style={{ marginTop: -4 }}>
-                Add several pictures of {model.name} — different angles, outfits and expressions — and the
-                model uses them all as references, so it captures the look better than one photo.
-              </span>
-            )}
-            {mode === 'reference' && (
-              <span className="muted small" style={{ marginTop: -4 }}>
-                {isImage
-                  ? `${model.name}'s face, hair, body and look — put into every recreated picture (kept separate from the reference above).`
-                  : faceSwap
-                    ? `${model.name}'s face — swapped into the clip above. One clear, front-facing photo works best.`
-                    : `These are the person Wan puts into the reference — ${model.name}'s face, hair, body and look.`}
-              </span>
-            )}
             <DropZone
               model={model}
               accept="image"
@@ -447,13 +404,6 @@ export function StudioPage({
         {!faceSwap && (
         <label className="field">
           <span>{mode === 'text' ? `Describe the ${verb}` : 'Anything to add? (optional)'}</span>
-          {mode === 'reference' && (
-            <span className="muted small" style={{ display: 'block', fontWeight: 'normal', marginBottom: 4 }}>
-              {isImage
-                ? `Ultimate already tells the model to rebuild the reference picture as ${model.name} — add anything else here (outfit, light, place…).`
-                : `Ultimate already tells the model to copy the reference's moves with ${model.name} from the photos — add anything else here (light, place, outfit…).`}
-            </span>
-          )}
           <textarea
             rows={3}
             value={prompt}
@@ -534,13 +484,6 @@ export function StudioPage({
             <span>With sound (matching audio)</span>
           </label>
         )}
-        {!isImage && !autoLength && mode === 'reference' && duration > 15 && (
-          <p className="muted small" style={{ margin: 0 }}>
-            With a reference video, its length plus the new video's can be 30 s at most — a long reference makes the new
-            video shorter.
-          </p>
-        )}
-
         {connected && (
           <div className="cost-line">
             {price != null ? (
@@ -592,7 +535,7 @@ export function StudioPage({
         {jobs === null ? (
           <p className="muted">Loading…</p>
         ) : jobs.length === 0 ? (
-          <p className="muted small">Nothing made yet. What AI Studio makes for {model.name} shows up here and in the library.</p>
+          <p className="muted small">Nothing made yet.</p>
         ) : (
           <div className="stack">
             {jobs.map((job) => (

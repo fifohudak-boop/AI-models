@@ -1,7 +1,7 @@
 import { useRef, useState } from 'react';
 import type { Model, Reference } from '../../types';
 import { api, uploadReference } from '../../api';
-import { closenessHint, closenessLabel } from './common';
+import { closenessLabel } from './common';
 
 const MAX_REFERENCES = 5;
 
@@ -110,7 +110,6 @@ export function ReferencesPanel({
     <section className="card stack">
       <div className="card-head" style={{ marginBottom: 0 }}>
         <h2>Reference videos</h2>
-        <span className="muted small">find more that look like these</span>
       </div>
       {!full && (
         <div
@@ -136,7 +135,6 @@ export function ReferencesPanel({
           }}
         >
           <strong>Drop a video here, or click to choose</strong>
-          <span className="muted small">Videos or pictures from your Mac, up to {MAX_REFERENCES}</span>
         </div>
       )}
       <input
@@ -207,7 +205,6 @@ export function ReferencesPanel({
             <span>Same kind of video</span>
             <span>Nearly identical</span>
           </span>
-          <span className="muted small">{closenessHint(closeness)}</span>
         </label>
       )}
     </section>
