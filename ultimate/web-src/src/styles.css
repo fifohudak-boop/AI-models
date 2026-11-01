@@ -1,6 +1,6 @@
 :root {
-  --bg: #0b0e1c;
-  --surface: rgba(22, 27, 50, 0.44);
+  --bg: #0a1a3e;
+  --surface: rgba(16, 22, 44, 0.5);
   --surface-2: rgba(255, 255, 255, 0.07);
   --border: rgba(255, 255, 255, 0.1);
   --text: #ecefff;
@@ -2434,34 +2434,36 @@ body {
   background: transparent;
   position: relative;
 }
-/* Liquid-glass background: discrete floating glass orbs over a flat deep base */
-body::before, body::after, #root::before {
+/* One-tone deep-blue liquid-glass background — a single 2D layer, one blue hue only.
+   Kept behind everything so it doesn't recolour the UI theme. */
+body::before, body::after {
   content: "";
   position: fixed;
+  inset: -25vmax;
   z-index: -2;
-  border-radius: 50%;
-  filter: blur(30px);
   pointer-events: none;
   will-change: transform;
 }
 body::before {
-  width: 940px; height: 940px; top: -250px; right: -170px;
-  background: radial-gradient(circle at 42% 44%, rgba(139, 92, 246, 0.95), rgba(99, 102, 241, 0.42) 38%, rgba(11, 14, 28, 0) 66%);
-  animation: orb-a 24s ease-in-out infinite;
+  background:
+    radial-gradient(42% 42% at 24% 22%, rgba(59, 130, 246, 0.34), rgba(59, 130, 246, 0) 62%),
+    radial-gradient(44% 44% at 82% 30%, rgba(37, 99, 235, 0.3), rgba(37, 99, 235, 0) 62%),
+    radial-gradient(52% 52% at 64% 92%, rgba(29, 78, 216, 0.34), rgba(29, 78, 216, 0) 64%),
+    radial-gradient(64% 64% at 50% 50%, rgba(23, 49, 120, 0.42), rgba(10, 22, 52, 0) 74%),
+    var(--bg);
+  filter: blur(44px);
+  animation: glass-drift 28s ease-in-out infinite alternate;
 }
 body::after {
-  width: 840px; height: 840px; bottom: -230px; left: -170px;
-  background: radial-gradient(circle at 56% 44%, rgba(34, 211, 238, 0.72), rgba(59, 130, 246, 0.4) 40%, rgba(11, 14, 28, 0) 66%);
-  animation: orb-b 30s ease-in-out infinite;
+  background:
+    radial-gradient(34% 24% at 32% 10%, rgba(96, 165, 250, 0.26), rgba(96, 165, 250, 0) 72%),
+    radial-gradient(30% 22% at 76% 86%, rgba(96, 165, 250, 0.16), rgba(96, 165, 250, 0) 72%);
+  filter: blur(36px);
+  mix-blend-mode: screen;
+  animation: glass-sheen 34s ease-in-out infinite alternate;
 }
-#root::before {
-  width: 840px; height: 840px; top: 38%; right: -190px; left: auto;
-  background: radial-gradient(circle at 46% 46%, rgba(217, 70, 239, 0.45), rgba(124, 58, 237, 0.3) 40%, rgba(11, 14, 28, 0) 64%);
-  animation: orb-c 34s ease-in-out infinite;
-}
-@keyframes orb-a { 50% { transform: translate(-46px, 68px) scale(1.09); } }
-@keyframes orb-b { 50% { transform: translate(56px, -42px) scale(1.12); } }
-@keyframes orb-c { 50% { transform: translate(-64px, -34px) scale(1.16); } }
+@keyframes glass-drift { from { transform: translate(-2%, -1%) scale(1.04); } to { transform: translate(2.5%, 2%) scale(1.1); } }
+@keyframes glass-sheen { from { transform: translate(2%, 1%); opacity: 0.8; } to { transform: translate(-3%, 3%); opacity: 1; } }
 
 ::selection { background: rgba(124, 134, 255, 0.34); color: #fff; }
 
@@ -2667,6 +2669,6 @@ h1 { letter-spacing: -0.2px; }
 
 @media (prefers-reduced-motion: reduce) {
   .card { animation: card-rise 0.5s both; }
-  body::before, body::after, #root::before, .btn.primary { animation: none; }
+  body::before, body::after, .btn.primary { animation: none; }
   .btn, .btn.primary, .btn.primary::before, .tab, input, select, textarea, .drop, .segmented button { transition: none; }
 }
