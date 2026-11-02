@@ -45,7 +45,6 @@ export function WelcomePage({ brand, onCreate }: { brand: string; onCreate: (nam
         <button className="btn primary" disabled={busy || !name.trim()}>
           {busy ? 'Creating…' : 'Create model'}
         </button>
-        <p className="muted small">You can add more models any time from the switcher at the top.</p>
       </form>
     </div>
   );

@@ -4,7 +4,7 @@ import { api } from '../api';
 import { AccountAvatar } from '../components/AccountAvatar';
 import { EngineSetup } from '../components/EngineSetup';
 import { ModelAvatar } from '../components/ModelSwitcher';
-import { FOLDER_HINTS, FOLDER_LABELS } from '../folders';
+import { FOLDER_LABELS } from '../folders';
 
 const COLORS = ['#4f46e5', '#db2777', '#059669', '#d97706', '#0891b2', '#7c3aed', '#dc2626', '#65a30d'];
 const FOLDER_ORDER: FolderKind[] = ['references', 'photos', 'found', 'generated', 'edited'];
@@ -37,8 +37,7 @@ function FolderRow({
     <div className="folder-row">
       <div className="folder-main">
         <div className="folder-label">
-          <strong className="small">{FOLDER_LABELS[kind]}</strong>{' '}
-          <span className="muted small">{FOLDER_HINTS[kind]}</span>
+          <strong className="small">{FOLDER_LABELS[kind]}</strong>
         </div>
         <div className={`small mono folder-path${path ? '' : ' muted'}`}>{path || 'Not connected'}</div>
       </div>
@@ -240,10 +239,6 @@ function ModelStudioKeySection({ model, toast }: { model: Model; toast: (m: stri
   return (
     <div className="stack">
       <div className="small" style={{ fontWeight: 600 }}>AI Studio keys</div>
-      <p className="muted small" style={{ margin: 0 }}>
-        Connect a key for each provider you want to use with {model.name}. They're saved separately, so in AI Studio you
-        switch between them freely — no re-entering keys. Each provider is its own account, billed on its own.
-      </p>
       {info.providers.map((p) => {
         const ki = info.keys[p.id];
         return ki ? <ProviderKeyRow key={p.id} model={model} provider={p} info={ki} onSaved={setInfo} toast={toast} /> : null;
@@ -291,9 +286,7 @@ function ModelPostingSection({ model, status, onManage }: { model: Model; status
       {engineOk && error && <div className="notice error small" style={{ margin: 0 }}>{error}</div>}
       {engineOk && accounts === null && !error && <p className="muted small" style={{ margin: 0 }}>Loading accounts…</p>}
       {accounts && accounts.length === 0 && (
-        <p className="muted small" style={{ margin: 0 }}>
-          No accounts for {model.name} yet — use <strong>Manage accounts</strong> to connect TikTok, Instagram and the rest.
-        </p>
+        <p className="muted small" style={{ margin: 0 }}>No accounts for {model.name} yet.</p>
       )}
       {accounts && accounts.length > 0 && (
         <div className="account-list">
@@ -398,9 +391,6 @@ function ModelSettings({
         <div className="small" style={{ fontWeight: 600 }}>
           Folders
         </div>
-        <p className="muted small" style={{ margin: 0 }}>
-          Your reference videos and {model.name}'s photos are yours to choose; Reel Finder and AI Studio save into the rest.
-        </p>
         {FOLDER_ORDER.map((kind) => (
           <FolderRow key={kind} model={model} kind={kind} onSaved={onSaved} toast={toast} />
         ))}
@@ -440,19 +430,11 @@ function StudioKeyCard() {
     <section className="card stack" id="studio">
       <h2>AI Studio keys are per model</h2>
       <p className="small" style={{ margin: 0 }}>
-        Each model uses its <strong>own</strong> AI Studio key, so a model's videos and images always bill to that
-        model's own account — the billing stays separate, with nothing shared in the background. Set a key in a model's
-        own settings: pick a model above, then <em>AI Studio key</em>. Give <strong>each</strong> model its own Alibaba
-        (Wan) key from a <strong>different account</strong> to keep their bills apart (ArgoLink / Nano Banana Pro can reuse
-        one key across models if you like). Make keys in the{' '}
+        Make keys in the{' '}
         <a href="https://modelstudio.console.alibabacloud.com/" target="_blank" rel="noreferrer">
           Model Studio console
         </a>
         ; for Wan the key, region and workspace ID must all be from the same account.
-      </p>
-      <p className="muted small" style={{ margin: 0 }}>
-        Tip: to keep costs down, pick <strong>720p</strong> (or 480p) and a <strong>Germany (Frankfurt)</strong> key — the
-        same video is roughly 4× cheaper than 1080p on Singapore — and set a short length for test runs.
       </p>
     </section>
   );
@@ -467,9 +449,6 @@ function PostingDefaults({ prefs, save }: { prefs: Preferences; save: (patch: Pa
           <input type="checkbox" checked={prefs.autoShorten} onChange={(e) => save({ autoShorten: e.target.checked })} />
           <span>
             Shorten captions automatically when they're too long for a network (e.g. X's 280 characters)
-            <span className="muted small" style={{ display: 'block' }}>
-              Off = accounts with a too-long caption are skipped instead.
-            </span>
           </span>
         </label>
       </section>
@@ -578,11 +557,6 @@ function SharingCard({ status, onStatus, toast }: { status: AppStatus; onStatus:
           onChange={(e) => setHost(e.target.value)}
         />
       </label>
-      <p className="muted small" style={{ margin: 0 }}>
-        This is the address of the free tunnel that points at this Mac — set it up once (see <strong>Share it with your
-        team</strong> in the README). The app itself stays on localhost; the tunnel carries it over HTTPS with the login in
-        front.
-      </p>
       <div className="row">
         {current.enabled ? (
           <>
@@ -891,10 +865,6 @@ function GeneralSettings({
           {status.brand} {status.version} · build <span className="mono">{status.build}</span>
           {status.updateAvailable && <span className="chip posting" style={{ marginLeft: 8 }}>update ready — reopen the app</span>}
         </p>
-        <p className="muted small" style={{ margin: 0 }}>
-          Runs on this Mac only (http://127.0.0.1). Fifofarm and the Reel Finder app stay separate and unchanged; this app
-          uses the same posting engine as Fifofarm, and a copy of Reel Finder's engine.
-        </p>
       </section>
     </>
   );
@@ -1013,10 +983,6 @@ export function SettingsPage({
     <div>
       <h1>Settings</h1>
       {error && <div className="notice error">{error}</div>}
-      <p className="small muted" style={{ margin: '0 0 12px' }}>
-        Pick a model to set up just that model — its folders, its AI Studio key and its posting accounts. Shared things
-        (the posting engine, sharing, the people you invite) live under <strong>General</strong>.
-      </p>
 
       <div className="row settings-picker" style={{ flexWrap: 'wrap', gap: 8, marginBottom: 16, alignItems: 'center' }}>
         {models.map((mo) => (

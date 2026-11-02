@@ -409,9 +409,7 @@ export function ReelFinderPage({
       )}
       {status && !anyLogin && !running && (
         <div className="notice warn" style={{ marginBottom: 12 }}>
-          <strong>Log in before you hunt.</strong> The agents can only search platforms you're signed into — without a
-          login they land on the sign-in page and find nothing. In <b>Where to search</b> below, press <b>Connect</b> next
-          to a platform, log in, then close that window.
+          <strong>Log in before you hunt.</strong> Press <b>Connect</b> next to a platform under <b>Where to search</b>.
           {status.canImportLogins && (
             <>
               {' '}
@@ -548,10 +546,6 @@ export function ReelFinderPage({
               <input type="checkbox" checked={settings.include_images} onChange={(e) => update({ include_images: e.target.checked })} />
               <span>Pinterest: also save reference images (not just videos)</span>
             </label>
-            <p className="muted small" style={{ margin: 0 }}>
-              Connect opens the agents' browser so you can log in once (shared by all models). A spare account is safest.
-              Test runs one quick real search to check everything works.
-            </p>
             {status?.canImportLogins && !anyLogin && (
               <div className="notice info small row">
                 <span>Logged in to these in the Reel Finder app? Copy those logins over instead of logging in again.</span>
@@ -580,10 +574,6 @@ export function ReelFinderPage({
                 <input type="range" min={1} max={6} step={1} value={settings.agents} onChange={(e) => update({ agents: +e.target.value })} />
               </label>
             </div>
-            <p className="muted small" style={{ margin: 0 }}>
-              The agents look at this many videos, the AI scores every one, and the best ones are saved. Empty = 4× what you
-              want to save.
-            </p>
           </section>
 
           <details className="card">
@@ -705,9 +695,11 @@ export function ReelFinderPage({
                 Save
               </button>
             </div>
-            <p className="muted small" style={{ margin: 0 }}>
-              {linkNote ?? 'Any TikTok, Instagram, Pinterest or YouTube video. Saved as an MP4 in “Saved links” inside Found videos.'}
-            </p>
+            {linkNote && (
+              <p className="muted small" style={{ margin: 0 }}>
+                {linkNote}
+              </p>
+            )}
           </section>
 
           <div className="reels-actions">
@@ -756,27 +748,7 @@ export function ReelFinderPage({
                 toast((err as Error).message);
               }
             }}
-            empty={
-              <div className="how-it-works small">
-                <h2>How it works</h2>
-                <ol>
-                  <li>
-                    <b>Connect</b> TikTok, Instagram and Pinterest once (left). Log in, then close that window.
-                  </li>
-                  <li>
-                    <b>Add a reference video</b> — one that looks like what you want for {model.name} — or describe the
-                    videos in plain words. Both together work best.
-                  </li>
-                  <li>
-                    Press <b>Start hunt</b>. The agents look at lots of videos, every one is scored on how much it looks like
-                    your reference, and the best ones are saved to {model.name}'s Found videos.
-                  </li>
-                  <li>
-                    Then <b>Post</b> a find with Fifofarm, or send it to <b>AI Studio</b> to make it with {model.name}.
-                  </li>
-                </ol>
-              </div>
-            }
+            empty={null}
           />
           <ActivityLog logs={logs} onCopyReport={copyReport} onOpenLog={() => api.openLog().catch((err) => toast(err.message))} />
         </div>

@@ -53,7 +53,6 @@ export function LoginPage({ brand, onDone }: { brand: string; onDone: () => void
         <button className="btn primary" disabled={busy || !username.trim() || !password}>
           {busy ? 'Signing in…' : 'Sign in'}
         </button>
-        <p className="muted small">The owner of this {brand} sets up your account and the models you can use.</p>
       </form>
     </div>
   );

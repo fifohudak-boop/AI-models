@@ -82,13 +82,6 @@ export function PromptMakerPage({
 
       <section className="card stack">
         <h2>Prompt making</h2>
-        <p className="muted small" style={{ margin: 0 }}>
-          Turn a reference video into a ready-to-generate prompt. Your local AI model (the same one Reel
-          Finder uses) watches the clip and writes a prompt you can paste straight into AI Studio’s Wan
-          model — so you recreate it as {model.name} from a plain prompt, no video-to-video and no double
-          billing. It describes the <strong>action and scene</strong>, not the face, so pair it with
-          “From a photo” from {model.name}’s photo to carry the identity.
-        </p>
 
         <div className="row" style={{ alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
           <button className="btn" onClick={() => setPicking(true)} disabled={busy}>
@@ -107,11 +100,6 @@ export function PromptMakerPage({
             {busy ? 'Reading the video and writing the prompt…' : 'Make the prompt'}
           </button>
         </div>
-        {busy && (
-          <p className="muted small" style={{ margin: 0 }}>
-            This runs on your Mac with your local model — a few seconds to a minute depending on the model.
-          </p>
-        )}
         {error && <div className="notice error">{error}</div>}
       </section>
 

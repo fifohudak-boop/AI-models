@@ -325,9 +325,7 @@ export function AccountsPage({ model, models, toast }: { model: Model; models: M
       <section className="card">
         <h2>Add an account for {model.name}</h2>
         <p className="muted small">
-          <strong>Connect</strong> opens the network's sign-in window; approve there and the account becomes {model.name}'s.
-          A network needs its one-time setup in Fifofarm first (Fifofarm → Accounts → Set up) — Ultimate uses the same
-          posting engine.
+          A network needs its one-time setup in Fifofarm first (Fifofarm → Accounts → Set up).
         </p>
         {connecting && (
           <div className="notice info" style={{ marginBottom: 10 }}>
@@ -392,10 +390,6 @@ export function AccountsPage({ model, models, toast }: { model: Model; models: M
             {showOthers ? 'Hide' : `Show ${others.length}`}
           </button>
         </div>
-        <p className="muted small">
-          Accounts connected in Fifofarm or for other models. Add one to {model.name} and it moves here (an account belongs to
-          one model). Nothing changes in Fifofarm.
-        </p>
         {showOthers &&
           (others.length === 0 ? (
             <p className="muted small">No other accounts.</p>

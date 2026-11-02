@@ -124,9 +124,7 @@ export function SpendingPage({ model, onSettings }: { model: Model; onSettings: 
       <section className="card">
         <h2>Every video</h2>
         {jobs.length === 0 ? (
-          <p className="muted small">
-            Nothing yet. When {model.name}'s AI Studio videos finish, each one's cost shows up here.
-          </p>
+          <p className="muted small">Nothing yet.</p>
         ) : (
           <div className="stack">
             {jobs.map((job) => (
