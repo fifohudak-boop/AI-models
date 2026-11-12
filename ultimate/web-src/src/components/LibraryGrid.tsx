@@ -4,11 +4,17 @@ import { api } from '../api';
 import { formatBytes } from '../format';
 
 function Thumb({ model, item }: { model: Model; item: LibraryItem }) {
-  const [broken, setBroken] = useState(false);
+  // Prefer the small generated thumbnail. If it fails (e.g. ffmpeg unavailable), fall back to the
+  // full image for pictures so they still show; videos can't render as <img>, so they get a glyph.
+  const [stage, setStage] = useState<'thumb' | 'file' | 'glyph'>('thumb');
+  const isImage = item.kind === 'image';
+  const src =
+    stage === 'thumb' ? api.libraryThumb(model.id, item.path) : stage === 'file' ? api.libraryFile(model.id, item.path) : '';
+  const onError = () => setStage((s) => (s === 'thumb' && isImage ? 'file' : 'glyph'));
   return (
     <span className="lib-thumb">
-      {!broken ? (
-        <img src={api.libraryThumb(model.id, item.path)} alt="" loading="lazy" onError={() => setBroken(true)} />
+      {stage !== 'glyph' ? (
+        <img src={src} alt="" loading="lazy" onError={onError} />
       ) : (
         <span className="lib-thumb-fallback">{item.kind === 'video' ? '▶' : '▣'}</span>
       )}
