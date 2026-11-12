@@ -71,7 +71,14 @@ def _public(row: dict) -> dict:
         "position": row["position"],
         "notes": row["notes"],
         "createdAt": row["created_at"],
-        "folders": {kind: folders.get(kind) or "" for kind in FOLDER_KINDS},
+        "folders": {
+            # The three auto-created folders (found/generated/edited) always resolve to a real path —
+            # if an older model's stored value is missing, fall back to its default so AI Studio saves
+            # where the library actually looks (instead of silently creating a stray default folder).
+            kind: (folders.get(kind) or "")
+            or (default_folder(row["name"], kind) if kind in DEFAULT_FOLDERS else "")
+            for kind in FOLDER_KINDS
+        },
     }
 
 

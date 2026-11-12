@@ -5,6 +5,7 @@
 
 from __future__ import annotations
 
+import os
 import re
 import shutil
 import subprocess
@@ -15,17 +16,32 @@ HDR_TRANSFERS = ("arib-std-b67", "smpte2084")  # HLG (iPhone), PQ
 IMAGE_CODECS = {"mjpeg", "png", "webp", "gif", "bmp", "tiff", "heif", "hevc_image"}
 IMAGE_FORMATS = re.compile(r"image2|png_pipe|jpeg_pipe|webp_pipe|gif|bmp_pipe|tiff_pipe|heif")
 
+# A macOS app launched from Finder/.app runs with a minimal PATH that usually omits Homebrew,
+# so shutil.which("ffmpeg") fails even when ffmpeg is installed. Check the usual spots directly.
+_FFMPEG_DIRS = ("/opt/homebrew/bin", "/usr/local/bin", "/opt/local/bin", "/usr/bin", "/usr/sbin")
+_ffmpeg_cache: str | None = None
+
 
 def find_ffmpeg() -> str | None:
+    global _ffmpeg_cache
+    if _ffmpeg_cache and Path(_ffmpeg_cache).is_file():
+        return _ffmpeg_cache
     found = shutil.which("ffmpeg")
-    if found:
-        return found
-    try:
-        import imageio_ffmpeg
+    if not found:
+        for d in _FFMPEG_DIRS:
+            cand = Path(d) / "ffmpeg"
+            if cand.is_file() and os.access(cand, os.X_OK):
+                found = str(cand)
+                break
+    if not found:
+        try:
+            import imageio_ffmpeg
 
-        return imageio_ffmpeg.get_ffmpeg_exe()
-    except Exception:  # noqa: BLE001 - optional package
-        return None
+            found = imageio_ffmpeg.get_ffmpeg_exe()
+        except Exception:  # noqa: BLE001 - optional package
+            found = None
+    _ffmpeg_cache = found
+    return found
 
 
 @dataclass
